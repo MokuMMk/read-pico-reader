@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include "driver/sdmmc_host.h"
 #include "esp_log.h"
+#include "esp_private/usb_phy.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "read_pico_sd.h"
@@ -22,8 +23,28 @@
 static const char *TAG = "usb_storage";
 static sdmmc_card_t *s_card;
 static tinyusb_msc_storage_handle_t s_storage;
+static usb_phy_handle_t s_serial_phy;
 static bool s_host_ready, s_usb_ready, s_msc_ready;
 static bool s_active;
+
+// MSC 用完内部 PHY 后，把它交还给串口/JTAG，电脑才能再次自动刷写。
+// Return the shared internal PHY to Serial/JTAG after MSC so flashing can reconnect.
+static void restore_serial_phy(void) {
+    if (s_serial_phy) return;
+    const usb_phy_config_t config = {
+        .controller = USB_PHY_CTRL_SERIAL_JTAG,
+        .target = USB_PHY_TARGET_INT,
+    };
+    esp_err_t err = usb_new_phy(&config, &s_serial_phy);
+    if (err != ESP_OK) ESP_LOGE(TAG, "USB Serial/JTAG restore failed: %s", esp_err_to_name(err));
+}
+
+static void release_serial_phy(void) {
+    if (!s_serial_phy) return;
+    esp_err_t err = usb_del_phy(s_serial_phy);
+    if (err != ESP_OK) ESP_LOGW(TAG, "USB Serial/JTAG release failed: %s", esp_err_to_name(err));
+    s_serial_phy = NULL;
+}
 
 bool usb_storage_active(void) { return s_active; }
 bool usb_storage_connected(void) { return s_active && tud_mounted(); }
@@ -80,6 +101,7 @@ esp_err_t usb_storage_start(void) {
     err = tinyusb_msc_new_storage_sdmmc(&storage, &s_storage);
     if (err != ESP_OK) goto fail;
     tinyusb_config_t usb = TINYUSB_DEFAULT_CONFIG();
+    release_serial_phy();
     err = tinyusb_driver_install(&usb);
     if (err != ESP_OK) goto fail;
     s_usb_ready = true;
@@ -89,6 +111,7 @@ esp_err_t usb_storage_start(void) {
 fail:
     ESP_LOGE(TAG, "USB start failed: %s", esp_err_to_name(err));
     if (s_usb_ready) { tinyusb_driver_uninstall(); s_usb_ready = false; }
+    restore_serial_phy();
     if (s_storage) { tinyusb_msc_delete_storage(s_storage); s_storage = NULL; }
     if (s_msc_ready) { tinyusb_msc_uninstall_driver(); s_msc_ready = false; }
     restore_local();
@@ -116,6 +139,7 @@ esp_err_t usb_storage_stop(void) {
         if (err != ESP_OK) return err;
         s_usb_ready = false;
     }
+    restore_serial_phy();
     if (s_msc_ready) {
         err = tinyusb_msc_uninstall_driver();
         if (err != ESP_OK) return err;

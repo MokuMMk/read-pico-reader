@@ -10,6 +10,8 @@
 
 打开 [HTTPS 在线刷机页](https://wegooo-cell.github.io/read-pico-reader/)。在电脑端 Chrome 或 Edge 中，用支持数据传输的 USB 线连接 **Read Pico RDP-G01-W**，选择设备串口并按提示刷入。**刷机前确认型号。**普通刷机保留设备设置、阅读记录和 TF 卡内容；固件不附带书籍或预设的阅读记录。
 
+如果运行本固件的设备无法自动进入下载模式，可在设备上点击**设置 → Pico 设备卡片 → 升级 → 进入 BOOT 模式**，等电脑重新识别串口后再用网页刷机。
+
 刷机页现有图文新手指南：**连接 Pico → 选择串口 → 确认安装并等待完成**。页面下方也介绍了首页、书架、文件管理和设置，以及常见问题。
 
 刷机清单为 [`flash/manifest.json`](flash/manifest.json)，只写入引导程序、分区表和应用程序。网页由 [Pages 工作流](.github/workflows/pages.yml) 按明确的文件清单部署，不上传本机书籍、备份或额外字体包。

@@ -22,6 +22,9 @@
 #include "read_pico_pmu_protocol.h"
 #include "read_pico_transfer.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "pmu_selftest.h"
+#include "soc/rtc_cntl_reg.h"
 #include "ttf_font.h"
 #include "app_font_context.h"
 #include "ui_gesture.h"
@@ -34,8 +37,10 @@ static char s_notice[96];
 typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_TIME_EDIT, SETTINGS_SHELF_STYLE, SETTINGS_SYSTEM_FONT,
                SETTINGS_SYSTEM_SIZE, SETTINGS_SYSTEM_CONTRAST, SETTINGS_LOCK_STYLE,
-               SETTINGS_WALLPAPER, SETTINGS_WALLPAPER_PREVIEW } settings_page_t;
+               SETTINGS_WALLPAPER, SETTINGS_WALLPAPER_PREVIEW,
+               SETTINGS_FIRMWARE } settings_page_t;
 static settings_page_t s_page;
+static bool s_boot_pending;
 static int s_style_scroll;
 static int s_font_page, s_wallpaper_page;
 static bool s_sync_pending;
@@ -457,12 +462,27 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
+    if (s_page == SETTINGS_FIRMWARE) {
+        back_header(fb, "固件升级");
+        section(fb, 249, "从电脑刷写 Pico");
+        ui_fill_round_rect(fb, (EpdRect){36, 297, 612, 286}, 22, UI_GRAY_WHITE);
+        ui_text(fb, 61, 327, 29, "进入 BOOT 模式", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 61, 391, 22, "连接电脑，在 Chrome 或 Edge 打开", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 61, 433, 22, "Pico 的 GitHub 网页刷机页。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 61, 502, 20, "进入后，屏幕会停留在当前画面。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_draw_button(fb, (EpdRect){36, 638, 612, 80},
+                       s_boot_pending ? "正在进入 BOOT 模式" : "进入 BOOT 模式", false);
+        ui_text(fb, 54, 770, 20, "刷写完成后，Pico 会重新启动。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_nav_draw(fb, 3);
+        return;
+    }
     ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
     ui_fill_round_rect(fb, (EpdRect){36, 171, 612, 127}, 24, UI_GRAY_WHITE);
     ui_fill_round_rect(fb, (EpdRect){57, 192, 82, 84}, 20, 0x30);
     ui_text(fb, 98, 207, 49, "P", EPD_DRAW_ALIGN_CENTER, true);
     ui_text(fb, 164, 198, 30, "Pico", EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, 164, 241, 19, "墨水屏阅读器 · 684 × 1216", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 618, 241, 19, "升级  ›", EPD_DRAW_ALIGN_RIGHT, false);
     const pmu_snapshot_t *pmu = read_pico_pmu_get();
     if (pmu && pmu->soc_permille <= 1000) {
         char battery[12]; snprintf(battery, sizeof(battery), "%u%%", (unsigned)pmu->soc_permille / 10);
@@ -497,6 +517,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
 static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
     s_notice[0] = 0;
+    s_boot_pending = false;
     s_page = SETTINGS_MAIN;
     s_style_scroll = s_font_page = s_wallpaper_page = 0;
     s_wallpaper_selected = -1;
@@ -506,6 +527,16 @@ static void on_enter(app_ctx_t *ctx) {
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
     (void)ctx;
+    if (s_boot_pending) {
+        s_boot_pending = false;
+        pmu_selftest_prepare_powerdown();
+        uint8_t req[2] = {0, 0};
+        esp_err_t err = read_pico_pmu_cmd(PMU_CMD_HOST_REQUEST_RESET, req, sizeof(req));
+        if (err != ESP_OK) ESP_LOGW(TAG, "BOOT PMU notice: %s", esp_err_to_name(err));
+        REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+        esp_restart();
+        return APP_REDRAW_NONE;
+    }
     if (!s_sync_pending) return APP_REDRAW_NONE;
     s_sync_pending = false;
     uint32_t utc = 0;
@@ -675,6 +706,17 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         if (y >= 518 && y < 588) { time_open(); return APP_REDRAW_PAGE; }
         return APP_REDRAW_NONE;
+    }
+    if (s_page == SETTINGS_FIRMWARE) {
+        if (y >= 638 && y < 718) {
+            s_boot_pending = true;
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
+    if (y >= 171 && y < 298) {
+        s_page = SETTINGS_FIRMWARE;
+        return APP_REDRAW_PAGE;
     }
     if (y >= 365 && y < 439) {
         extern const app_desc_t app_transfer;

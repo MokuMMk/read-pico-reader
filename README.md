@@ -10,6 +10,8 @@ The current interface has Home, Bookshelf, Files, and Settings. It reads EPUB an
 
 Visit the [HTTPS web flasher](https://wegooo-cell.github.io/read-pico-reader/). Use a desktop Chrome or Edge browser with a USB data cable. Select the Read Pico serial device and follow the prompts. **Check the board model before flashing.** Ordinary installation preserves the device's settings and reading records, as well as TF-card contents. It does not include books or sample reading history.
 
+If automatic entry to download mode fails on a device already running this firmware, open **Settings → Pico device card → Upgrade → Enter BOOT mode** on the device, wait for the computer to detect its serial port again, then retry the web flasher.
+
 The release manifest is [`flash/manifest.json`](flash/manifest.json); it flashes only the bootloader, partition table, and application. The site is published from an explicit allowlist in [`.github/workflows/pages.yml`](.github/workflows/pages.yml), so local books, backups, and extra font packages are not uploaded.
 
 ## Build from source
