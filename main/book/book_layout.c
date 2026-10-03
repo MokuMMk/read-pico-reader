@@ -340,12 +340,12 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
         used += leading;
         if (s_line[0]) {
             if (s_reading_line) {
-                int guide_y = rect.y + (int)used + line_height - 2;
+                int guide_y = rect.y + (int)used + line_px + (line_height - line_px) / 2;
                 int dash = s_reading_line == 1 ? 19 : 2;
                 int period = s_reading_line == 1 ? 31 : 13;
                 for (int dx = 0; dx < rect.width; dx += period) {
                     int width = dx + dash <= rect.width ? dash : rect.width - dx;
-                    epd_fill_rect((EpdRect){rect.x + dx, guide_y, width, 1}, 0xb0, fb);
+                    epd_fill_rect((EpdRect){rect.x + dx, guide_y, width, 1}, 0x80, fb);
                 }
             }
             int x = rect.x + indent;

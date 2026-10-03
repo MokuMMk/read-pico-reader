@@ -9,7 +9,13 @@
 typedef struct { int x, y, width, height; } EpdRect;
 enum EpdFontFlags { EPD_DRAW_ALIGN_LEFT = 0 };
 extern int test_guide_segments;
+extern int test_guide_first_y;
+extern uint8_t test_guide_gray;
 static inline void epd_fill_rect(EpdRect rect, uint8_t gray, uint8_t* fb) {
-    (void)rect; (void)gray; (void)fb;
+    (void)fb;
+    if (!test_guide_segments) {
+        test_guide_first_y = rect.y;
+        test_guide_gray = gray;
+    }
     ++test_guide_segments;
 }
