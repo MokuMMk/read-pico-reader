@@ -394,6 +394,11 @@ static void on_media_lost(app_ctx_t *ctx) {
     memset(s_recent, 0, sizeof(s_recent));
     s_books_cache_valid = false;
 }
+static void on_media_ready(app_ctx_t *ctx) {
+    (void)ctx;
+    s_books_cache_valid = false;
+    s_scan_pending = true;
+}
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
     if (ctx->touch && ctx->touch->touched) return APP_REDRAW_NONE;
@@ -452,7 +457,7 @@ static EpdRect area_hint(app_ctx_t *ctx) { (void)ctx; return s_area; }
 const app_desc_t app_dashboard = {
     .title = "首页 Home", .detail = "继续阅读与近七天阅读", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
-    .on_enter = on_enter, .on_media_lost = on_media_lost,
+    .on_enter = on_enter, .on_media_lost = on_media_lost, .on_media_ready = on_media_ready,
     .render = render, .present = present, .on_tick = on_tick,
     .on_gesture = on_gesture, .on_key = on_key, .area_hint = area_hint,
 };

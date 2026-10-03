@@ -28,6 +28,8 @@ typedef struct {
     esp_err_t error;
 } read_pico_sd_info_t;
 
+/// 首次无卡开机后插卡可重新探测；已挂载卡拔出失效仍须显式 remount。
+/// / Probe a first insertion after an empty boot; a removed mounted card still needs explicit remount.
 esp_err_t read_pico_sd_start_probe(void);
 /// 查询实时 CD 并锁存失效，不卸载卡；拔卡后容量清零，重新插入也须显式 remount。
 /// / Sample live CD and latch invalidation without unmounting; removal clears capacity and reinsertion requires explicit remount.

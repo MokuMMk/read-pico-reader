@@ -36,7 +36,14 @@ static read_pico_sd_info_t cached_info;
 
 // 失效只影响快照，消费者释放句柄前不得卸载卡。/ Invalidation changes snapshots only; consumers must close handles before unmount.
 static void observe_media_locked(bool present) {
+    bool inserted = present && !cached_info.present;
     if (!present && (cached_info.mounted || probe_state == 1)) media_invalidated = true;
+    // 首次开机无卡时没有文件句柄；后插卡可重新探测。
+    // A card inserted after an empty boot has no stale handles and can be probed.
+    if (inserted && probe_state == 2 && !media_invalidated && !cached_info.mounted) {
+        probe_state = 0;
+        cached_info.error = ESP_ERR_INVALID_STATE;
+    }
     cached_info.present = present;
     if (!present || media_invalidated) {
         memset(&cached_info, 0, sizeof(cached_info));

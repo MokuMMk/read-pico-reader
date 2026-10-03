@@ -3180,6 +3180,11 @@ static void book_on_media_lost(app_ctx_t* ctx) {
     copy_text(s_storage, sizeof(s_storage), "TF 卡已移除");
     copy_text(s_message, sizeof(s_message), "TF 卡已移除");
 }
+static void book_on_media_ready(app_ctx_t* ctx) {
+    (void)ctx;
+    s_shelf_cache_valid = false;
+    if (s_view == SHELF) s_scan_pending = true;
+}
 // 控件编号仅用于保持按下与抬起命中同一个目标。/ IDs pair a press with release on the same control.
 static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
     if (s_view == SEARCH) {
@@ -3526,7 +3531,8 @@ const app_desc_t app_book = {
     .defer_middle_short = true,
     .menu_handle_enabled = menu_handle_enabled,
     .render = render, .present = present, .on_enter = on_enter, .on_exit = book_on_exit,
-    .on_media_lost = book_on_media_lost, .on_before_lock = before_lock,
+    .on_media_lost = book_on_media_lost, .on_media_ready = book_on_media_ready,
+    .on_before_lock = before_lock,
     .on_gesture = gesture_event, .on_key = on_key, .on_key_long = on_key_long,
     .on_power_short = on_power_short,
     .on_tick = on_tick, .area_hint = area_hint,

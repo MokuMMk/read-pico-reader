@@ -527,6 +527,10 @@ static void on_media_lost(app_ctx_t *ctx) {
     (void)ctx; s_folder = -1; s_count = 0; s_scan_pending = false;
     memset(s_counts, 0, sizeof(s_counts)); read_pico_sd_get_info(&s_sd);
 }
+static void on_media_ready(app_ctx_t *ctx) {
+    (void)ctx;
+    s_scan_pending = true;
+}
 static app_redraw_t on_tick(app_ctx_t *ctx) {
     (void)ctx;
     if (!s_scan_pending) return APP_REDRAW_NONE;
@@ -808,6 +812,7 @@ static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
 const app_desc_t app_files = {
     .title = "文件管理 Files", .detail = "TF 卡文件与传输", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
-    .on_enter = on_enter, .on_media_lost = on_media_lost, .render = render, .on_tick = on_tick,
+    .on_enter = on_enter, .on_media_lost = on_media_lost, .on_media_ready = on_media_ready,
+    .render = render, .on_tick = on_tick,
     .on_gesture = on_gesture, .on_key = on_key,
 };

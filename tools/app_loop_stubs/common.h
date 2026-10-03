@@ -49,13 +49,14 @@ void app_enter_host_sleep(app_sleep_mode_t);
 void app_restart_host(void);
 void epd_poweroff(void);
 const char* app_settings_font_path(void);
+bool app_settings_reader_power_turn(void);
 bool ttf_font_path_is_builtin(const char*);
 bool ttf_font_ready(void);
 bool ttf_font_is_builtin(void);
 const char* ttf_font_path(void);
 int ttf_font_open(const char*);
 int ttf_font_open_builtin(void);
-typedef struct { bool mounted; } read_pico_sd_info_t;
+typedef struct { bool present, mounted; } read_pico_sd_info_t;
 int read_pico_sd_get_info(read_pico_sd_info_t*);
 void read_pico_sd_start_probe(void);
 

@@ -221,11 +221,17 @@ static bool poll_media(app_ctx_t* ctx, const app_desc_t* current,
     if (usb_storage_active()) { *mounted = false; *invalidated = false; return false; }
     read_pico_sd_info_t info = {0};
     esp_err_t err = read_pico_sd_get_info(&info);
+    if (err == ESP_ERR_INVALID_STATE && info.present && !*invalidated) {
+        (void)read_pico_sd_start_probe();
+        return false;
+    }
     if (err == ESP_ERR_NOT_FINISHED) return false;
     bool ready = err == ESP_OK && info.mounted;
     bool lost = *mounted && !ready;
+    bool gained = !*mounted && ready;
     *mounted = ready;
     if (ready) *invalidated = false;
+    if (gained && current->on_media_ready) current->on_media_ready(ctx);
     if (!lost) return false;
     *invalidated = true;
     if (current->on_media_lost) current->on_media_lost(ctx);
@@ -283,7 +289,9 @@ void app_loop_run(const app_loop_config_t* config) {
     int64_t last_font_retry_ms = 0;
     int64_t last_media_poll_ms = 0;
     int64_t last_network_poll_ms = 0;
-    bool media_mounted = ttf_font_ready() && !ttf_font_is_builtin();
+    read_pico_sd_info_t initial_media = {0};
+    (void)read_pico_sd_get_info(&initial_media);
+    bool media_mounted = initial_media.mounted || (ttf_font_ready() && !ttf_font_is_builtin());
     bool media_invalidated = false;
     app_lock_ignore_for(APP_LOCK_IGNORE_BOOT_MS);
 

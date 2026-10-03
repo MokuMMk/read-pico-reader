@@ -35,8 +35,8 @@ static bool full_tick, lock_due, font_due;
 static int64_t time_offset, time_step;
 static int du_areas, gl_areas;
 static bool media_test, sd_font, saved_sd_font;
-static bool mounted_steps[32];
-static int media_lost, builtin_opens, font_opens, probes, loss_step;
+static bool mounted_steps[32], present_steps[32];
+static int media_lost, media_ready, builtin_opens, font_opens, probes, loss_step;
 int E0470_WAVEFORM;
 int cst836u_read(void* h, cst836u_touch_t* t) {
     (void)h;
@@ -67,15 +67,17 @@ void app_enter_host_sleep(app_sleep_mode_t mode) {(void)mode;longjmp(done,1);}
 void app_restart_host(void) {longjmp(done,1);}
 void epd_poweroff(void) {}
 const char* app_settings_font_path(void) {return "builtin";}
+bool app_settings_reader_power_turn(void) {return false;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
 bool ttf_font_ready(void) {return true;}
 bool ttf_font_is_builtin(void) {return !sd_font;}
 const char* ttf_font_path(void) {return "other";}
 int ttf_font_open(const char*p) {(void)p;font_opens++;sd_font=true;return 0;}
 int ttf_font_open_builtin(void) {assert(media_lost>0);builtin_opens++;sd_font=font_due=false;return 0;}
-int read_pico_sd_get_info(read_pico_sd_info_t*i) {i->mounted=media_test?mounted_steps[step]:font_due;return media_test&&!i->mounted?ESP_ERR_INVALID_STATE:0;}
+int read_pico_sd_get_info(read_pico_sd_info_t*i) {i->present=media_test?present_steps[step]:font_due;i->mounted=media_test?mounted_steps[step]:font_due;return media_test&&!i->mounted?ESP_ERR_INVALID_STATE:0;}
 void read_pico_sd_start_probe(void) {probes++;}
 static void lost(app_ctx_t*c) {(void)c;media_lost++;loss_step=step;}
+static void ready(app_ctx_t*c) {(void)c;media_ready++;}
 EpdRect ui_content_refresh_area(void) {return (EpdRect){0,0,684,1000};}
 const app_desc_t* app_home_page(void) {return &first;}
 const app_desc_t* app_at(int i) {return i==0?&first:i==1?&second:NULL;}
@@ -115,8 +117,8 @@ static app_redraw_t tick(app_ctx_t*c) {
     return full_tick ? APP_REDRAW_FULL : APP_REDRAW_NONE;
 }
 static void reset(void) {
-    media_test=sd_font=saved_sd_font=false;media_lost=builtin_opens=font_opens=probes=0;loss_step=-1;
-    memset(mounted_steps,0,sizeof(mounted_steps));
+    media_test=sd_font=saved_sd_font=false;media_lost=media_ready=builtin_opens=font_opens=probes=0;loss_step=-1;
+    memset(mounted_steps,0,sizeof(mounted_steps));memset(present_steps,0,sizeof(present_steps));
     long_keys=0;
     home_on_touch=home_on_tick=home_on_key=start_second=false;
     home_enters=home_renders=0;rendered_leaf=-1;last_menu_leaf=-1;menu_background=NULL;
@@ -234,6 +236,13 @@ int main(void) {
     reset();media_test=true;mounted_steps[1]=true;time_step=600000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(media_lost==1&&loss_step==2&&!builtin_opens);
+    // 首次无卡时后插卡应触发探测，挂载完成只通知页面一次。
+    // First insertion after an empty boot probes, then notifies the active page once.
+    reset();media_test=true;time_step=600000;first.on_media_ready=ready;
+    present_steps[1]=present_steps[2]=present_steps[3]=true;
+    mounted_steps[2]=mounted_steps[3]=true;
+    add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
+    assert(probes>=1&&media_ready==1&&!media_lost);
     // 手势和长按在拔卡边界取消，不能把旧按住状态变成新的动作。
     // Removal cancels gestures and holds without turning an old contact into another action.
     reset();media_test=true;mounted_steps[0]=true;time_step=600000;first.on_media_lost=lost;first.on_gesture=gesture;
