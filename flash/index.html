@@ -150,7 +150,7 @@
       <li class="step"><div class="step-visual" aria-hidden="true"><div class="mock-dialog"><div class="dialog-top"><i></i><i></i><i></i></div><div class="dialog-body"><strong>正在安装阅读固件</strong><small>请保持 USB 连接</small><div class="progress"><i></i></div><span class="percent">72%</span></div></div></div><div class="step-body"><div class="step-number">第 3 步 · 等待</div><h3>确认安装，等它完成</h3><p>按弹窗提示开始安装。看到“完成”之前，不要拔线或关闭网页。</p></div></li>
     </ol>
     <div class="flash-panel" id="flash-action">
-      <div><div class="eyebrow" style="color:#dbe3d8">READY TO FLASH</div><h2>准备好了？从这里开始</h2><p>当前版本 0.3.3-rc42 · 仅适用 RDP-G01-W（ESP32-S3，16 MB Flash）</p></div>
+      <div><div class="eyebrow" style="color:#dbe3d8">READY TO FLASH</div><h2>准备好了？从这里开始</h2><p>当前版本 <strong id="firmware-version">读取中…</strong> · 仅适用 RDP-G01-W（ESP32-S3，16 MB Flash）</p></div>
       <div class="flash-help" id="flash-help" role="status"><strong id="flash-help-title">正在检查浏览器…</strong><span>请在电脑 Chrome 或 Edge 中打开公开刷机页：<br><a href="https://wegooo-cell.github.io/read-pico-reader/">https://wegooo-cell.github.io/read-pico-reader/</a></span></div>
       <esp-web-install-button id="flash-installer" hidden manifest="./manifest.json"><button slot="activate" type="button">连接 Pico，开始刷机</button></esp-web-install-button>
     </div>
@@ -164,9 +164,22 @@
       const help = document.getElementById("flash-help");
       const title = document.getElementById("flash-help-title");
       const installer = document.getElementById("flash-installer");
+      const version = document.getElementById("firmware-version");
       if (location.protocol === "file:") {
+        version.textContent = "请在线上刷机页查看";
         title.textContent = "本地预览无法刷机。";
-      } else if (!window.isSecureContext) {
+        return;
+      }
+      fetch("./manifest.json", {cache: "no-store"})
+        .then(response => {
+          if (!response.ok) throw new Error("manifest unavailable");
+          return response.json();
+        })
+        .then(manifest => {
+          version.textContent = typeof manifest.version === "string" ? manifest.version : "版本未知";
+        })
+        .catch(() => { version.textContent = "读取失败，请刷新页面"; });
+      if (!window.isSecureContext) {
         title.textContent = "请使用 HTTPS 刷机页。";
       } else if (!("serial" in navigator)) {
         title.textContent = "当前浏览器无法连接串口。";
