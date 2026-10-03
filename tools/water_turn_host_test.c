@@ -152,6 +152,13 @@ int main(void) {
         check_direction = false;
         assert(e0470_page_turn(&hl, reader, direction) == EPD_DRAW_SUCCESS);
         assert(scans == 52 && differences == 1);
+        // 全屏阅读保留状态栏时从第 80 行开始，水波纹仍要覆盖整个正文。
+        // Full-screen reading keeps the status row at y=80 while animating the remaining body.
+        EpdRect fullscreen_reader = {0, 80, logical.width, logical.height - 80};
+        memset(back, 0xFF, sizeof(back));
+        scans = differences = 0;
+        assert(e0470_page_turn(&hl, fullscreen_reader, direction) == EPD_DRAW_SUCCESS);
+        assert(scans == 52 && differences == 1);
         check_direction = true;
         memset(back, 0xFF, sizeof(back));
         scans = differences = 0;

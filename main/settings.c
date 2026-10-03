@@ -10,11 +10,17 @@
 
 #include "settings.h"
 
+#include <stdio.h>
+#include <stddef.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #include <string.h>
 
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "read_pico_sd.h"
 
 #define TAG "settings"
 #define NVS_NS "read_pico"
@@ -422,4 +428,224 @@ bool app_settings_set_books_dir(const char* path) {
 }
 bool app_settings_set_fonts_dir(const char* path) {
     return set_media_dir(s_fonts_dir, NVS_KEY_FONTS_DIR, path);
+}
+
+#ifndef APP_SETTINGS_BACKUP_ROOT
+#define APP_SETTINGS_BACKUP_ROOT "/sdcard"
+#endif
+#define BACKUP_FILE APP_SETTINGS_BACKUP_ROOT "/Pico-settings.backup"
+#define BACKUP_TEMP APP_SETTINGS_BACKUP_ROOT "/Pico-settings.backup.tmp"
+#define BACKUP_PREVIOUS APP_SETTINGS_BACKUP_ROOT "/Pico-settings.backup.previous"
+
+// All fields are bytes, so the v1 disk layout is independent of structure padding.
+// 所有字段均为字节，v1 磁盘格式不依赖编译器的结构体填充。
+typedef struct {
+    char magic[8];
+    uint8_t flags[17];
+    char font[FONT_PATH_MAX];
+    char system_font[FONT_PATH_MAX];
+    char wallpaper[288];
+    char books_dir[MEDIA_DIR_MAX];
+    char fonts_dir[MEDIA_DIR_MAX];
+    uint8_t checksum[4];
+} settings_backup_v1_t;
+
+enum {
+    BK_SLEEP, BK_PICKUP, BK_SYS_SIZE, BK_SYS_CONTRAST, BK_LOCK,
+    BK_BOOK_PX, BK_SHAKE, BK_FULL_PAGES, BK_TURN, BK_POWER_TURN,
+    BK_IMMERSIVE, BK_TRACKING, BK_READING_LINE, BK_LINE_SPACING,
+    BK_MARGIN, BK_PARAGRAPH, BK_SHELF,
+};
+
+static uint32_t backup_checksum(const settings_backup_v1_t *backup) {
+    const uint8_t *data = (const uint8_t *)backup;
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < offsetof(settings_backup_v1_t, checksum); ++i)
+        hash = (hash ^ data[i]) * 16777619u;
+    return hash;
+}
+
+static void backup_seal(settings_backup_v1_t *backup) {
+    uint32_t value = backup_checksum(backup);
+    for (int i = 0; i < 4; ++i) backup->checksum[i] = (uint8_t)(value >> (i * 8));
+}
+
+static bool backup_card_ready(void) {
+    read_pico_sd_info_t info = {0};
+    return read_pico_sd_get_info(&info) == ESP_OK && info.mounted;
+}
+
+esp_err_t app_settings_backup_save(void) {
+    if (!backup_card_ready()) return ESP_ERR_INVALID_STATE;
+    settings_backup_v1_t backup = {0};
+    memcpy(backup.magic, "PICOSET1", sizeof(backup.magic));
+    uint8_t *f = backup.flags;
+    f[BK_SLEEP] = s_sleep;
+    f[BK_PICKUP] = s_pickup_wake;
+    f[BK_SYS_SIZE] = s_system_size;
+    f[BK_SYS_CONTRAST] = s_system_contrast;
+    f[BK_LOCK] = s_lock_style;
+    f[BK_BOOK_PX] = s_book_px;
+    f[BK_SHAKE] = s_book_shake;
+    f[BK_FULL_PAGES] = s_reader_full_pages;
+    f[BK_TURN] = s_reader_turn_effect;
+    f[BK_POWER_TURN] = s_reader_power_turn;
+    f[BK_IMMERSIVE] = s_reader_immersive;
+    f[BK_TRACKING] = s_book_tracking;
+    f[BK_READING_LINE] = s_book_reading_line;
+    f[BK_LINE_SPACING] = s_book_line;
+    f[BK_MARGIN] = s_book_margin;
+    f[BK_PARAGRAPH] = s_book_para;
+    f[BK_SHELF] = s_shelf_style;
+    strlcpy(backup.font, !strcmp(s_font, "builtin") ? "" : s_font, sizeof(backup.font));
+    strlcpy(backup.system_font, s_system_font, sizeof(backup.system_font));
+    strlcpy(backup.wallpaper, s_wallpaper, sizeof(backup.wallpaper));
+    strlcpy(backup.books_dir, s_books_dir, sizeof(backup.books_dir));
+    strlcpy(backup.fonts_dir, s_fonts_dir, sizeof(backup.fonts_dir));
+    backup_seal(&backup);
+
+    FILE *file = fopen(BACKUP_TEMP, "wb");
+    if (!file) return ESP_FAIL;
+    bool ok = fwrite(&backup, 1, sizeof(backup), file) == sizeof(backup);
+    if (ok) ok = fflush(file) == 0;
+    if (ok) ok = fsync(fileno(file)) == 0;
+    if (fclose(file) != 0) ok = false;
+    bool rotated = false;
+    if (ok && remove(BACKUP_PREVIOUS) != 0 && errno != ENOENT) ok = false;
+    if (ok && rename(BACKUP_FILE, BACKUP_PREVIOUS) == 0) rotated = true;
+    else if (ok && errno != ENOENT) ok = false;
+    if (ok && rename(BACKUP_TEMP, BACKUP_FILE) != 0) ok = false;
+    if (!ok && rotated) (void)rename(BACKUP_PREVIOUS, BACKUP_FILE);
+    if (ok && rotated) (void)remove(BACKUP_PREVIOUS);
+    if (!ok) { (void)remove(BACKUP_TEMP); return ESP_FAIL; }
+    return ESP_OK;
+}
+
+static bool backup_path_valid(const char *path, size_t capacity) {
+    size_t len = strnlen(path, capacity);
+    if (len == capacity) return false;
+    if (!len) return true;
+    if (strncmp(path, "/sdcard/", 8) || !path[8]) return false;
+    for (size_t i = 8; i < len; ++i)
+        if ((unsigned char)path[i] < 32 || path[i] == '\\' || path[i] == ':') return false;
+    for (const char *part = path + 8; *part;) {
+        const char *end = strchr(part, '/');
+        size_t n = end ? (size_t)(end - part) : strlen(part);
+        if (!n || (n == 1 && part[0] == '.') || (n == 2 && part[0] == '.' && part[1] == '.')) return false;
+        if (!end) break;
+        part = end + 1;
+    }
+    return true;
+}
+
+static bool backup_valid(const settings_backup_v1_t *backup) {
+    const uint8_t *f = backup->flags;
+    uint32_t checksum = 0;
+    for (int i = 0; i < 4; ++i) checksum |= (uint32_t)backup->checksum[i] << (i * 8);
+    if (memcmp(backup->magic, "PICOSET1", 8) || checksum != backup_checksum(backup)) return false;
+    if (f[BK_SLEEP] > APP_SLEEP_OFF || f[BK_PICKUP] > 1 ||
+        f[BK_SYS_SIZE] < 100 || f[BK_SYS_SIZE] > 140 || f[BK_SYS_SIZE] % 10 ||
+        f[BK_SYS_CONTRAST] < 100 || f[BK_SYS_CONTRAST] > 140 || f[BK_SYS_CONTRAST] % 10 ||
+        f[BK_LOCK] > 1 || f[BK_BOOK_PX] < 36 || f[BK_BOOK_PX] > 72 ||
+        f[BK_SHAKE] > 1 || (f[BK_FULL_PAGES] != 5 && f[BK_FULL_PAGES] != 10 && f[BK_FULL_PAGES] != 15) ||
+        f[BK_TURN] > 1 || f[BK_POWER_TURN] > 1 || f[BK_IMMERSIVE] > 1 ||
+        f[BK_TRACKING] > 4 || f[BK_READING_LINE] > 2 ||
+        f[BK_LINE_SPACING] < 110 || f[BK_LINE_SPACING] > 150 ||
+        f[BK_MARGIN] < 24 || f[BK_MARGIN] > 60 ||
+        f[BK_PARAGRAPH] > 75 || f[BK_PARAGRAPH] % 25 ||
+        f[BK_SHELF] < 1 || f[BK_SHELF] > 3) return false;
+    if (strnlen(backup->books_dir, sizeof(backup->books_dir)) == sizeof(backup->books_dir) ||
+        strnlen(backup->fonts_dir, sizeof(backup->fonts_dir)) == sizeof(backup->fonts_dir)) return false;
+    return backup_path_valid(backup->font, sizeof(backup->font)) &&
+           backup_path_valid(backup->system_font, sizeof(backup->system_font)) &&
+           backup_path_valid(backup->wallpaper, sizeof(backup->wallpaper)) &&
+           valid_media_dir(backup->books_dir) && valid_media_dir(backup->fonts_dir);
+}
+
+static bool backup_file_exists(const char *path, bool directory) {
+    struct stat st;
+    return stat(path, &st) == 0 && (directory ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode));
+}
+
+esp_err_t app_settings_backup_restore(void) {
+    if (!backup_card_ready()) return ESP_ERR_INVALID_STATE;
+    FILE *file = fopen(BACKUP_FILE, "rb");
+    if (!file) file = fopen(BACKUP_PREVIOUS, "rb");
+    if (!file) return ESP_ERR_NOT_FOUND;
+    settings_backup_v1_t backup;
+    bool ok = fread(&backup, 1, sizeof(backup), file) == sizeof(backup);
+    if (ok) ok = fgetc(file) == EOF && !ferror(file);
+    if (fclose(file) != 0) ok = false;
+    if (!ok || !backup_valid(&backup)) return ESP_ERR_INVALID_RESPONSE;
+
+    // The backup contains paths, not the corresponding font or image bytes.
+    // 备份只含资源路径；资源已被删除时回退到安全的内建选项。
+    if (backup.font[0] && !backup_file_exists(backup.font, false)) backup.font[0] = 0;
+    if (backup.system_font[0] && !backup_file_exists(backup.system_font, false)) backup.system_font[0] = 0;
+    if (backup.wallpaper[0] && !backup_file_exists(backup.wallpaper, false)) {
+        backup.wallpaper[0] = 0;
+        backup.flags[BK_LOCK] = 0;
+    }
+    if (!backup.wallpaper[0]) backup.flags[BK_LOCK] = 0;
+    if (!backup_file_exists(backup.books_dir, true)) strlcpy(backup.books_dir, "/sdcard/books", sizeof(backup.books_dir));
+    if (!backup_file_exists(backup.fonts_dir, true)) strlcpy(backup.fonts_dir, "/sdcard/fonts", sizeof(backup.fonts_dir));
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+#define BACKUP_SET_U8(key, index) do { if (err == ESP_OK) err = nvs_set_u8(h, key, backup.flags[index]); } while (0)
+#define BACKUP_SET_STR(key, value) do { if (err == ESP_OK) err = nvs_set_str(h, key, value); } while (0)
+    BACKUP_SET_U8(NVS_KEY_SLEEP, BK_SLEEP);
+    BACKUP_SET_U8(NVS_KEY_PICKUP, BK_PICKUP);
+    BACKUP_SET_U8(NVS_KEY_SYS_SIZE, BK_SYS_SIZE);
+    BACKUP_SET_U8(NVS_KEY_SYS_CONTRAST, BK_SYS_CONTRAST);
+    BACKUP_SET_U8(NVS_KEY_LOCK_STYLE, BK_LOCK);
+    BACKUP_SET_U8(NVS_KEY_BOOK_PX, BK_BOOK_PX);
+    BACKUP_SET_U8(NVS_KEY_BOOK_SHAKE, BK_SHAKE);
+    BACKUP_SET_U8(NVS_KEY_READER_FULL, BK_FULL_PAGES);
+    BACKUP_SET_U8(NVS_KEY_READER_TURN, BK_TURN);
+    BACKUP_SET_U8(NVS_KEY_POWER_TURN, BK_POWER_TURN);
+    BACKUP_SET_U8(NVS_KEY_IMMERSIVE, BK_IMMERSIVE);
+    BACKUP_SET_U8(NVS_KEY_BOOK_TRACK, BK_TRACKING);
+    BACKUP_SET_U8(NVS_KEY_BOOK_RULE, BK_READING_LINE);
+    BACKUP_SET_U8(NVS_KEY_BOOK_LINE, BK_LINE_SPACING);
+    BACKUP_SET_U8(NVS_KEY_BOOK_MARGIN, BK_MARGIN);
+    BACKUP_SET_U8(NVS_KEY_BOOK_PARA, BK_PARAGRAPH);
+    BACKUP_SET_U8(NVS_KEY_SHELF_STYLE, BK_SHELF);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHELF_V22, 1);
+    BACKUP_SET_STR(NVS_KEY_FONT, backup.font);
+    BACKUP_SET_STR(NVS_KEY_SYS_FONT, backup.system_font);
+    BACKUP_SET_STR(NVS_KEY_WALLPAPER, backup.wallpaper);
+    BACKUP_SET_STR(NVS_KEY_BOOKS_DIR, backup.books_dir);
+    BACKUP_SET_STR(NVS_KEY_FONTS_DIR, backup.fonts_dir);
+#undef BACKUP_SET_U8
+#undef BACKUP_SET_STR
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err != ESP_OK) return err;
+
+    const uint8_t *f = backup.flags;
+    s_sleep = (app_sleep_mode_t)f[BK_SLEEP];
+    s_pickup_wake = f[BK_PICKUP];
+    s_system_size = f[BK_SYS_SIZE];
+    s_system_contrast = f[BK_SYS_CONTRAST];
+    s_lock_style = f[BK_LOCK];
+    s_book_px = f[BK_BOOK_PX];
+    s_book_shake = f[BK_SHAKE];
+    s_reader_full_pages = f[BK_FULL_PAGES];
+    s_reader_turn_effect = f[BK_TURN];
+    s_reader_power_turn = f[BK_POWER_TURN];
+    s_reader_immersive = f[BK_IMMERSIVE];
+    s_book_tracking = f[BK_TRACKING];
+    s_book_reading_line = f[BK_READING_LINE];
+    s_book_line = f[BK_LINE_SPACING];
+    s_book_margin = f[BK_MARGIN];
+    s_book_para = f[BK_PARAGRAPH];
+    s_shelf_style = f[BK_SHELF];
+    strlcpy(s_font, backup.font, sizeof(s_font));
+    strlcpy(s_system_font, backup.system_font, sizeof(s_system_font));
+    strlcpy(s_wallpaper, backup.wallpaper, sizeof(s_wallpaper));
+    strlcpy(s_books_dir, backup.books_dir, sizeof(s_books_dir));
+    strlcpy(s_fonts_dir, backup.fonts_dir, sizeof(s_fonts_dir));
+    return ESP_OK;
 }

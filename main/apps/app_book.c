@@ -220,7 +220,7 @@ static book_shake_gate_t s_shake;
 static EpdRect s_area;
 static enum EpdDrawMode s_mode = MODE_GL16;
 static bool s_reader_cleanup;
-static bool s_reader_split;
+static bool s_reader_footer_pending;
 static bool s_water_turn_pending;
 static e0470_turn_dir_t s_water_turn_dir;
 static int s_pressed_control = -1;
@@ -1761,10 +1761,12 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     enum EpdDrawError err;
     if (redraw == APP_REDRAW_FULL || s_reader_cleanup) err = update_display_full(ctx->hl);
     else if (redraw == APP_REDRAW_AREA) {
-        err = s_reader_split && s_water_turn_pending
+        // 翻页动画与页脚刷新独立：全屏没有页脚，仍使用用户选择的水波纹。
+        // The turn effect is independent of the footer: full-screen turns still use the selected water effect.
+        err = s_water_turn_pending
             ? update_display_water_turn(ctx->hl, s_area, s_water_turn_dir)
             : update_display_area_with(ctx->hl, &E0470_WAVEFORM, s_mode, s_area);
-        if (s_reader_split) {
+        if (s_reader_footer_pending) {
             // 普通翻页页脚只驱动变化像素；全刷由上方整屏分支一次完成。
             // Ordinary turns drive only changed footer pixels; the full-screen branch handles cleanup at once.
             err = (enum EpdDrawError)(err | update_display_area_with(ctx->hl, &E0470_FOLLOW_WAVEFORM,
@@ -1787,7 +1789,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     guard_draw_result(ctx->hl, err);
     s_reader_cleanup = false;
     s_presented_view = (int)s_view;
-    s_reader_split = false;
+    s_reader_footer_pending = false;
     s_water_turn_pending = false;
     s_mode = MODE_GL16;
     return true;
@@ -1804,7 +1806,7 @@ static app_redraw_t paint_reading(app_ctx_t* ctx, enum EpdDrawMode mode) {
     unlock_draw();
     ESP_LOGI(TAG, "paint cached=%d ms=%lld", cached, (esp_timer_get_time() - started) / 1000);
     s_area = reader_area();
-    s_reader_split = !s_reader_fullscreen;
+    s_reader_footer_pending = !s_reader_fullscreen;
     s_mode = mode;
     return APP_REDRAW_AREA;
 }
@@ -2029,7 +2031,11 @@ static bool open_book(app_ctx_t* ctx, const char* path) {
     if (err != ESP_OK) {
         pending_progress_t* pending = pending_find(path);
         if (pending && !pending->dirty) pending_discard(path);
-        copy_text(s_message, sizeof(s_message), err == ESP_ERR_NOT_SUPPORTED ? "文件格式或压缩方式暂不支持" : "无法打开图书，请检查文件");
+        copy_text(s_message, sizeof(s_message),
+                  err == ESP_ERR_NOT_SUPPORTED ? "文件格式或压缩方式暂不支持" :
+                  err == ESP_ERR_NO_MEM ? "内存不足，请重启后重试" :
+                  err == ESP_ERR_INVALID_SIZE ? "图书资源过大或章节过多" :
+                  "无法打开图书，请检查文件");
         ESP_LOGW(TAG, "open failed: %s", esp_err_to_name(err));
         app_font_activate_system();
         return false;
@@ -2646,7 +2652,7 @@ static app_redraw_t reader_panel_action(app_ctx_t* ctx, uint16_t x, uint16_t y) 
             // 手动全刷先收起面板，再把整张阅读页作为新目标帧提交。
             // Close the sheet before presenting the entire reader frame as the target.
             s_reader_panel = READER_PANEL_NONE;
-            s_reader_split = false;
+            s_reader_footer_pending = false;
             s_reader_cleanup = false;
             s_turns = 0;
             invalidate_prep();

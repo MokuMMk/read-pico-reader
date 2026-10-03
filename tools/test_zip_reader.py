@@ -88,11 +88,11 @@ def main():
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w"): pass
         run("empty", buffer.getvalue())
-        for count in (4096, 4097):
+        for count in (8192, 8193):
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, "w") as z:
                 for i in range(count): z.writestr(f"entry{i}.txt", b"")
-            run("empty" if count == 4096 else "reject-open", buffer.getvalue())
+            run("empty" if count == 8192 else "reject-open", buffer.getvalue())
         # ZIP64 扩展不依赖哨兵值也必须拒绝。/ Reject ZIP64 extras even without sentinel sizes.
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as z:

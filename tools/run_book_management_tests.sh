@@ -5,6 +5,10 @@
 # Run management regressions from the repository root; validate web interactions separately with Node.
 set -euo pipefail
 bash tools/run_book_host_tests.sh
+mkdir -p build/book-tests/settings-card
+cc -std=gnu11 -Wall -Wextra -Werror -Itools/settings_backup_stubs \
+    tools/settings_backup_host_test.c -o build/book-tests/settings-backup
+build/book-tests/settings-backup
 python3 tools/book_ui_host_test.py
 python3 tools/test_home_recent.py
 python3 tools/test_book_toc.py

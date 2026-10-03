@@ -38,12 +38,13 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_TIME_EDIT, SETTINGS_SHELF_STYLE, SETTINGS_SYSTEM_FONT,
                SETTINGS_SYSTEM_SIZE, SETTINGS_SYSTEM_CONTRAST, SETTINGS_LOCK_STYLE,
                SETTINGS_WALLPAPER, SETTINGS_WALLPAPER_PREVIEW,
-               SETTINGS_FIRMWARE, SETTINGS_READING } settings_page_t;
+               SETTINGS_FIRMWARE, SETTINGS_READING, SETTINGS_CONFIG } settings_page_t;
 static settings_page_t s_page;
 static bool s_boot_pending;
 static int s_style_scroll;
 static int s_font_page, s_wallpaper_page;
 static bool s_sync_pending;
+static bool s_config_confirm;
 static const char *const TAG = "device_settings";
 static const char *system_font_label(const char *path) {
     if (!path || !path[0]) return "思源黑体";
@@ -188,6 +189,15 @@ static void setting_icon(uint8_t *fb, int index, int cx, int cy) {
         epd_draw_line(cx + 15, cy, cx + 18, cy, 0x50, fb);
         epd_draw_line(cx, cy - 18, cx, cy - 15, 0x50, fb);
         epd_draw_line(cx, cy + 15, cx, cy + 18, 0x50, fb);
+        return;
+    }
+    if (index == 8) {
+        // TF 卡配置：两张重叠的页面。/ Two overlapping sheets for TF configuration.
+        ui_draw_round_rect(fb, (EpdRect){cx - 12, cy - 15, 26, 30}, 3, 0x58);
+        epd_draw_line(cx - 17, cy - 9, cx - 17, cy + 17, 0x58, fb);
+        epd_draw_line(cx - 17, cy + 17, cx + 8, cy + 17, 0x58, fb);
+        epd_draw_line(cx - 6, cy - 5, cx + 8, cy - 5, 0x58, fb);
+        epd_draw_line(cx - 6, cy + 3, cx + 8, cy + 3, 0x58, fb);
         return;
     }
     const uint8_t *image = pico_setting_icons[index];
@@ -498,6 +508,22 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
+    if (s_page == SETTINGS_CONFIG) {
+        back_header(fb, "保存与恢复配置");
+        section(fb, 248, "换机或刷机后，快速恢复个性化设置");
+        ui_fill_round_rect(fb, (EpdRect){36, 299, 612, 197}, 22, UI_GRAY_WHITE);
+        ui_text(fb, 60, 326, 26, "TF 卡根目录", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 377, 23, "Pico-settings.backup", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 435, 19, "字体、字号、排版、书架、锁屏及阅读操作", EPD_DRAW_ALIGN_LEFT, false);
+        ui_draw_button(fb, (EpdRect){36, 561, 612, 83}, "保存当前配置到 TF 卡", false);
+        ui_draw_button(fb, (EpdRect){36, 681, 612, 83},
+                       s_config_confirm ? "再次点按，确认恢复配置" : "从 TF 卡恢复配置", false);
+        if (s_notice[0]) ui_text(fb, 48, 819, 21, s_notice, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 899, 19, "不包含书籍、阅读进度和 WiFi 密码。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 939, 19, "请保留 TF 卡上的自选字体与壁纸图片。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_nav_draw(fb, 3);
+        return;
+    }
     ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
     ui_fill_round_rect(fb, (EpdRect){36, 171, 612, 127}, 24, UI_GRAY_WHITE);
     ui_fill_round_rect(fb, (EpdRect){57, 192, 82, 84}, 20, 0x30);
@@ -529,10 +555,10 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     const char *reading_values[] = {font, size, contrast, styles[app_settings_shelf_style()]};
     static const int reading_icons[] = {2, 3, 7, 4};
     setting_group(fb, 453, "显示", 493, reading_icons, reading_labels, reading_values, 4);
-    const char *display_labels[] = {"锁屏样式", "阅读操作", "日期与时间"};
-    const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›", "设置  ›", "设置  ›"};
-    static const int display_icons[] = {5, 2, 6};
-    setting_group(fb, 780, "阅读与时间", 819, display_icons, display_labels, display_values, 3);
+    const char *display_labels[] = {"锁屏样式", "阅读操作", "日期与时间", "保存与恢复"};
+    const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›", "设置  ›", "设置  ›", "配置  ›"};
+    static const int display_icons[] = {5, 2, 6, 8};
+    setting_group(fb, 773, "阅读与设备", 809, display_icons, display_labels, display_values, 4);
     ui_nav_draw(fb, 3);
 }
 
@@ -545,6 +571,7 @@ static void on_enter(app_ctx_t *ctx) {
     s_wallpaper_selected = -1;
     s_wallpaper_confirm = s_wallpaper_preview_ok = false;
     s_sync_pending = false;
+    s_config_confirm = false;
 }
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
@@ -747,6 +774,39 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         return APP_REDRAW_NONE;
     }
+    if (s_page == SETTINGS_CONFIG) {
+        if (y >= 561 && y < 644) {
+            s_config_confirm = false;
+            esp_err_t err = app_settings_backup_save();
+            snprintf(s_notice, sizeof(s_notice), "%s",
+                     err == ESP_OK ? "已保存到 TF 卡根目录" :
+                     err == ESP_ERR_INVALID_STATE ? "未识别到 TF 卡，请插卡后重试" :
+                     "保存失败，请检查 TF 卡剩余空间");
+            return APP_REDRAW_PAGE;
+        }
+        if (y >= 681 && y < 764) {
+            if (!s_config_confirm) {
+                s_config_confirm = true;
+                snprintf(s_notice, sizeof(s_notice), "恢复将覆盖当前设置，请再点按一次确认");
+                return APP_REDRAW_PAGE;
+            }
+            s_config_confirm = false;
+            esp_err_t err = app_settings_backup_restore();
+            if (err == ESP_OK) {
+                ttf_font_scan();
+                app_font_activate_system();
+                ui_text_set_system_scale(true);
+            }
+            snprintf(s_notice, sizeof(s_notice), "%s",
+                     err == ESP_OK ? "配置已恢复，界面和阅读设置即时生效" :
+                     err == ESP_ERR_INVALID_STATE ? "未识别到 TF 卡，请插卡后重试" :
+                     err == ESP_ERR_NOT_FOUND ? "未找到 Pico-settings.backup" :
+                     err == ESP_ERR_INVALID_RESPONSE ? "配置文件损坏或版本不兼容" :
+                     "恢复失败，原有设置已保留");
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
     if (y >= 171 && y < 298) {
         s_page = SETTINGS_FIRMWARE;
         return APP_REDRAW_PAGE;
@@ -776,16 +836,22 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         s_style_scroll = 0;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 819 && y < 887) {
+    if (y >= 809 && y < 877) {
         s_page = SETTINGS_LOCK_STYLE;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 887 && y < 955) {
+    if (y >= 877 && y < 945) {
         s_page = SETTINGS_READING;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 955 && y < 1023) {
+    if (y >= 945 && y < 1013) {
         s_page = SETTINGS_TIME;
+        return APP_REDRAW_PAGE;
+    }
+    if (y >= 1013 && y < 1081) {
+        s_page = SETTINGS_CONFIG;
+        s_config_confirm = false;
+        s_notice[0] = 0;
         return APP_REDRAW_PAGE;
     }
     return APP_REDRAW_NONE;

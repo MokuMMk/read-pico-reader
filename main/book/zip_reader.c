@@ -20,7 +20,7 @@
 
 #define PSRAM (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
 #define NAME_MAX_BYTES 1024U
-#define DIRECTORY_MAX (2U * 1024U * 1024U)
+#define DIRECTORY_MAX (4U * 1024U * 1024U)
 #define ARCHIVE_ENTRY_MAX (256U * 1024U * 1024U)
 #define INFLATE_CHUNK 32768U
 
@@ -179,6 +179,12 @@ int zip_find(const zip_reader_t* z, const char* name) {
     }
     return -1;
 }
+
+const char* zip_entry_name(const zip_reader_t* z, int index) {
+    return z && index >= 0 && index < z->count ? z->entries[index].name : NULL;
+}
+
+size_t zip_entry_count(const zip_reader_t* z) { return z ? z->count : 0; }
 
 size_t zip_entry_size(const zip_reader_t* z, int index) {
     return z && index >= 0 && index < z->count ? z->entries[index].unpacked : 0;

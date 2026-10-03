@@ -144,6 +144,7 @@ static void app_files_request_folder(int folder){(void)folder;}
 static int s_pressed_control;
 static bool s_scan_pending,s_toolbar;
 static bool s_resume_pending,s_reader_cleanup,s_shake_enabled;
+static bool s_reader_fullscreen,test_reader_immersive;
 static int64_t s_stats_activity_ms;
 static int s_du_count;
 static int64_t s_size_settle_ms,s_poll_ms;
@@ -153,7 +154,12 @@ static int app_settings_book_px(void){return 48;}
 static int app_settings_book_margin(void){return 36;}
 static int app_settings_book_line_spacing(void){return 150;}
 static int app_settings_book_paragraph_spacing(void){return 50;}
+static int app_settings_book_tracking(void){return 2;}
+static int app_settings_book_reading_line(void){return 0;}
+static bool app_settings_reader_immersive(void){return test_reader_immersive;}
 static void book_layout_set_spacing(int line,int para){(void)line;(void)para;}
+static void book_layout_set_typography(int tracking){(void)tracking;}
+static void book_layout_set_reading_line(int style){(void)style;}
 static bool app_settings_book_shake(void){return false;}
 static void read_pico_sd_start_probe(void){}
 typedef struct {bool present,mounted;} read_pico_sd_info_t;
@@ -178,6 +184,7 @@ static char test_wrapped[512];
 #define UI_PX_CAPTION 28
 #define UI_MARGIN 40
 #define UI_LOCK_WIDTH 684
+#define UI_LOCK_HEIGHT 1216
 #define UI_BAR_TOP 1096
 #define UI_BAR_H 96
 #define EPD_DRAW_ALIGN_LEFT 0
@@ -195,6 +202,13 @@ int main(void) {
     assert(reading_body.y+reading_body.height<=reading_footer.y);
     assert(reading_footer.y==UI_BAR_TOP&&reading_footer.height==UI_BAR_H);
     assert(reading_footer.x==36&&reading_footer.width==612);
+    s_reader_fullscreen=true;
+    reading_body=reader_area();
+    assert(reading_body.y==80&&reading_body.height==UI_LOCK_HEIGHT-80);
+    test_reader_immersive=true;
+    reading_body=reader_area();
+    assert(reading_body.y==0&&reading_body.height==UI_LOCK_HEIGHT);
+    s_reader_fullscreen=test_reader_immersive=false;
     char footer_name[72];
     reader_footer_strip_number(footer_name,sizeof(footer_name),"第一章：海边的信");
     assert(!strcmp(footer_name,"海边的信"));

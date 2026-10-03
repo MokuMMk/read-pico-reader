@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_err.h"
 
 /// 默认深睡。浅睡：按键回原页；拿起唤醒默认关。软睡：SOFT_SLEEP 拉低 EN，再短按开机。关机：EN=0，长按开机。
 /// Default is deep. Light: key returns to the page; pickup-wake defaults off. Soft sleep: SOFT_SLEEP drops EN, then a short press boots. Off: EN=0, long-press to boot.
@@ -94,3 +95,10 @@ const char* app_settings_fonts_dir(void);
 /// 仅允许已挂载 TF 卡内的有界绝对目录；调用者负责确认目录存在。
 bool app_settings_set_books_dir(const char* path);
 bool app_settings_set_fonts_dir(const char* path);
+
+/// 将个性化设置保存到 TF 卡根目录 Pico-settings.backup；不包含 WiFi 密码和书籍进度。
+/// Save personal settings to the TF root; WiFi secrets and reading progress are excluded.
+esp_err_t app_settings_backup_save(void);
+/// 校验备份后一次写入 NVS；缺失的外部字体或壁纸回退到内建资源。
+/// Validate before applying in one NVS transaction; missing external assets fall back safely.
+esp_err_t app_settings_backup_restore(void);

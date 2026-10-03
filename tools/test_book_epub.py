@@ -13,6 +13,30 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def make_large_book(path, chapters=5000):
+    """Original small chapters exercise a larger spine without shipping copyrighted books."""
+    items = ''.join(f'<item id="c{i}" href="text/ch{i}.xhtml" media-type="application/xhtml+xml"/>'
+                    for i in range(1, chapters + 1))
+    spine = ''.join(f'<itemref idref="c{i}"/>' for i in range(1, chapters + 1))
+    opf = ('<package><manifest>' + items +
+           '<item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/>' +
+           '</manifest><spine toc="toc">' + spine + '</spine></package>')
+    points = ''.join(
+        f'<navPoint><navLabel><text>第{i}章 {"终点" if i == chapters else "记录"}</text></navLabel>'
+        f'<content src="text/ch{i}.xhtml"/></navPoint>' for i in range(1, chapters + 1))
+    with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr('mimetype', 'application/epub+zip')
+        archive.writestr('META-INF/container.xml',
+                         '<container><rootfiles><rootfile full-path="OPS/book.opf" '
+                         'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        archive.writestr('OPS/book.opf', opf)
+        archive.writestr('OPS/toc.ncx', '<ncx><navMap>' + points + '</navMap></ncx>')
+        for i in range(1, chapters + 1):
+            title = '终点' if i == chapters else '记录'
+            archive.writestr(f'OPS/text/ch{i}.xhtml',
+                             f'<html><body><h1>第{i}章 {title}</h1><p>正文 {i}</p></body></html>')
+
+
 def make_book(path, change=None):
     container = '<container><rootfiles><rootfile full-path="OPS/pkg/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'
     items = ''.join(f'<item id="c{i}" href="../text/part%20{i}%26x.xhtml#start" media-type="application/xhtml+xml"/>' for i in range(1, 5))
@@ -147,9 +171,20 @@ def main():
         case('bad_nul', replace_opf('</package>', '\0</package>'))
         case('bad_xml', replace_opf('</manifest>', '</wrong>'))
         case('bad_multiroot', replace_opf('</package>', '</package><extra/>'))
-        case('bad_spine_limit', replace_opf('<itemref idref="c1"/>', '<itemref idref="c1"/>' * 1025))
+        case('bad_spine_limit', replace_opf('<itemref idref="c1"/>', '<itemref idref="c1"/>' * 8193))
         case('bad_container', lambda f: f.__setitem__('META-INF/container.xml', '<container><rootfile full-path="../../escape.opf"/></container>'))
         subprocess.run([str(exe)] + [str(p) for p in sorted((ROOT / 'build/book-fixtures/books').glob('*.epub'))] + [str(p) for p in cases], check=True)
+
+        large = work / 'long_5000.epub'
+        make_large_book(large)
+        large_exe = work / 'large-test'
+        subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
+                        '-I' + str(ROOT / 'tools/book_epub_stubs'), '-I' + str(ROOT / 'tools/zip_host_stubs'),
+                        '-I' + str(ROOT / 'main/book'), str(ROOT / 'tools/book_epub_large_host_test.c'),
+                        str(ROOT / 'main/book/book_epub.c'), str(ROOT / 'main/book/zip_reader.c'),
+                        str(ROOT / 'main/book/html_text.c'), str(ROOT / 'main/book/book_index_cache.c'),
+                        '-lz', '-o', str(large_exe)], check=True)
+        subprocess.run([str(large_exe), str(large)], check=True)
 
 
 if __name__ == '__main__':
