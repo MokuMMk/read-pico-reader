@@ -2089,6 +2089,40 @@ void ttf_draw_text_px(
     }
 }
 
+void ttf_draw_text_px_spaced(
+    uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
+    int tracking_px, uint8_t fg, uint8_t bg
+) {
+    if (!tracking_px) {
+        ttf_draw_text_px(framebuffer, x, y, pixel_height, text, EPD_DRAW_ALIGN_LEFT, fg, bg);
+        return;
+    }
+    if (!font_ready || framebuffer == NULL || text == NULL) return;
+    ttf_cover_lut_init();
+    pixel_height = clamp_px(pixel_height);
+    warm_text_io(pixel_height, text);
+    int cursor_x = x;
+    const char* cursor = text;
+    while (*cursor != '\0') {
+        uint32_t cp = decode_utf8(&cursor);
+        const glyph_entry_t* glyph = get_glyph(cp, pixel_height);
+        if (glyph == NULL) continue;
+        if (glyph->bitmap != NULL) {
+            for (int gy = 0; gy < glyph->height; gy++) {
+                int yy = y - glyph->top + gy;
+                for (int gx = 0; gx < glyph->width; gx++) {
+                    uint8_t alpha = glyph->bitmap[gy * glyph->width + gx];
+                    if (alpha == 0) continue;
+                    epd_draw_pixel(cursor_x + glyph->left + gx, yy,
+                                   mix_ink(alpha, fg, bg) << 4, framebuffer);
+                }
+            }
+        }
+        cursor_x += glyph->advance_x;
+        if (*cursor) cursor_x += tracking_px;
+    }
+}
+
 void ttf_draw_text_px_bw(
     uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
     enum EpdFontFlags align, uint8_t fg, uint8_t bg

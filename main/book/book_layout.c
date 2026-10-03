@@ -27,6 +27,8 @@ static char* s_line;
 static EpdRect s_rect;
 static int s_px;
 static unsigned s_line_percent = 150, s_paragraph_percent = 50;
+static int s_tracking_px;
+static unsigned s_reading_line;
 static size_t s_lead_skip;
 static unsigned s_lead_height;
 
@@ -108,6 +110,12 @@ void book_layout_set_spacing(unsigned line_percent, unsigned paragraph_percent) 
     s_line_percent = line_percent >= 110 && line_percent <= 200 ? line_percent : 150;
     s_paragraph_percent = paragraph_percent <= 100 ? paragraph_percent : 50;
 }
+void book_layout_set_typography(int tracking_px) {
+    s_tracking_px = tracking_px >= -4 && tracking_px <= 4 && tracking_px % 2 == 0 ? tracking_px : 0;
+}
+void book_layout_set_reading_line(unsigned style) {
+    s_reading_line = style <= 2 ? style : 0;
+}
 void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px) {
     s_lead_skip = skip_bytes;
     s_lead_height = height_px;
@@ -144,11 +152,15 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
     const blk_t* block = block_at(off);
     *heading = block && block->heading;
     *px = s_px + (*heading ? 8 : 0);
-    bool first_line = block && off == block->offset;
-    *indent = first_line ? (int)((unsigned)*px * block->indent_percent / 100) : 0;
+    bool first_line = block ? off == block->offset :
+        off == 0 || s_text[off - 1] == '\n' || s_text[off - 1] == '\r';
+    *indent = first_line && block ? (int)((unsigned)*px * block->indent_percent / 100) : 0;
     if (*indent >= s_rect.width) *indent = s_rect.width > 1 ? s_rect.width - 1 : 0;
     *align = block ? block->align : 0;
-    *margin_before = first_line ? (int)((unsigned)*px * block->margin_before_percent / 100) : 0;
+    if (first_line && !*heading && !*align && !*indent)
+        *indent = *px * 2;
+    if (*indent + *px > s_rect.width) *indent = 0;
+    *margin_before = first_line && block ? (int)((unsigned)*px * block->margin_before_percent / 100) : 0;
     *margin_after = block ? (int)((unsigned)*px * block->margin_after_percent / 100) : 0;
     int available = s_rect.width - *indent;
     size_t limit = block ? block->offset + block->len : s_len;
@@ -168,7 +180,8 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
         char glyph[5];
         memcpy(glyph, s_text + end, n);
         glyph[n] = 0;
-        int64_t candidate = width + ttf_text_width_px(*px, glyph);
+        int64_t candidate = width + ttf_text_width_px(*px, glyph) +
+                            (end > off && !*heading ? s_tracking_px : 0);
         if (candidate < 0) return false;
         if (candidate > available) {
             if (end == off) return false;
@@ -326,12 +339,25 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
         if (used + leading + line_height > rect.height) return;
         used += leading;
         if (s_line[0]) {
+            if (s_reading_line) {
+                int guide_y = rect.y + (int)used + line_height - 2;
+                int dash = s_reading_line == 1 ? 19 : 2;
+                int period = s_reading_line == 1 ? 31 : 13;
+                for (int dx = 0; dx < rect.width; dx += period) {
+                    int width = dx + dash <= rect.width ? dash : rect.width - dx;
+                    epd_fill_rect((EpdRect){rect.x + dx, guide_y, width, 1}, 0xb0, fb);
+                }
+            }
             int x = rect.x + indent;
             int available = rect.width - indent;
             if (align == 1) x += (available - line_width) / 2;
             else if (align == 2) x += available - line_width;
-            ttf_draw_text_px(fb, x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
-                             s_line, EPD_DRAW_ALIGN_LEFT, 0, 15);
+            if (s_tracking_px && !heading)
+                ttf_draw_text_px_spaced(fb, x, rect.y + (int)used + ttf_ascender_px(line_px),
+                                        line_px, s_line, s_tracking_px, 0, 15);
+            else
+                ttf_draw_text_px(fb, x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
+                                 s_line, EPD_DRAW_ALIGN_LEFT, 0, 15);
         }
         used += line_height;
         if (paragraph_end) used += gap_for(line_height, heading) + margin_after;

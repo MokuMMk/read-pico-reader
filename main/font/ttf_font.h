@@ -71,6 +71,11 @@ void ttf_draw_text_px(
     uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
     enum EpdFontFlags align, uint8_t fg, uint8_t bg
 );
+/// 从左向右绘制，并在相邻字符之间加入固定像素间距。/ Draw left-aligned text with extra pixels between adjacent characters.
+void ttf_draw_text_px_spaced(
+    uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
+    int tracking_px, uint8_t fg, uint8_t bg
+);
 /// 覆盖率过半才落墨，像素只有 fg/bg。/ Ink only when coverage is over half; pixels are fg/bg only.
 void ttf_draw_text_px_bw(
     uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,

@@ -460,8 +460,8 @@ void app_loop_run(const app_loop_config_t* config) {
         ctx.now_ms = esp_timer_get_time() / 1000;
         rails_idle_check(ctx.now_ms);
 
-        // 电源键短按 = 锁屏。自检页要连着占用 PMU，这时不抢它的事件队列。
-        // Short power-key press locks. A page that holds the PMU keeps its event queue.
+        // 电源键短按默认锁屏；阅读正文可选择将它用于下一页。
+        // A short power press normally locks; the reader body may use it for the next page.
         if (read_pico_pmu_ready() && !current->holds_pmu && !usb_storage_active()
             && ctx.now_ms - last_lock_poll_ms >= APP_LOCK_POLL_MS) {
             last_lock_poll_ms = ctx.now_ms;
@@ -474,30 +474,52 @@ void app_loop_run(const app_loop_config_t* config) {
                     cancel_gesture(&ctx, current, &gesture);
                     if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
                     menu_pressed = UI_MENU_HIT_NONE;
-                    power_dialog_open = true;
-                    ui_gesture_reset(&power_gesture);
-                    ui_power_dialog_draw(ctx.fb);
-                    guard_draw_result(ctx.hl, update_display_area_with(
-                        ctx.hl, &E0470_WAVEFORM, MODE_GL16, ui_power_dialog_rect()));
+                    extern const app_desc_t app_book;
+                    bool reader_power_lock = !menu_open && current == &app_book &&
+                        app_book_reader_body_visible() && app_settings_reader_power_turn();
+                    if (reader_power_lock) {
+                        if (current->on_before_lock) current->on_before_lock(&ctx);
+                        enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, true);
+                        ctx.now_ms = esp_timer_get_time() / 1000;
+                        poll_media(&ctx, current, &media_mounted, &media_invalidated);
+                        last_media_poll_ms = ctx.now_ms;
+                        ctx.consumed = true;
+                        ctx.pressed = false;
+                        ctx.released = false;
+                        app_present(&ctx, current, APP_REDRAW_PAGE);
+                    } else {
+                        power_dialog_open = true;
+                        ui_gesture_reset(&power_gesture);
+                        ui_power_dialog_draw(ctx.fb);
+                        guard_draw_result(ctx.hl, update_display_area_with(
+                            ctx.hl, &E0470_WAVEFORM, MODE_GL16, ui_power_dialog_rect()));
+                    }
                 } else if (!power_dialog_open) {
                     held_key = -1;
                     cancel_gesture(&ctx, current, &gesture);
                     if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
                     menu_pressed = UI_MENU_HIT_NONE;
-                    if (current->on_before_lock) current->on_before_lock(&ctx);
-                    extern const app_desc_t app_book;
-                    enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
-                                         !menu_open && current == &app_book && app_book_reader_body_visible());
-                    ctx.now_ms = esp_timer_get_time() / 1000;
-                    poll_media(&ctx, current, &media_mounted, &media_invalidated);
-                    last_media_poll_ms = ctx.now_ms;
-                    ctx.consumed = true;
-                    ctx.pressed = false;
-                    ctx.released = false;
-                    // 醒来还在同一页，重画一次免得留着锁屏图。
-                    // Still the same page; redraw so the lock image does not stay.
-                    if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
-                    else app_present(&ctx, current, APP_REDRAW_PAGE);
+                    app_redraw_t power_redraw = !menu_open && current->on_power_short
+                        ? current->on_power_short(&ctx) : APP_REDRAW_NONE;
+                    if (power_redraw != APP_REDRAW_NONE) {
+                        present_page(&ctx, current, &gesture, power_redraw);
+                        ctx.consumed = true;
+                    } else {
+                        if (current->on_before_lock) current->on_before_lock(&ctx);
+                        extern const app_desc_t app_book;
+                        enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
+                                             !menu_open && current == &app_book && app_book_reader_body_visible());
+                        ctx.now_ms = esp_timer_get_time() / 1000;
+                        poll_media(&ctx, current, &media_mounted, &media_invalidated);
+                        last_media_poll_ms = ctx.now_ms;
+                        ctx.consumed = true;
+                        ctx.pressed = false;
+                        ctx.released = false;
+                        // 醒来还在同一页，重画一次免得留着锁屏图。
+                        // Still the same page; redraw so the lock image does not stay.
+                        if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
+                        else app_present(&ctx, current, APP_REDRAW_PAGE);
+                    }
                 }
             }
         }

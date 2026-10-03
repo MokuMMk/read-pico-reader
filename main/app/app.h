@@ -112,6 +112,9 @@ struct app_desc_s {
     void (*on_media_lost)(app_ctx_t* ctx);
     /// 锁屏前保存页面的阅读状态。/ Persist page state before lock rendering.
     void (*on_before_lock)(app_ctx_t* ctx);
+    /// 可选：消费电源键短按；返回 NONE 时沿用锁屏，DONE 表示已消费但无需刷新。
+    /// Optional: consume a short power press; NONE keeps locking, DONE consumes without redraw.
+    app_redraw_t (*on_power_short)(app_ctx_t* ctx);
     /// 纯绘制，不做 I2C 写、蜂鸣这类副作用，整屏强刷才能安全复用它。
     /// / Paint only. No I2C writes or buzzer. KEY2 full redraw reuses this.
     void (*render)(app_ctx_t* ctx, uint8_t* fb);

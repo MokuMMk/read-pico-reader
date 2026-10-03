@@ -64,6 +64,18 @@ void app_settings_set_reader_full_pages(uint8_t pages);
 /// 阅读翻页效果：0 默认，1 水波纹；初始为默认。/ Reader turn effect: 0 default, 1 water ripple; initially default.
 uint8_t app_settings_reader_turn_effect(void);
 void app_settings_set_reader_turn_effect(uint8_t effect);
+/// 阅读正文里短按电源键翻下一页；默认关闭。/ Short power press turns forward only in reader body; off by default.
+bool app_settings_reader_power_turn(void);
+void app_settings_set_reader_power_turn(bool on);
+/// 沉浸全屏时隐藏阅读状态栏。/ Hide the reader status bar in immersive full screen.
+bool app_settings_reader_immersive(void);
+void app_settings_set_reader_immersive(bool on);
+/// 字间距档位 0..4，默认 2 居中；对应 -4/-2/0/+2/+4 像素。/ Tracking index 0..4, centered default 2; maps to -4/-2/0/+2/+4 pixels.
+uint8_t app_settings_book_tracking(void);
+void app_settings_set_book_tracking(uint8_t index);
+/// 正文阅读线：0 无，1 虚线，2 点线。/ Body reading guides: none, dashed or dotted.
+uint8_t app_settings_book_reading_line(void);
+void app_settings_set_book_reading_line(uint8_t style);
 /// 阅读行高百分比，110..150。/ Reader line-height percentage: 110..150.
 uint8_t app_settings_book_line_spacing(void);
 void app_settings_set_book_line_spacing(uint8_t percent);

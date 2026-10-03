@@ -15,6 +15,8 @@ static char drawn[20000];
 static size_t measured_codepoints;
 static size_t measure_calls;
 static int first_draw_px, last_draw_px, first_draw_x, last_draw_x;
+static int last_tracking_px;
+int test_guide_segments;
 int ttf_text_width_px(int px, const char* text) {
     int n = 0, width = 0;
     for (; *text; text++) if (((unsigned char)*text & 0xc0) != 0x80) {
@@ -35,6 +37,11 @@ void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
     last_draw_x = x;
     assert(strlen(drawn) + strlen(text) < sizeof(drawn));
     strcat(drawn, text);
+}
+void ttf_draw_text_px_spaced(uint8_t* fb, int x, int y, int px, const char* text,
+                             int tracking_px, uint8_t fg, uint8_t bg) {
+    last_tracking_px = tracking_px;
+    ttf_draw_text_px(fb, x, y, px, text, EPD_DRAW_ALIGN_LEFT, fg, bg);
 }
 int main(void) {
     EpdRect r = {0, 0, 20, 30};
@@ -162,6 +169,42 @@ int main(void) {
     drawn[0] = 0;
     book_layout_draw_page(&fb, 0, r, 10);
     assert(first_draw_px == 10);
+    book_layout_set_typography(0);
+    r = (EpdRect){0, 0, 35, 100};
+    assert(book_layout_build("abcd", 4, r, 10));
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(!strcmp(drawn, "abcd") && first_draw_x == 20 && last_draw_x == 0);
+    book_layout_set_typography(2);
+    r = (EpdRect){0, 0, 25, 15};
+    assert(book_layout_build("abcd", 4, r, 10));
+    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(1) == 2);
+    drawn[0] = 0; last_tracking_px = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(!strcmp(drawn, "ab") && last_tracking_px == 2);
+    book_layout_set_typography(-2);
+    r.width = 28;
+    assert(book_layout_build("abcd", 4, r, 10));
+    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(1) == 3);
+    drawn[0] = 0; last_tracking_px = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(!strcmp(drawn, "abc") && last_tracking_px == -2);
+    book_layout_set_typography(0);
+    r = (EpdRect){0, 0, 100, 30};
+    assert(book_layout_build("甲乙丙丁", strlen("甲乙丙丁"), r, 10));
+    book_layout_set_reading_line(0);
+    test_guide_segments = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(test_guide_segments == 0);
+    book_layout_set_reading_line(1);
+    book_layout_draw_page(&fb, 0, r, 10);
+    int dashed_segments = test_guide_segments;
+    assert(dashed_segments > 0);
+    book_layout_set_reading_line(2);
+    test_guide_segments = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(test_guide_segments > dashed_segments);
+    book_layout_set_reading_line(0);
     book_layout_free();
     puts("book_layout_host_test: PASS");
 }

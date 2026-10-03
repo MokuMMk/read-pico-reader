@@ -32,9 +32,13 @@
 #define NVS_KEY_BOOK_SHAKE "bk_shake"
 #define NVS_KEY_READER_FULL "rd_gc16"
 #define NVS_KEY_READER_TURN "rd_turn"
+#define NVS_KEY_POWER_TURN "rd_power"
+#define NVS_KEY_IMMERSIVE "rd_immersive"
 #define NVS_KEY_BOOK_LINE "bk_line"
 #define NVS_KEY_BOOK_PARA "bk_para"
 #define NVS_KEY_BOOK_MARGIN "bk_margin"
+#define NVS_KEY_BOOK_TRACK "bk_track"
+#define NVS_KEY_BOOK_RULE "bk_rule"
 #define NVS_KEY_SHELF_STYLE "shelf_ui"
 #define NVS_KEY_SHELF_V22 "shelf_v22"
 #define NVS_KEY_BOOKS_DIR "books_dir"
@@ -57,6 +61,9 @@ static bool s_book_shake;
 static uint8_t s_reader_full_pages = 15;
 static uint8_t s_reader_turn_effect;
 static uint8_t s_book_line = 150, s_book_para = 50, s_book_margin = 36;
+static bool s_reader_power_turn;
+static bool s_reader_immersive;
+static uint8_t s_book_tracking = 2, s_book_reading_line;
 static uint8_t s_shelf_style = 2;
 static char s_books_dir[MEDIA_DIR_MAX] = "/sdcard/books";
 static char s_fonts_dir[MEDIA_DIR_MAX] = "/sdcard/fonts";
@@ -165,6 +172,15 @@ void app_settings_init(void) {
     uint8_t reader_turn_effect = 0;
     if (nvs_get_u8(h, NVS_KEY_READER_TURN, &reader_turn_effect) == ESP_OK && reader_turn_effect <= 1)
         s_reader_turn_effect = reader_turn_effect;
+    uint8_t power_turn = 0;
+    if (nvs_get_u8(h, NVS_KEY_POWER_TURN, &power_turn) == ESP_OK) s_reader_power_turn = power_turn == 1;
+    uint8_t immersive = 0;
+    if (nvs_get_u8(h, NVS_KEY_IMMERSIVE, &immersive) == ESP_OK) s_reader_immersive = immersive == 1;
+    uint8_t tracking = 2, reading_line = 0;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_TRACK, &tracking) == ESP_OK && tracking <= 4)
+        s_book_tracking = tracking;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_RULE, &reading_line) == ESP_OK && reading_line <= 2)
+        s_book_reading_line = reading_line;
     uint8_t line = 150, para = 50, margin = 36;
     if (nvs_get_u8(h, NVS_KEY_BOOK_LINE, &line) == ESP_OK) {
         if (line >= 110 && line <= 150) s_book_line = line;
@@ -348,6 +364,30 @@ void app_settings_set_reader_turn_effect(uint8_t effect) {
     if (effect > 1 || effect == s_reader_turn_effect) return;
     s_reader_turn_effect = effect;
     nvs_put_u8(NVS_KEY_READER_TURN, effect);
+}
+bool app_settings_reader_power_turn(void) { return s_reader_power_turn; }
+void app_settings_set_reader_power_turn(bool on) {
+    if (s_reader_power_turn == on) return;
+    s_reader_power_turn = on;
+    nvs_put_u8(NVS_KEY_POWER_TURN, on ? 1 : 0);
+}
+bool app_settings_reader_immersive(void) { return s_reader_immersive; }
+void app_settings_set_reader_immersive(bool on) {
+    if (s_reader_immersive == on) return;
+    s_reader_immersive = on;
+    nvs_put_u8(NVS_KEY_IMMERSIVE, on ? 1 : 0);
+}
+uint8_t app_settings_book_tracking(void) { return s_book_tracking; }
+void app_settings_set_book_tracking(uint8_t index) {
+    if (index > 4 || index == s_book_tracking) return;
+    s_book_tracking = index;
+    nvs_put_u8(NVS_KEY_BOOK_TRACK, index);
+}
+uint8_t app_settings_book_reading_line(void) { return s_book_reading_line; }
+void app_settings_set_book_reading_line(uint8_t style) {
+    if (style > 2 || style == s_book_reading_line) return;
+    s_book_reading_line = style;
+    nvs_put_u8(NVS_KEY_BOOK_RULE, style);
 }
 uint8_t app_settings_book_line_spacing(void) { return s_book_line; }
 void app_settings_set_book_line_spacing(uint8_t percent) {

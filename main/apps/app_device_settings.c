@@ -38,7 +38,7 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_TIME_EDIT, SETTINGS_SHELF_STYLE, SETTINGS_SYSTEM_FONT,
                SETTINGS_SYSTEM_SIZE, SETTINGS_SYSTEM_CONTRAST, SETTINGS_LOCK_STYLE,
                SETTINGS_WALLPAPER, SETTINGS_WALLPAPER_PREVIEW,
-               SETTINGS_FIRMWARE } settings_page_t;
+               SETTINGS_FIRMWARE, SETTINGS_READING } settings_page_t;
 static settings_page_t s_page;
 static bool s_boot_pending;
 static int s_style_scroll;
@@ -212,15 +212,27 @@ static void fit_value(char *value, int width) {
 static void setting_group(uint8_t *fb, int title_y, const char *title,
                           int card_y, const int icons[], const char *const labels[],
                           const char *const values[], int count) {
+    const int row_height = 68;
     ui_text(fb, 42, title_y, 20, title, EPD_DRAW_ALIGN_LEFT, false);
-    ui_fill_round_rect(fb, (EpdRect){36, card_y, 612, count * 74}, 22, UI_GRAY_WHITE);
+    ui_fill_round_rect(fb, (EpdRect){36, card_y, 612, count * row_height}, 22, UI_GRAY_WHITE);
     for (int i = 0; i < count; ++i) {
-        int y = card_y + i * 74;
+        int y = card_y + i * row_height;
         if (i) ui_hairline(fb, y, 88, 544, 0xd0);
-        setting_icon(fb, icons[i], 67, y + 37);
-        ui_text(fb, 100, y + 22, 25, labels[i], EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 619, y + 25, 20, values[i], EPD_DRAW_ALIGN_RIGHT, false);
+        setting_icon(fb, icons[i], 67, y + row_height / 2);
+        ui_text(fb, 100, y + 19, 25, labels[i], EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 619, y + 22, 20, values[i], EPD_DRAW_ALIGN_RIGHT, false);
     }
+}
+
+static void setting_toggle(uint8_t *fb, int y, const char *title, const char *detail, bool active) {
+    ui_fill_round_rect(fb, (EpdRect){36, y, 612, 126}, 22, UI_GRAY_WHITE);
+    ui_text(fb, 59, y + 24, 27, title, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 59, y + 75, 19, detail, EPD_DRAW_ALIGN_LEFT, false);
+    EpdRect track = {555, y + 43, 69, 39};
+    ui_fill_round_rect(fb, track, 19, active ? 0x58 : 0xc4);
+    int cx = active ? track.x + 49 : track.x + 20;
+    epd_fill_circle(cx, track.y + 19, 16, UI_GRAY_WHITE, fb);
+    epd_draw_circle(cx, track.y + 19, 16, 0x78, fb);
 }
 
 static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
@@ -476,6 +488,16 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
+    if (s_page == SETTINGS_READING) {
+        back_header(fb, "阅读操作");
+        section(fb, 240, "阅读正文");
+        setting_toggle(fb, 281, "电源键翻页", "短按下一页，长按锁屏", app_settings_reader_power_turn());
+        setting_toggle(fb, 431, "全屏沉浸", "全屏时隐藏状态栏，让正文延伸至顶部", app_settings_reader_immersive());
+        ui_text(fb, 50, 615, 20, "轻点正文中央切换全屏；中间触控键打开阅读设置。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 50, 656, 19, "关闭按键翻页时，电源键仍按原有锁屏逻辑工作。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_nav_draw(fb, 3);
+        return;
+    }
     ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
     ui_fill_round_rect(fb, (EpdRect){36, 171, 612, 127}, 24, UI_GRAY_WHITE);
     ui_fill_round_rect(fb, (EpdRect){57, 192, 82, 84}, 20, 0x30);
@@ -506,11 +528,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     static const char *const styles[] = {"深色书轨  ›", "深色书轨  ›", "亚克力书架  ›", "半透明书袋  ›"};
     const char *reading_values[] = {font, size, contrast, styles[app_settings_shelf_style()]};
     static const int reading_icons[] = {2, 3, 7, 4};
-    setting_group(fb, 469, "显示", 510, reading_icons, reading_labels, reading_values, 4);
-    const char *display_labels[] = {"锁屏样式", "日期与时间"};
-    const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›", "设置  ›"};
-    static const int display_icons[] = {5, 6};
-    setting_group(fb, 836, "锁屏与时间", 877, display_icons, display_labels, display_values, 2);
+    setting_group(fb, 453, "显示", 493, reading_icons, reading_labels, reading_values, 4);
+    const char *display_labels[] = {"锁屏样式", "阅读操作", "日期与时间"};
+    const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›", "设置  ›", "设置  ›"};
+    static const int display_icons[] = {5, 2, 6};
+    setting_group(fb, 780, "阅读与时间", 819, display_icons, display_labels, display_values, 3);
     ui_nav_draw(fb, 3);
 }
 
@@ -714,40 +736,55 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         return APP_REDRAW_NONE;
     }
+    if (s_page == SETTINGS_READING) {
+        if (y >= 281 && y < 407) {
+            app_settings_set_reader_power_turn(!app_settings_reader_power_turn());
+            return APP_REDRAW_PAGE;
+        }
+        if (y >= 431 && y < 557) {
+            app_settings_set_reader_immersive(!app_settings_reader_immersive());
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
     if (y >= 171 && y < 298) {
         s_page = SETTINGS_FIRMWARE;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 365 && y < 439) {
+    if (y >= 365 && y < 433) {
         extern const app_desc_t app_transfer;
         app_transfer_request_wifi_setup();
         ctx->request_app = &app_transfer;
         return APP_REDRAW_NONE;
     }
-    if (y >= 510 && y < 584) {
+    if (y >= 493 && y < 561) {
         ttf_font_scan();
         s_font_page = 0;
         s_page = SETTINGS_SYSTEM_FONT;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 584 && y < 658) {
+    if (y >= 561 && y < 629) {
         s_page = SETTINGS_SYSTEM_SIZE;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 658 && y < 732) {
+    if (y >= 629 && y < 697) {
         s_page = SETTINGS_SYSTEM_CONTRAST;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 732 && y < 806) {
+    if (y >= 697 && y < 765) {
         s_page = SETTINGS_SHELF_STYLE;
         s_style_scroll = 0;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 877 && y < 951) {
+    if (y >= 819 && y < 887) {
         s_page = SETTINGS_LOCK_STYLE;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 951 && y < 1025) {
+    if (y >= 887 && y < 955) {
+        s_page = SETTINGS_READING;
+        return APP_REDRAW_PAGE;
+    }
+    if (y >= 955 && y < 1023) {
         s_page = SETTINGS_TIME;
         return APP_REDRAW_PAGE;
     }
