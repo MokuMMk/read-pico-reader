@@ -3,52 +3,154 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pico · 阅读固件刷机</title>
+  <meta name="theme-color" content="#e9e8e2">
+  <meta name="description" content="Pico 阅读固件图文刷机指南：连接设备、选择串口、等待安装完成。">
+  <title>Pico 阅读固件 · 图文刷机指南</title>
   <script type="module" src="./vendor/web/install-button.js"></script>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans SC", sans-serif; }
     * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     body { margin: 0; background: #e9e8e2; color: #292b27; }
-    main { max-width: 760px; margin: 64px auto; padding: 24px; }
-    .eyebrow { font-size: 13px; letter-spacing: .22em; text-transform: uppercase; color: #686b63; }
-    h1 { font-family: "Songti SC", "Noto Serif SC", serif; font-size: clamp(36px, 7vw, 60px); margin: 12px 0 16px; font-weight: 600; }
-    .lead { color: #5d6059; font-size: 18px; line-height: 1.7; margin-bottom: 36px; }
-    .card { background: #f7f7f2; border: 1px solid #c8c9c1; border-radius: 18px; padding: 32px; box-shadow: 0 16px 45px #292b2710; }
-    .device { display: inline-block; border: 1px solid #8d9087; padding: 7px 12px; border-radius: 100px; color: #4c5149; font-size: 13px; }
-    h2 { font-size: 21px; margin: 26px 0 10px; }
-    ol { margin: 0 0 28px; padding-left: 23px; line-height: 1.9; color: #52564f; }
-    .install { border-top: 1px solid #d5d6ce; padding-top: 28px; }
-    esp-web-install-button { --esp-tools-button-color: #303730; --esp-tools-button-text-color: white; --esp-tools-button-border-radius: 10px; }
-    button[slot=activate] { border: 0; border-radius: 10px; background: #303730; color: white; padding: 16px 32px; font: inherit; font-weight: 600; cursor: pointer; }
-    .note { margin-top: 28px; padding: 18px 20px; border-left: 3px solid #777d72; background: #eeefe9; font-size: 14px; line-height: 1.7; color: #50554d; }
-    footer { margin-top: 26px; color: #7b7d76; font-size: 13px; line-height: 1.6; }
-    a { color: #3c5141; }
+    a { color: #344c3a; text-underline-offset: 3px; }
+    a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px solid #536f57; outline-offset: 4px; }
+    .shell { width: min(1060px, calc(100% - 40px)); margin: auto; }
+    .topbar { border-bottom: 1px solid #c6c9bf; }
+    .topbar-inner { min-height: 70px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { font-size: 18px; font-weight: 800; }
+    .brand span { font-size: 13px; font-weight: 500; color: #60675e; margin-left: 8px; }
+    .jump { font-size: 15px; font-weight: 700; white-space: nowrap; }
+    main { padding-bottom: 70px; }
+    .eyebrow { color: #586258; font-size: 13px; font-weight: 800; letter-spacing: .18em; }
+    h1 { font-family: "Songti SC", "Noto Serif SC", serif; font-size: clamp(40px, 5.5vw, 68px); line-height: 1.15; margin: 16px 0 22px; }
+    h2 { font-size: clamp(27px, 3vw, 36px); line-height: 1.25; margin: 8px 0 22px; }
+    h3 { font-size: 22px; margin: 8px 0; }
+    .hero { display: grid; grid-template-columns: 1.15fr .85fr; align-items: center; gap: 38px; padding: 62px 0 52px; }
+    .lead { font-size: 20px; color: #4e554c; line-height: 1.75; margin: 0 0 28px; }
+    .tags { display: flex; flex-wrap: wrap; gap: 9px; }
+    .tags span { border: 1px solid #aeb4a8; border-radius: 99px; background: #f6f6f2; padding: 8px 12px; font-size: 14px; font-weight: 650; }
+    .hero-art { min-height: 305px; border-radius: 25px; border: 1px solid #bfc5ba; background: #dde0d8; display: grid; place-items: center; position: relative; overflow: hidden; }
+    .hero-art::before { content: ""; width: 340px; height: 340px; border: 1px solid #c2c7bd; border-radius: 50%; position: absolute; }
+    .pico-screen { width: 210px; height: 269px; border: 9px solid #303630; border-radius: 16px; background: #f0f0ec; padding: 12px; transform: rotate(-5deg); box-shadow: 0 13px 0 #b2b7ac, 0 20px 26px #34403424; position: relative; }
+    .screen-status { font-size: 10px; font-weight: 700; display: flex; justify-content: space-between; border-bottom: 1px solid #c8cbc3; padding-bottom: 7px; }
+    .screen-title { font-size: 27px; font-weight: 800; margin: 12px 0; }
+    .screen-subtitle { font-size: 12px; font-weight: 750; padding: 8px 0 7px; border-top: 1px solid #c8cbc3; }
+    .screen-book { display: flex; align-items: center; gap: 11px; }
+    .cover { width: 56px; height: 72px; background: #414640; border: 4px double #ededeb; flex: none; }
+    .book-lines { flex: 1; }
+    .book-lines strong { font-size: 13px; display: block; margin-bottom: 10px; }
+    .book-lines i { display: block; width: 90%; height: 6px; border-radius: 8px; background: #b9bfb5; margin-bottom: 6px; }
+    .book-lines i:last-child { width: 58%; background: #555e55; }
+    .bars { height: 37px; display: flex; gap: 7px; align-items: end; }
+    .bars i { flex: 1; height: 60%; border-radius: 7px 7px 0 0; background: #515b51; }
+    .bars i:nth-child(2), .bars i:nth-child(5) { height: 88%; }
+    .bars i:nth-child(3) { height: 42%; }
+    .bars i:nth-child(6) { height: 100%; }
+    .screen-nav { font-size: 9px; display: flex; justify-content: space-between; border-top: 1px solid #c8cbc3; padding-top: 7px; position: absolute; left: 12px; right: 12px; bottom: 10px; }
+    .art-caption { position: absolute; right: 15px; bottom: 12px; font-size: 12px; color: #59645a; }
+    .precheck, .steps, .after, .faq { margin-top: 42px; }
+    .precheck-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .check { background: #f8f8f4; border: 1px solid #c8cbc3; border-radius: 17px; padding: 20px 21px; }
+    .check span { display: inline-grid; place-items: center; width: 28px; height: 28px; background: #343b34; color: white; border-radius: 50%; font-weight: 800; font-size: 14px; }
+    .check strong { display: block; margin: 12px 0 5px; font-size: 18px; }
+    .check p { color: #555d53; line-height: 1.55; margin: 0; font-size: 15px; }
+    .steps { margin-top: 70px; }
+    .steps ol { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; padding: 0; margin: 0; }
+    .step { overflow: hidden; background: #f8f8f4; border: 1px solid #c5c9c0; border-radius: 19px; }
+    .step-visual { height: 184px; background: #e1e4dc; border-bottom: 1px solid #d1d5cd; display: grid; place-items: center; }
+    .step-body { padding: 23px 23px 28px; }
+    .step-number { font-size: 13px; color: #516451; font-weight: 800; letter-spacing: .08em; }
+    .step p { color: #525b51; line-height: 1.65; font-size: 16px; margin: 0; }
+    .cable-figure { display: flex; align-items: center; }
+    .laptop { width: 112px; height: 81px; border: 7px solid #3d453e; border-bottom-width: 11px; border-radius: 9px 9px 5px 5px; background: #f6f7f3; display: grid; place-items: center; font-size: 11px; font-weight: 750; }
+    .cord { width: 45px; height: 25px; border-bottom: 4px solid #586558; border-radius: 0 0 18px 18px; margin-top: 20px; }
+    .mini-device { width: 61px; height: 96px; border: 5px solid #3d453e; border-radius: 9px; background: #f3f4ee; display: grid; place-items: center; font-weight: 800; font-size: 11px; }
+    .mock-dialog { width: 232px; border: 1px solid #aab0a6; border-radius: 11px; background: #fafaf8; box-shadow: 0 9px 20px #3a443a20; overflow: hidden; }
+    .dialog-top { height: 23px; background: #d5dad1; padding: 9px; display: flex; gap: 4px; }
+    .dialog-top i { width: 6px; height: 6px; background: #868e83; border-radius: 50%; }
+    .dialog-body { padding: 13px 16px 15px; font-size: 13px; }
+    .dialog-body strong { display: block; margin-bottom: 11px; }
+    .port { border: 2px solid #4b5b4c; border-radius: 7px; padding: 7px 8px; font-size: 12px; display: flex; align-items: center; gap: 8px; background: #edf0e9; }
+    .port::before { content: ""; width: 10px; height: 10px; border: 3px solid #4b5b4c; border-radius: 50%; }
+    .dialog-button { display: block; margin: 10px 0 0 auto; width: fit-content; background: #303a32; color: white; border-radius: 6px; padding: 5px 12px; font-size: 11px; }
+    .progress { height: 10px; background: #d3d8cf; border-radius: 20px; overflow: hidden; margin: 20px 0 5px; }
+    .progress i { display: block; width: 72%; height: 100%; background: #445645; border-radius: inherit; }
+    .percent { display: block; text-align: right; font-weight: 750; }
+    .flash-panel { margin-top: 24px; border-radius: 20px; background: #343d35; color: white; padding: 27px 31px; display: flex; align-items: center; justify-content: space-between; gap: 22px; }
+    .flash-panel h2 { font-size: 25px; margin: 5px 0 8px; }
+    .flash-panel p { font-size: 15px; line-height: 1.5; color: #e1e5de; margin: 0; }
+    esp-web-install-button { --esp-tools-button-color: white; --esp-tools-button-text-color: #29342a; --esp-tools-button-border-radius: 11px; }
+    button[slot=activate] { border: 0; border-radius: 11px; background: white; color: #29342a; padding: 16px 24px; font: inherit; font-size: 17px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+    .fallback { display: block; max-width: 240px; font-size: 14px; line-height: 1.5; color: white; }
+    .safety { border-left: 3px solid #757f73; padding-left: 17px; color: #4c564c; line-height: 1.65; font-size: 15px; margin: 16px 0 0; }
+    .after { margin-top: 76px; }
+    .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .tab { background: #f8f8f4; border: 1px solid #c7cbc2; border-radius: 16px; padding: 19px; }
+    .tab b { color: #5c6a5c; font-size: 13px; }
+    .tab strong { display: block; font-size: 20px; margin: 8px 0 5px; }
+    .tab p { margin: 0; font-size: 15px; color: #555f54; line-height: 1.55; }
+    .file-note { margin: 18px 0 0; line-height: 1.75; font-size: 16px; }
+    code { font-size: .95em; background: #f8f8f4; border: 1px solid #c9cdc3; padding: 2px 6px; border-radius: 5px; color: #314d36; }
+    .faq { margin-top: 70px; }
+    details { border-top: 1px solid #bec4b9; padding: 17px 0; }
+    details:last-child { border-bottom: 1px solid #bec4b9; }
+    summary { font-size: 18px; font-weight: 700; cursor: pointer; }
+    details p { color: #50594f; line-height: 1.7; margin: 11px 0 0; max-width: 800px; }
+    footer { border-top: 1px solid #bdc3b8; margin-top: 70px; padding-top: 23px; color: #5b655a; font-size: 13px; line-height: 1.75; }
+    footer p { margin: 0 0 10px; }
+    @media (max-width: 850px) {
+      .hero { grid-template-columns: 1fr; padding-top: 38px; gap: 24px; }
+      .hero-art { min-height: 255px; }
+      .pico-screen { transform: scale(.8) rotate(-5deg); }
+      .steps ol { grid-template-columns: 1fr; }
+      .step { display: grid; grid-template-columns: 42% 58%; }
+      .step-visual { height: 100%; min-height: 190px; border-right: 1px solid #d1d5cd; border-bottom: 0; }
+      .tabs { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 580px) {
+      .shell { width: calc(100% - 32px); }
+      .topbar-inner { min-height: 58px; }
+      .brand { font-size: 16px; }
+      .brand span { display: none; }
+      .hero { padding: 35px 0 28px; }
+      h1 { font-size: 40px; }
+      .lead { font-size: 17px; }
+      .hero-art { min-height: 220px; }
+      .pico-screen { transform: scale(.68) rotate(-5deg); }
+      .precheck-grid { grid-template-columns: 1fr; gap: 9px; }
+      .check { padding: 15px 17px; }
+      .check strong { display: inline; margin-left: 10px; font-size: 17px; }
+      .check p { margin: 6px 0 0 40px; font-size: 14px; }
+      .steps, .after, .faq { margin-top: 54px; }
+      .step { display: block; }
+      .step-visual { height: 178px; min-height: 0; border-right: 0; border-bottom: 1px solid #d1d5cd; }
+      .step-body { padding: 19px 20px 23px; }
+      .flash-panel { display: block; padding: 24px 22px; }
+      .flash-panel esp-web-install-button { display: block; margin-top: 19px; }
+      button[slot=activate] { width: 100%; }
+      .tabs { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
   </style>
 </head>
 <body>
-  <main>
-    <div class="eyebrow">PICO / FIRMWARE</div>
-    <h1>把阅读，装进 Pico。</h1>
-    <p class="lead">连接 Pico，在 Chrome 中刷入阅读固件。完成后可在文件管理首页使用 WiFi、热点或 USB 导入 EPUB 和 TXT。</p>
-    <section class="card">
-      <span class="device">0.3.3-rc41 · 仅适用于 Pico · ESP32-S3 · 16 MB Flash</span>
-      <h2>开始刷机</h2>
-      <ol>
-        <li>用支持数据传输的 USB-C 线连接 Pico 和电脑。</li>
-        <li>在 Chrome 中点击下方按钮，选择设备的串口。</li>
-        <li>刷机时不要勾选清空设备；此版本保留原有书籍、设置和阅读进度。</li>
-        <li>等待刷入完成并重启。在「文件管理」首页选择 WiFi、热点或 USB 传书。</li>
-      </ol>
-      <div class="install">
-        <esp-web-install-button manifest="./manifest.json">
-          <button slot="activate" type="button">连接设备并刷机</button>
-          <span slot="unsupported">请使用桌面版 Chrome 或 Edge，连接 USB 后重新打开此页。</span>
-          <span slot="not-allowed">请通过 localhost 或 HTTPS 打开此页。</span>
-        </esp-web-install-button>
-      </div>
-      <div class="note">首次识别 TF 卡时会建立 <strong>books</strong>、<strong>fonts</strong>、<strong>pictures</strong> 文件夹；也可在设备的文件管理中自选目录。固件仅内建思源黑体 Medium 子集，不附带其他字体文件。阅读页中键单击打开阅读设置，长按回书架。</div>
+  <header class="topbar"><div class="shell topbar-inner"><div class="brand">Pico <span>阅读固件 · 图文刷机指南</span></div><a class="jump" href="#flash-action">直接去刷机 ↓</a></div></header>
+  <main class="shell">
+    <section class="hero" aria-labelledby="title">
+      <div><div class="eyebrow">PICO / GET STARTED</div><h1 id="title">第一次刷机，<br>跟着做就好。</h1><p class="lead">准备好设备、电脑和一根 USB 数据线。看完下面的 3 步，就能在这个网页给 Pico 安装阅读固件。</p><div class="tags"><span>仅适用 RDP-G01-W</span><span>电脑 Chrome / Edge</span><span>USB-C 数据线</span></div></div>
+      <div class="hero-art" aria-hidden="true"><div class="pico-screen"><div class="screen-status"><span>9:41</span><span>78% ▰</span></div><div class="screen-title">首页</div><div class="screen-subtitle">继续阅读</div><div class="screen-book"><div class="cover"></div><div class="book-lines"><strong>我的书</strong><i></i><i></i></div></div><div class="screen-subtitle">近 7 天阅读</div><div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="screen-nav"><b>首页</b><span>书架</span><span>文件</span><span>设置</span></div></div><span class="art-caption">设备界面示意</span></div>
     </section>
-    <footer><a href="https://github.com/wegooo-cell/read-pico-reader" target="_blank" rel="noopener">查看项目源码</a>。这是基于 <a href="https://github.com/MindReset/read_pico_firmware" target="_blank" rel="noopener">MindReset Read Pico 示例固件</a>的独立项目，并非官方固件。图标设计引用 <a href="https://github.com/crosspoint-reader/crosspoint-reader" target="_blank" rel="noopener">CrossPoint Reader</a>，保留其 <a href="./licenses/CROSSPOINT-MIT.txt">MIT 许可</a>及 <a href="./licenses/LUCIDE-ISC.txt">Lucide ISC 许可</a>。<a href="./notices.html">查看完整第三方声明</a>。网页刷机使用 <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>。刷机前请确认设备型号。</footer>
+    <section class="precheck" aria-labelledby="need-title"><div class="eyebrow">BEFORE YOU START</div><h2 id="need-title">先准备这 3 样</h2><div class="precheck-grid"><div class="check"><span>1</span><strong>确认设备型号</strong><p>这份固件只给 MindReset Read Pico RDP-G01-W 使用。</p></div><div class="check"><span>2</span><strong>打开电脑浏览器</strong><p>在电脑上使用 Chrome 或 Edge 打开本页。</p></div><div class="check"><span>3</span><strong>准备数据线</strong><p>使用能传文件的 USB-C 线；仅能充电的线无法刷机。</p></div></div></section>
+    <section class="steps" aria-labelledby="steps-title"><div class="eyebrow">STEP BY STEP</div><h2 id="steps-title">按顺序完成 3 步</h2><ol>
+      <li class="step"><div class="step-visual" aria-hidden="true"><div class="cable-figure"><div class="laptop">Chrome / Edge</div><div class="cord"></div><div class="mini-device">Pico</div></div></div><div class="step-body"><div class="step-number">第 1 步 · 连接</div><h3>把 Pico 接到电脑</h3><p>插稳 USB 数据线，让设备接通电源。刷机期间保持连接。</p></div></li>
+      <li class="step"><div class="step-visual" aria-hidden="true"><div class="mock-dialog"><div class="dialog-top"><i></i><i></i><i></i></div><div class="dialog-body"><strong>选择串口</strong><div class="port">Pico 对应的串口</div><span class="dialog-button">连接</span></div></div></div><div class="step-body"><div class="step-number">第 2 步 · 选择</div><h3>选 Pico 的串口</h3><p>点击下方刷机按钮，浏览器会弹出设备列表。选择 Pico 对应的一项，再点“连接”。串口名称在不同电脑上可能不同。</p></div></li>
+      <li class="step"><div class="step-visual" aria-hidden="true"><div class="mock-dialog"><div class="dialog-top"><i></i><i></i><i></i></div><div class="dialog-body"><strong>正在安装阅读固件</strong><small>请保持 USB 连接</small><div class="progress"><i></i></div><span class="percent">72%</span></div></div></div><div class="step-body"><div class="step-number">第 3 步 · 等待</div><h3>确认安装，等它完成</h3><p>按弹窗提示开始安装。看到“完成”之前，不要拔线或关闭网页。</p></div></li>
+    </ol>
+    <div class="flash-panel" id="flash-action"><div><div class="eyebrow" style="color:#dbe3d8">READY TO FLASH</div><h2>准备好了？从这里开始</h2><p>当前版本 0.3.3-rc41 · 仅适用 RDP-G01-W（ESP32-S3，16 MB Flash）</p></div><esp-web-install-button manifest="./manifest.json"><button slot="activate" type="button">连接 Pico，开始刷机</button><span slot="unsupported" class="fallback">此浏览器无法连接串口。请改用电脑上的 Chrome 或 Edge 打开本页。</span><span slot="not-allowed" class="fallback">请用 HTTPS 地址打开本页后重试。</span></esp-web-install-button></div>
+    <p class="safety">正常刷机不会清空设备设置，也不会改动 TF 卡里的书。重要文件仍建议先备份；若弹窗出现“清除数据”选项，请勿选择。</p></section>
+    <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点或 USB 导入书籍和其他文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>
+    <section class="faq" aria-labelledby="faq-title"><div class="eyebrow">HELP</div><h2 id="faq-title">遇到问题时</h2><details><summary>点了按钮，却看不到 Pico 的串口？</summary><p>先确认你在电脑端 Chrome 或 Edge 中打开了本站，并退出 Pico 的 USB 读卡模式。换一根确定能传文件的 USB 线，拔插设备后重试；若串口被其他刷机工具占用，先关闭那个工具。</p></details><details><summary>刷完开机，为什么书架是空的？</summary><p>固件不预装书。请插入 TF 卡，在“文件管理”中使用 WiFi、热点或 USB 传书，也可以把 EPUB / TXT 文件放进 TF 卡的 <code>books</code> 文件夹。</p></details><details><summary>阅读时怎样打开设置？</summary><p>阅读正文时单击设备中间的触控键，打开阅读设置；长按中键可返回书架。</p></details></section>
+    <footer><p><a href="https://github.com/wegooo-cell/read-pico-reader" target="_blank" rel="noopener">查看项目源码</a> · <a href="./notices.html">第三方许可与致谢</a></p><p>本项目基于 <a href="https://github.com/MindReset/read_pico_firmware" target="_blank" rel="noopener">MindReset Read Pico 示例固件</a>，并非官方发布。图标设计引用 <a href="https://github.com/crosspoint-reader/crosspoint-reader" target="_blank" rel="noopener">CrossPoint Reader</a>，保留其 <a href="./licenses/CROSSPOINT-MIT.txt">MIT 许可</a>及相关 <a href="./licenses/LUCIDE-ISC.txt">Lucide ISC 许可</a>。网页刷机使用 <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>。</p></footer>
   </main>
 </body>
 </html>
