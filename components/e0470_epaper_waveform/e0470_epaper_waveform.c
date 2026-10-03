@@ -80,6 +80,27 @@ const EpdWaveform E0470_FOLLOW_WAVEFORM = {
     .temp_intervals = e0470_intervals,
 };
 
+/* ---- 错相 GL16 执行表 / Staggered GL16 apply waveform ---- */
+static uint8_t e0470_apply_data[1][16][4];
+static const EpdWaveformPhases e0470_apply_phases = {
+    .phases = 1,
+    .phase_times = NULL,
+    .luts = (const uint8_t*)&e0470_apply_data[0],
+};
+static const EpdWaveformPhases* e0470_apply_ranges[] = { &e0470_apply_phases };
+static const EpdWaveformMode e0470_apply_mode = {
+    .type = 1,
+    .temp_ranges = 1,
+    .range_data = &e0470_apply_ranges[0],
+};
+static const EpdWaveformMode* e0470_apply_modes[] = { &e0470_apply_mode };
+const EpdWaveform E0470_APPLY_WAVEFORM = {
+    .num_modes = 1,
+    .num_temp_ranges = 1,
+    .mode_data = e0470_apply_modes,
+    .temp_intervals = e0470_intervals,
+};
+
 /* ---- 阈值 DU / Threshold DU ---- */
 // 源表只认目标 0/15。中间灰按 50/50 切开，暗的走整段到黑、亮的走整段到白。
 // from 不切片，沿用源表对真实起点的时间序列，上一帧残留的浅墨也会被推到黑或白。
@@ -234,6 +255,7 @@ int e0470_phase_action(const EpdWaveformPhases* phases, int phase, int to, int f
 
 void e0470_waveform_init(void) {
     e0470_follow_lut_build(E0470_FOLLOW_FRAMES, e0470_follow_data);
+    e0470_follow_lut_build(1, e0470_apply_data);
     e0470_complete_du_build();
 
     const e0470_trim_t trim = {

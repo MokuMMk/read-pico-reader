@@ -75,7 +75,7 @@ static void fill_info(read_pico_sd_info_t* info, esp_err_t mount_err) {
     );
 }
 
-static void ensure_font_dirs(void) {
+static void ensure_media_dirs(void) {
     if (mkdir("/sdcard/assets", 0777) != 0 && errno != EEXIST) {
         ESP_LOGW(TAG, "mkdir assets: %d", errno);
     }
@@ -84,6 +84,12 @@ static void ensure_font_dirs(void) {
     }
     if (mkdir("/sdcard/fonts", 0777) != 0 && errno != EEXIST) {
         ESP_LOGW(TAG, "mkdir fonts: %d", errno);
+    }
+    if (mkdir("/sdcard/books", 0777) != 0 && errno != EEXIST) {
+        ESP_LOGW(TAG, "mkdir books: %d", errno);
+    }
+    if (mkdir("/sdcard/pictures", 0777) != 0 && errno != EEXIST) {
+        ESP_LOGW(TAG, "mkdir pictures: %d", errno);
     }
 }
 
@@ -129,18 +135,20 @@ static esp_err_t mount_card(bool format_if_failed) {
     if (err != ESP_OK) {
         card = NULL;
         ESP_LOGW(TAG, "Mount failed: %s", esp_err_to_name(err));
-    }
+    } else ensure_media_dirs();
     return err;
 }
 
-static void close_card(void) {
+static esp_err_t close_card(void) {
     if (card != NULL) {
         esp_err_t err = esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, card);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "unmount %s", esp_err_to_name(err));
+            return err;
         }
         card = NULL;
     }
+    return ESP_OK;
 }
 
 static void probe_task(void* arg) {
@@ -231,7 +239,12 @@ static bool begin_operation(void) {
 
 esp_err_t read_pico_sd_remount(void) {
     if (!begin_operation()) return ESP_ERR_NOT_FINISHED;
-    close_card();
+    esp_err_t err = close_card();
+    if (err != ESP_OK) {
+        read_pico_sd_info_t info = { .present = read_pico_sd_present(), .error = err };
+        publish_info(&info);
+        return err;
+    }
     portENTER_CRITICAL(&state_lock);
     memset(&cached_info, 0, sizeof(cached_info));
     media_invalidated = false;
@@ -242,7 +255,12 @@ esp_err_t read_pico_sd_remount(void) {
 
 esp_err_t read_pico_sd_sync(void) {
     if (!begin_operation()) return ESP_ERR_NOT_FINISHED;
-    close_card();
+    esp_err_t err = close_card();
+    if (err != ESP_OK) {
+        read_pico_sd_info_t info = { .present = read_pico_sd_present(), .mounted = true, .error = err };
+        publish_info(&info);
+        return err;
+    }
     read_pico_sd_info_t info = { .error = ESP_ERR_INVALID_STATE };
     publish_info(&info);
     return ESP_OK;
@@ -277,7 +295,7 @@ esp_err_t read_pico_sd_format(void) {
     read_pico_sd_info_t info = { 0 };
     fill_info(&info, err);
     if (err == ESP_OK) {
-        ensure_font_dirs();
+        ensure_media_dirs();
         fill_info(&info, ESP_OK);
         ESP_LOGI(TAG, "formatted %s", info.name);
     }

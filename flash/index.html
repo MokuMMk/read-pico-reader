@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pico · 阅读固件刷机</title>
+  <script type="module" src="./vendor/web/install-button.js"></script>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans SC", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #e9e8e2; color: #292b27; }
+    main { max-width: 760px; margin: 64px auto; padding: 24px; }
+    .eyebrow { font-size: 13px; letter-spacing: .22em; text-transform: uppercase; color: #686b63; }
+    h1 { font-family: "Songti SC", "Noto Serif SC", serif; font-size: clamp(36px, 7vw, 60px); margin: 12px 0 16px; font-weight: 600; }
+    .lead { color: #5d6059; font-size: 18px; line-height: 1.7; margin-bottom: 36px; }
+    .card { background: #f7f7f2; border: 1px solid #c8c9c1; border-radius: 18px; padding: 32px; box-shadow: 0 16px 45px #292b2710; }
+    .device { display: inline-block; border: 1px solid #8d9087; padding: 7px 12px; border-radius: 100px; color: #4c5149; font-size: 13px; }
+    h2 { font-size: 21px; margin: 26px 0 10px; }
+    ol { margin: 0 0 28px; padding-left: 23px; line-height: 1.9; color: #52564f; }
+    .install { border-top: 1px solid #d5d6ce; padding-top: 28px; }
+    esp-web-install-button { --esp-tools-button-color: #303730; --esp-tools-button-text-color: white; --esp-tools-button-border-radius: 10px; }
+    button[slot=activate] { border: 0; border-radius: 10px; background: #303730; color: white; padding: 16px 32px; font: inherit; font-weight: 600; cursor: pointer; }
+    .note { margin-top: 28px; padding: 18px 20px; border-left: 3px solid #777d72; background: #eeefe9; font-size: 14px; line-height: 1.7; color: #50554d; }
+    footer { margin-top: 26px; color: #7b7d76; font-size: 13px; line-height: 1.6; }
+    a { color: #3c5141; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">PICO / FIRMWARE</div>
+    <h1>把阅读，装进 Pico。</h1>
+    <p class="lead">连接 Pico，在 Chrome 中刷入阅读固件。完成后可在文件管理首页使用 WiFi、热点或 USB 导入 EPUB 和 TXT。</p>
+    <section class="card">
+      <span class="device">0.3.3-rc41 · 仅适用于 Pico · ESP32-S3 · 16 MB Flash</span>
+      <h2>开始刷机</h2>
+      <ol>
+        <li>用支持数据传输的 USB-C 线连接 Pico 和电脑。</li>
+        <li>在 Chrome 中点击下方按钮，选择设备的串口。</li>
+        <li>刷机时不要勾选清空设备；此版本保留原有书籍、设置和阅读进度。</li>
+        <li>等待刷入完成并重启。在「文件管理」首页选择 WiFi、热点或 USB 传书。</li>
+      </ol>
+      <div class="install">
+        <esp-web-install-button manifest="./manifest.json">
+          <button slot="activate" type="button">连接设备并刷机</button>
+          <span slot="unsupported">请使用桌面版 Chrome 或 Edge，连接 USB 后重新打开此页。</span>
+          <span slot="not-allowed">请通过 localhost 或 HTTPS 打开此页。</span>
+        </esp-web-install-button>
+      </div>
+      <div class="note">首次识别 TF 卡时会建立 <strong>books</strong>、<strong>fonts</strong>、<strong>pictures</strong> 文件夹；也可在设备的文件管理中自选目录。固件仅内建思源黑体 Medium 子集，不附带其他字体文件。阅读页中键单击打开阅读设置，长按回书架。</div>
+    </section>
+    <footer><a href="https://github.com/wegooo-cell/read-pico-reader" target="_blank" rel="noopener">查看项目源码</a>。这是基于 <a href="https://github.com/MindReset/read_pico_firmware" target="_blank" rel="noopener">MindReset Read Pico 示例固件</a>的独立项目，并非官方固件。图标设计引用 <a href="https://github.com/crosspoint-reader/crosspoint-reader" target="_blank" rel="noopener">CrossPoint Reader</a>，保留其 <a href="./licenses/CROSSPOINT-MIT.txt">MIT 许可</a>及 <a href="./licenses/LUCIDE-ISC.txt">Lucide ISC 许可</a>。<a href="./notices.html">查看完整第三方声明</a>。网页刷机使用 <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>。刷机前请确认设备型号。</footer>
+  </main>
+</body>
+</html>

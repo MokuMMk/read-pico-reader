@@ -4,8 +4,8 @@
  *
  * 双模式传书生命周期和跨任务状态；存储策略由调用方注入。
  * AP/STA transfer lifecycle and cross-task status; caller supplies storage policy.
- * 冻结：仅接收 TXT/EPUB；不依赖页面或图书实现。
- * Frozen: accept TXT/EPUB only; no page or book implementation dependency.
+ * 冻结：图书仅接收 TXT/EPUB；字体与图片只进入各自固定目录；不依赖页面或图书实现。
+ * Frozen: book uploads accept TXT/EPUB only; font and image uploads use fixed directories; no page or book implementation dependency.
  * 冻结：热点网页或停服后的设备触屏可配网；已有WiFi模式不接受远程修改凭据。
  * Frozen: AP webpage or stopped-service device UI may provision; STA rejects remote credential changes.
  */
@@ -34,12 +34,20 @@ typedef enum {
 
 typedef struct {
     read_pico_transfer_mode_t mode; ///< 网络模式，默认热点 / Network mode, default AP
+    bool network_only; ///< 仅连接已有 WiFi，不启动上传服务或访问存储 / Connect saved WiFi without upload server or storage
     const char *root_dir; ///< 已挂载根目录，start 内复制 / Mounted root, copied by start
     bool is_flash; ///< 内置存储标志 / Internal storage flag
     size_t file_limit; ///< 单文件上限，零表示不限 / Per-file limit, zero means unlimited
     uint64_t (*free_bytes_cb)(void *ctx); ///< 查询可用字节 / Query available bytes
     void *free_bytes_ctx; ///< 回调上下文，stop 前有效 / Callback context valid until stop
+    bool (*title_get_cb)(const char *path, char *out, size_t cap); ///< 读取显示书名覆盖 / Read title override
+    esp_err_t (*title_set_cb)(const char *path, const char *title); ///< 保存显示书名覆盖 / Save title override
     esp_err_t (*file_changed_cb)(const char *path); ///< 文件提交或删除后清除进度；失败不回滚文件 / Clear progress after commit or deletion; failure never rolls back the file
+    void (*file_deleted_cb)(const char *path); ///< 网页文件管理删除后的元数据清理 / Metadata cleanup after web file deletion
+    void (*file_moved_cb)(const char *old_path, const char *new_path, uint32_t size); ///< 网页重命名后的进度与字体路径迁移 / Migrate progress and font selection after rename
+    void (*directory_deleted_cb)(const char *path); ///< 删除目录后清理目录设置 / Clear directory settings after deletion
+    void (*directory_moved_cb)(const char *old_path, const char *new_path); ///< 重命名目录后更新目录设置 / Update directory settings after rename
+    bool (*wallpaper_set_cb)(const char *path); ///< 图片上传完成后设为锁屏壁纸 / Select an uploaded image as lock wallpaper
 } read_pico_transfer_cfg_t;
 
 typedef struct {
@@ -73,7 +81,12 @@ void read_pico_transfer_service_poll(void);
 esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured);
 /// 仅热点或停止状态可遗忘；上传中拒绝。/ Forget only while AP or stopped; rejected during upload.
 esp_err_t read_pico_transfer_forget_wifi(void);
-/// 停服后同步扫描2.4GHz网络；最多16个去重SSID，按信号降序，所有临时资源均释放。/ Scan synchronously while stopped; up to 16 unique SSIDs by descending RSSI; release all temporary resources.
+/// 停服后同步扫描2.4GHz网络；最多16个去重SSID，按信号降序，临时射频和STA接口均释放。/ Scan synchronously while stopped; up to 16 unique SSIDs by descending RSSI; release temporary radio and STA resources.
 esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PICO_TRANSFER_SCAN_MAX], size_t *count);
 /// 停服后保存设备输入的凭据，不自动连接；密码校验与网页相同。/ Save device-entered credentials while stopped without connecting; validation matches the webpage.
 esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password);
+/// 已连接 STA 时复用网络；停服时临时联网。成功返回 UTC 秒，保留原本在线状态。
+/// Reuse a connected STA or connect briefly while stopped; return UTC seconds and preserve the prior online state.
+esp_err_t read_pico_transfer_sync_time(uint32_t *utc_seconds);
+/// 已连接 STA 时对时，不断开 WiFi；供 HTTPS 页面校验证书。/ Sync time on connected STA without disconnecting WiFi for HTTPS certificate checks.
+esp_err_t read_pico_transfer_sync_time_online(uint32_t *utc_seconds);

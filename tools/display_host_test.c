@@ -11,16 +11,26 @@
 #include <stdio.h>
 #include <string.h>
 #include "display.h"
+#include "app_config.h"
 #include "e0470_epaper_waveform.h"
 
 #define FB_BYTES 128
-const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1};
+const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_GRAY8_WAVEFORM = {2};
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
-static int clocks, powerons, clears, draws, full_draws, safe_clock, prefill;
+static int clocks, powerons, clears, draws, full_draws, safe_clock, prefill, last_mode, last_scan;
 static bool white_baseline, correct_target_at_draw;
+static enum EpdDrawError water_result;
+static int water_calls;
+
+enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir) {
+    assert(hl && area.width > 0 && dir == E0470_TURN_RTL);
+    ++water_calls;
+    assert(last_scan == READ_PICO_EPD_SCAN_FAST);
+    return water_result;
+}
 
 void read_pico_epd_set_pclk(int mhz) { ++clocks; safe_clock = mhz; }
-void read_pico_epd_use_scan(read_pico_epd_scan_t scan) { assert(scan == READ_PICO_EPD_SCAN_FULL); }
+void read_pico_epd_use_scan(read_pico_epd_scan_t scan) { last_scan = scan; }
 void epd_lcd_set_prefill_lines(int lines) { prefill = lines; }
 void epd_poweron(void) { ++powerons; }
 void epd_poweroff(void) {}
@@ -32,9 +42,10 @@ int64_t esp_timer_get_time(void) { return 1000000; }
 void epd_hl_set_all_white(EpdiyHighlevelState* hl) { memset(hl->front_fb, 255, FB_BYTES); }
 void epd_hl_waveform(EpdiyHighlevelState* hl, const EpdWaveform* waveform) { hl->waveform = waveform; }
 static enum EpdDrawError draw(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, bool full) {
-    assert(mode == MODE_GC16 && temperature == 25 && clears > 0);
+    assert((mode == MODE_DU || mode == MODE_GL16 || mode == MODE_GC16) && temperature == 25);
     ++draws;
     full_draws += full;
+    last_mode = mode;
     white_baseline = true;
     for (size_t i = 0; i < FB_BYTES; ++i) if (hl->back_fb[i] != 255) white_baseline = false;
     correct_target_at_draw = memcmp(hl->front_fb, target, FB_BYTES) == 0;
@@ -46,6 +57,14 @@ enum EpdDrawError epd_hl_update_screen(EpdiyHighlevelState* hl, enum EpdDrawMode
     return draw(hl, mode, temperature, false);
 }
 enum EpdDrawError epd_hl_update_screen_full(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature) {
+    return draw(hl, mode, temperature, true);
+}
+enum EpdDrawError epd_hl_update_area(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, EpdRect area) {
+    (void)area;
+    return draw(hl, mode, temperature, false);
+}
+enum EpdDrawError epd_hl_update_area_full(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, EpdRect area) {
+    (void)area;
     return draw(hl, mode, temperature, true);
 }
 // 与 highlevel.c:142 相同：白后缓冲后，强制整屏推目标前缓冲。
@@ -61,13 +80,36 @@ int main(void) {
     memcpy(front, target, FB_BYTES);
     memset(back, 0x55, FB_BYTES);
     EpdiyHighlevelState hl = {.front_fb = front, .back_fb = back, .waveform = &E0470_WAVEFORM};
+    // 局部控件刷新不推进整页清残影计数；第 40 次整页差分才升级为 GC16。
+    // Local control updates do not advance cleanup; only the 40th whole-page differential promotes to GC16.
+    clears = draws = full_draws = last_mode = 0;
+    for (int i = 0; i < 80; ++i)
+        assert(update_display_area_with(&hl, &E0470_WAVEFORM, MODE_GL16, (EpdRect){0, 0, 16, 16}) == EPD_DRAW_SUCCESS);
+    assert(last_mode == MODE_GL16);
+    for (int i = 0; i < APP_UI_GC16_EVERY - 1; ++i) {
+        assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS);
+        assert(last_mode == MODE_GL16);
+    }
+    assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS);
+    assert(last_mode == MODE_GC16);
+
+    // 普通系统页走 8 灰阶差分 GL16，达到阈值时同步清残影，不追加延迟刷新。
+    // Ordinary system pages use 8-gray differential GL16 and clean synchronously at the threshold.
+    for (int i = 0; i < APP_UI_FAST_GC16_EVERY - 1; ++i) {
+        assert(update_display_fast_page(&hl) == EPD_DRAW_SUCCESS);
+        assert(last_mode == MODE_GL16 && last_scan == READ_PICO_EPD_SCAN_FULL);
+    }
+    assert(update_display_fast_page(&hl) == EPD_DRAW_SUCCESS);
+    assert(last_mode == MODE_GC16 && last_scan == READ_PICO_EPD_SCAN_FULL && full_draws > 0);
+
+    clocks = powerons = clears = draws = full_draws = last_mode = 0;
     guard_draw_result(&hl, EPD_DRAW_SUCCESS);
     guard_draw_result(&hl, EPD_DRAW_OTHER_ERROR);
     assert(!clocks && !clears && !draws && !memcmp(front, target, FB_BYTES));
     for (int bulk = 0; bulk < 2; ++bulk) {
         memcpy(front, target, FB_BYTES);
         memset(back, 0x55, FB_BYTES);
-        clocks = powerons = clears = draws = full_draws = 0;
+        clocks = powerons = clears = draws = full_draws = last_mode = 0;
         display_set_bulk_io(bulk != 0);
         guard_draw_result(&hl, EPD_DRAW_EMPTY_LINE_QUEUE | EPD_DRAW_OTHER_ERROR);
         if (memcmp(front, target, FB_BYTES)) {
@@ -80,5 +122,19 @@ int main(void) {
         assert(clocks == 1 && safe_clock == DISPLAY_PCLK_SAFE_MHZ && display_pclk_mhz() == DISPLAY_PCLK_SAFE_MHZ);
         assert(powerons == 1 && clears == 1 && prefill == (bulk ? 127 : 32));
     }
+    // 缺波形直接沿用 GL16；扫描中断则从白底重建整屏目标，不把半途像素当作已完成。
+    // Missing phases use GL16; an interrupted scan rebuilds the target from white.
+    display_set_bulk_io(false);
+    memcpy(front, target, FB_BYTES);
+    memset(back, 0x55, FB_BYTES);
+    water_calls = draws = clears = 0;
+    water_result = EPD_DRAW_NO_PHASES_AVAILABLE;
+    assert(update_display_water_turn(&hl, (EpdRect){0, 0, 16, 16}, E0470_TURN_RTL) == EPD_DRAW_SUCCESS);
+    assert(water_calls == 1 && draws == 1 && !clears && last_mode == MODE_GL16);
+    memset(back, 0x55, FB_BYTES);
+    water_result = EPD_DRAW_OTHER_ERROR;
+    assert(update_display_water_turn(&hl, (EpdRect){0, 0, 16, 16}, E0470_TURN_RTL) == EPD_DRAW_SUCCESS);
+    assert(water_calls == 2 && clears == 1 && white_baseline && correct_target_at_draw);
+    assert(last_mode == MODE_GC16 && !memcmp(back, target, FB_BYTES));
     puts("display underrun: front retained, white back baseline, full GC16 recovery and bulk prefill passed");
 }

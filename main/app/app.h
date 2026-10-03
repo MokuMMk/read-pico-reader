@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * demo 页的统一接口。每个页面是一个 app_desc_t，放在 main/apps/ 下自己的文件里，
+ * 产品页面的统一接口。每个页面是一个 app_desc_t，放在 main/apps/ 下自己的文件里，
  * 绘制、命中、轮询和页内状态都封在那一个文件中；app_loop.c 只按这套回调调度，
  * 加一个页面不必再改主循环。
  *
@@ -99,6 +99,10 @@ struct app_desc_s {
     /// 菜单关闭时接管三键，页面必须提供强刷和菜单入口。
     /// Own all three keys outside the menu; provide full refresh and menu exits.
     bool owns_keys;
+    /// 中键短按在抬起时执行，便于长按触发不同动作。/ Fire middle-key short action on release so a hold can differ.
+    bool defer_middle_short;
+    /// 可选：按当前页面决定右下角菜单把手是否响应。/ Decide whether the bottom-right menu handle is active.
+    bool (*menu_handle_enabled)(app_ctx_t* ctx);
     /// 进页/离页。on_enter 里做上电、唤醒传感器、拉一次数据这类副作用。
     /// / Enter/exit. on_enter powers up, wakes sensors, takes a first sample.
     void (*on_enter)(app_ctx_t* ctx);
@@ -106,6 +110,8 @@ struct app_desc_s {
     /// TF 挂载失效：停止并等待后台任务、关闭文件；主循环随后回退字体并重绘，菜单打开时也通知。
     /// On TF mount loss, join background work and close files before font fallback/redraw; also called behind menus.
     void (*on_media_lost)(app_ctx_t* ctx);
+    /// 锁屏前保存页面的阅读状态。/ Persist page state before lock rendering.
+    void (*on_before_lock)(app_ctx_t* ctx);
     /// 纯绘制，不做 I2C 写、蜂鸣这类副作用，整屏强刷才能安全复用它。
     /// / Paint only. No I2C writes or buzzer. KEY2 full redraw reuses this.
     void (*render)(app_ctx_t* ctx, uint8_t* fb);
@@ -118,8 +124,8 @@ struct app_desc_s {
     /// 默认只收 UI_KEY_1；owns_keys 页面在菜单外接收三键。
     /// / Only KEY1 normally; owns_keys pages receive all three keys outside the menu.
     app_redraw_t (*on_key)(app_ctx_t* ctx, int key);
-    /// 可选：owns_keys 页面同键持续按住500ms触发一次，按下回调仍先执行；滑出/中断取消。
-    /// Optional: fire once after a 500ms same-key hold on owns_keys pages; press still fires first, leaving/interruption cancels.
+    /// 可选：owns_keys 页面同键持续按住500ms触发一次；defer_middle_short 时中键短按只在抬起执行。
+    /// Optional: fire after a 500ms hold; with defer_middle_short, the middle short action runs only on release.
     app_redraw_t (*on_key_long)(app_ctx_t* ctx, int key);
     /// 每轮都调，页面自己判断到不到刷新间隔。
     /// / Called every tick; the page decides if its interval has elapsed.

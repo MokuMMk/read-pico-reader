@@ -22,6 +22,20 @@ static bool admission_stop(bool *stopping, bool uploading) {
     *stopping = true; return true;
 }
 
+typedef enum {
+    TRANSFER_TIME_UNAVAILABLE,
+    TRANSFER_TIME_TEMPORARY,
+    TRANSFER_TIME_ONLINE,
+} transfer_time_route_t;
+
+// 在线 STA 对时不得重新初始化 WiFi；仅完全停服时可短暂联网。
+// Never reinitialize WiFi for an online STA; connect briefly only when fully stopped.
+static transfer_time_route_t time_route(bool wifi_active, bool sta_mode,
+                                         bool network_ready, bool fully_stopped) {
+    if (wifi_active) return sta_mode && network_ready ? TRANSFER_TIME_ONLINE : TRANSFER_TIME_UNAVAILABLE;
+    return fully_stopped ? TRANSFER_TIME_TEMPORARY : TRANSFER_TIME_UNAVAILABLE;
+}
+
 // 正文须在15秒内收齐；每次阻塞接收前后检查停止。/ Accept bodies only within 15 seconds; check cancellation around each blocking receive.
 static bool receive_credentials_body(char *body, size_t total,
         int (*receive)(void *, char *, size_t), bool (*stopped)(void *),

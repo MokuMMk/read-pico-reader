@@ -26,6 +26,9 @@ static size_t s_capacity;
 static char* s_line;
 static EpdRect s_rect;
 static int s_px;
+static unsigned s_line_percent = 150, s_paragraph_percent = 50;
+static size_t s_lead_skip;
+static unsigned s_lead_height;
 
 static const blk_t* s_blocks;
 static size_t s_block_count;
@@ -56,6 +59,39 @@ static size_t codepoint_size(const char* text, size_t remaining) {
     return n;
 }
 
+static uint32_t codepoint_value(const char* text, size_t n) {
+    const unsigned char* p = (const unsigned char*)text;
+    if (n == 1) return p[0];
+    uint32_t cp = p[0] & (0x7f >> n);
+    for (size_t i = 1; i < n; ++i) cp = (cp << 6) | (p[i] & 63);
+    return cp;
+}
+
+// 中文排版禁则：右标点不得出现在行首，左标点不得停在行尾。
+// CJK kinsoku: closing punctuation may not start a line; opening punctuation may not end one.
+static bool prohibited_line_start(uint32_t cp) {
+    switch (cp) {
+        case 0x0021: case 0x0025: case 0x0029: case 0x002c: case 0x002e: case 0x003a:
+        case 0x003b: case 0x003f: case 0x005d: case 0x007d:
+        case 0x2019: case 0x201d: case 0x2026: case 0x3001: case 0x3002: case 0x3009:
+        case 0x300b: case 0x300d: case 0x300f: case 0x3011: case 0x3015: case 0x3017:
+        case 0x3019: case 0x301b: case 0xff01: case 0xff05: case 0xff09: case 0xff0c:
+        case 0xff0e: case 0xff1a: case 0xff1b: case 0xff1f: case 0xff3d: case 0xff5d:
+            return true;
+        default: return false;
+    }
+}
+
+static bool prohibited_line_end(uint32_t cp) {
+    switch (cp) {
+        case 0x0028: case 0x005b: case 0x007b: case 0x2018: case 0x201c: case 0x3008:
+        case 0x300a: case 0x300c: case 0x300e: case 0x3010: case 0x3014: case 0x3016:
+        case 0x3018: case 0x301a: case 0xff08: case 0xff3b: case 0xff5b:
+            return true;
+        default: return false;
+    }
+}
+
 void book_layout_free(void) {
     free(s_pages);
     free(s_line);
@@ -66,6 +102,26 @@ void book_layout_free(void) {
     s_px = 0;
     s_blocks = NULL;
     s_block_count = 0;
+}
+
+void book_layout_set_spacing(unsigned line_percent, unsigned paragraph_percent) {
+    s_line_percent = line_percent >= 110 && line_percent <= 200 ? line_percent : 150;
+    s_paragraph_percent = paragraph_percent <= 100 ? paragraph_percent : 50;
+}
+void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px) {
+    s_lead_skip = skip_bytes;
+    s_lead_height = height_px;
+}
+
+int book_layout_page_image(size_t page) {
+    if (page >= s_count || !s_block_count) return -1;
+    const blk_t* block = block_at(s_pages[page]);
+    return block && block->offset == s_pages[page] ? block->image : -1;
+}
+
+static int line_height_for(int px) { return (int)((unsigned)px * s_line_percent / 100); }
+static int gap_for(int height, bool heading) {
+    return (int)((unsigned)height * s_paragraph_percent / (heading ? 150 : 100));
 }
 
 static bool append_page(size_t off) {
@@ -82,18 +138,31 @@ static bool append_page(size_t off) {
 }
 
 // 折行时保留原文字节位置；CRLF 算一个段落边界。/ Preserve source offsets while wrapping; CRLF is one paragraph boundary.
-static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bool* heading) {
+static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bool* heading,
+                      int* line_width, int* indent, uint8_t* align,
+                      int* margin_before, int* margin_after) {
     const blk_t* block = block_at(off);
     *heading = block && block->heading;
     *px = s_px + (*heading ? 8 : 0);
+    bool first_line = block && off == block->offset;
+    *indent = first_line ? (int)((unsigned)*px * block->indent_percent / 100) : 0;
+    if (*indent >= s_rect.width) *indent = s_rect.width > 1 ? s_rect.width - 1 : 0;
+    *align = block ? block->align : 0;
+    *margin_before = first_line ? (int)((unsigned)*px * block->margin_before_percent / 100) : 0;
+    *margin_after = block ? (int)((unsigned)*px * block->margin_after_percent / 100) : 0;
+    int available = s_rect.width - *indent;
     size_t limit = block ? block->offset + block->len : s_len;
     size_t end = off;
+    size_t last_start = off;
+    uint32_t last_cp = 0;
     int64_t width = 0;
+    int64_t last_width = 0;
     s_line[0] = 0;
     *paragraph_end = false;
     while (end < limit && s_text[end] != '\r' && s_text[end] != '\n') {
         size_t n = codepoint_size(s_text + end, s_len - end);
         if (!n) return false;
+        uint32_t cp = codepoint_value(s_text + end, n);
         // 字体逐字取整后累加 advance；单字测量避免反复扫描整行前缀。
         // Font advances are rounded per glyph and summed; measure each glyph once instead of every prefix.
         char glyph[5];
@@ -101,15 +170,42 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
         glyph[n] = 0;
         int64_t candidate = width + ttf_text_width_px(*px, glyph);
         if (candidate < 0) return false;
-        if (candidate > s_rect.width) {
+        if (candidate > available) {
             if (end == off) return false;
+            // 句末标点允许悬挂一个字宽，避免下一行以标点开头。
+            // Hang one closing mark into the margin rather than start the next line with it.
+            if (prohibited_line_start(cp) && candidate <= (int64_t)available + *px * 2) {
+                memcpy(s_line + end - off, glyph, n);
+                s_line[end - off + n] = 0;
+                width = candidate;
+                end += n;
+                break;
+            }
+            // 若最后一个字是左括号，将它回退到下一行；极窄行则让括号和首字成组悬挂。
+            // Move a trailing opener to the next line; on a one-glyph line keep the pair together.
+            if (prohibited_line_end(last_cp)) {
+                if (last_start > off) {
+                    end = last_start;
+                    s_line[end - off] = 0;
+                    width = last_width;
+                } else if (candidate <= (int64_t)available + *px * 2) {
+                    memcpy(s_line + end - off, glyph, n);
+                    s_line[end - off + n] = 0;
+                    width = candidate;
+                    end += n;
+                }
+            }
             break;
         }
+        last_width = width;
         width = candidate;
+        last_start = end;
+        last_cp = cp;
         memcpy(s_line + end - off, glyph, n);
         s_line[end - off + n] = 0;
         end += n;
     }
+    *line_width = (int)width;
     *next = end;
     if (end < s_len && (s_text[end] == '\r' || s_text[end] == '\n')) {
         *next = end + 1;
@@ -125,10 +221,11 @@ bool book_layout_build(const char* utf8, size_t len, EpdRect rect, int px) {
 
 bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks, size_t count, EpdRect rect, int px) {
     book_layout_free();
-    if ((!utf8 && len) || len == SIZE_MAX || px <= 0 || px > INT_MAX / 3 ||
+    if ((!utf8 && len) || len == SIZE_MAX || s_lead_skip > len || s_lead_height >= (unsigned)rect.height ||
+        px <= 0 || px > INT_MAX / 3 ||
         rect.width <= 0 || rect.height <= 0 || rect.x < 0 || rect.y < 0 ||
         rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height) return false;
-    int line_height = px + px / 2;
+    int line_height = line_height_for(px);
     if (line_height > rect.height) return false;
     for (size_t off = 0; off < len;) {
         size_t n = codepoint_size(utf8 + off, len - off);
@@ -156,22 +253,35 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
     s_px = px;
     s_rect = rect;
     s_line = heap_caps_malloc(len + 1, PSRAM_CAPS);
-    if (!s_line || !append_page(0)) goto fail;
-    size_t off = 0;
-    int64_t used = 0;
+    if (!s_line || !append_page(s_lead_skip)) goto fail;
+    size_t off = s_lead_skip;
+    int64_t used = s_lead_height;
     while (off < len) {
+        const blk_t* block = block_at(off);
+        if (block && block->image >= 0 && off == block->offset) {
+            if (used && !append_page(off)) goto fail;
+            used = rect.height;
+            off = block->offset + block->len;
+            if (off < len && utf8[off] == '\n') ++off;
+            continue;
+        }
         size_t next;
         bool paragraph_end, heading;
-        int line_px;
-        if (!take_line(off, &next, &paragraph_end, &line_px, &heading)) goto fail;
-        line_height = line_px + line_px / 2;
+        int line_px, line_width, indent, margin_before, margin_after;
+        uint8_t align;
+        if (!take_line(off, &next, &paragraph_end, &line_px, &heading,
+                       &line_width, &indent, &align, &margin_before, &margin_after)) goto fail;
+        (void)line_width; (void)indent; (void)align;
+        line_height = line_height_for(line_px);
         if (line_height > rect.height) goto fail;
-        if (used + line_height > rect.height) {
+        int leading = used ? margin_before : 0;
+        if (used + leading + line_height > rect.height) {
             if (!append_page(off)) goto fail;
             used = 0;
+            leading = 0;
         }
-        used += line_height;
-        if (paragraph_end) used += line_height / (heading ? 2 : 3);
+        used += leading + line_height;
+        if (paragraph_end) used += gap_for(line_height, heading) + margin_after;
         off = next;
     }
     return true;
@@ -201,21 +311,30 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
         rect.height != s_rect.height || rect.x < 0 || rect.y < 0 ||
         rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height) return;
     size_t off = s_pages[page];
+    if (book_layout_page_image(page) >= 0) return;
     size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
-    int64_t used = 0;
+    int64_t used = page == 0 ? s_lead_height : 0;
     while (off < end) {
         size_t next;
         bool paragraph_end, heading;
-        int line_px;
-        if (!take_line(off, &next, &paragraph_end, &line_px, &heading)) return;
-        int line_height = line_px + line_px / 2;
-        if (used + line_height > rect.height) return;
+        int line_px, line_width, indent, margin_before, margin_after;
+        uint8_t align;
+        if (!take_line(off, &next, &paragraph_end, &line_px, &heading,
+                       &line_width, &indent, &align, &margin_before, &margin_after)) return;
+        int line_height = line_height_for(line_px);
+        int leading = used ? margin_before : 0;
+        if (used + leading + line_height > rect.height) return;
+        used += leading;
         if (s_line[0]) {
-            ttf_draw_text_px(fb, rect.x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
+            int x = rect.x + indent;
+            int available = rect.width - indent;
+            if (align == 1) x += (available - line_width) / 2;
+            else if (align == 2) x += available - line_width;
+            ttf_draw_text_px(fb, x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
                              s_line, EPD_DRAW_ALIGN_LEFT, 0, 15);
         }
         used += line_height;
-        if (paragraph_end) used += line_height / (heading ? 2 : 3);
+        if (paragraph_end) used += gap_for(line_height, heading) + margin_after;
         off = next;
     }
 }

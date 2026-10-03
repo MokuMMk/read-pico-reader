@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan UI strings and subset ChillDuanSans VF into main/assets/builtin.ttf."""
+"""Scan UI strings and subset OFL Noto Sans SC Medium into main/assets/builtin.ttf."""
 
 from __future__ import annotations
 
@@ -27,8 +27,9 @@ SCAN_DIRS = [
     ROOT / "components/read_pico_pmu",
 ]
 TEXT_SUFFIXES = {".md", ".txt"}
-# 阅读正文补齐后 VF 子集会超过旧的 400KB；标题还要 wght=700，不能实例化成 Regular。
+# 阅读正文补齐后 VF 子集会超过旧的 400KB；系统字库使用固定 Medium 字重。
 MAX_BYTES = 700 * 1024
+BUILTIN_WEIGHT = 500
 STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
 
 
@@ -114,16 +115,25 @@ def subset_variable(src: Path, text: str, dest: Path) -> int:
     return dest.stat().st_size
 
 
-def subset_regular(src: Path, text: str, dest: Path) -> int:
+def subset_medium(src: Path, text: str, dest: Path) -> int:
     from fontTools.subset import Subsetter, Options
     from fontTools.ttLib import TTFont
     from fontTools.varLib.instancer import instantiateVariableFont
 
     vf = TTFont(src)
     if "fvar" in vf:
-        inst = instantiateVariableFont(vf, {"wght": 400}, inplace=False)
+        inst = instantiateVariableFont(vf, {"wght": BUILTIN_WEIGHT}, inplace=False)
         vf.close()
         vf = inst
+    if vf["OS/2"].usWeightClass != BUILTIN_WEIGHT:
+        raise ValueError(f"source cannot provide wght={BUILTIN_WEIGHT}")
+    for name_id, value in (
+        (1, "Noto Sans SC"),
+        (2, "Medium"),
+        (4, "Noto Sans SC Medium"),
+        (6, "NotoSansSC-Medium"),
+    ):
+        vf["name"].setName(value, name_id, 3, 1, 0x409)
     options = Options()
     options.layout_features = ["*"]
     options.notdef_outline = True
@@ -140,12 +150,12 @@ def subset_regular(src: Path, text: str, dest: Path) -> int:
 
 def default_src() -> Path:
     for path in (
-        ROOT / "ChillDuanSansVF.ttf",
-        ROOT / "tools/fonts/ChillDuanSansVF.ttf",
+        ROOT / "sdcard/fonts/Hei.ttf",
+        ROOT / "flash/fonts/Hei.ttf",
     ):
         if path.is_file():
             return path
-    return ROOT / "ChillDuanSansVF.ttf"
+    return ROOT / "sdcard/fonts/Hei.ttf"
 
 
 def main() -> int:
@@ -161,12 +171,8 @@ def main() -> int:
     cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
     print(f"charset {len(text)} chars ({cjk} CJK)")
 
-    size = subset_variable(args.src, text, args.out)
-    mode = "VF"
-    if size > MAX_BYTES:
-        print(f"VF subset {size} bytes > {MAX_BYTES}, instantiate wght=400")
-        size = subset_regular(args.src, text, args.out)
-        mode = "Regular"
+    size = subset_medium(args.src, text, args.out)
+    mode = f"Medium (wght={BUILTIN_WEIGHT})"
     print(f"wrote {args.out} ({size} bytes, {mode})")
     if size > MAX_BYTES:
         print("subset still too large", file=sys.stderr)

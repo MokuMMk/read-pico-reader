@@ -20,6 +20,7 @@
 
 static const char* TAG = "read_pico";
 static bool s_bulk_io;
+static int s_pclk_mhz = DISPLAY_PCLK_DEFAULT_MHZ;
 
 void display_set_bulk_io(bool active) {
     s_bulk_io = active;
@@ -58,33 +59,33 @@ static void use_scan_for(const EpdWaveform* waveform, enum EpdDrawMode mode) {
     epd_lcd_set_prefill_lines(s_bulk_io ? 127 : (fast ? 64 : 32));
 }
 
-// 自上次 GC16 以来的差分刷（DU/GL16）次数。
-// Soft (DU/GL16) updates since the last GC16.
-static int s_soft_refreshes;
+// 自上次整屏 GC16 以来的整页差分次数。局部反馈不计数，否则菜单按压几次就会触发黑白全刷。
+// Whole-page differentials since the last full GC16. Local feedback is excluded so a few taps cannot trigger flashing.
+static int s_page_refreshes;
 
 // 所有按 fb 刷屏的出口都经这里。GL16 必须全像素（白底补 1 帧靠它打到）。
-// 差分刷攒够 APP_GC16_EVERY 次就把这一次升为全像素 GC16：区域、fb 都不变，只换模式，
+// 整页差分刷攒够 APP_UI_GC16_EVERY 次就把这一次升为全像素 GC16：区域、fb 都不变，只换模式，
 // 屏上内容仍由 fb 决定，不会丢；全像素是为了让未变化像素也过一遍 LUT，否则压不掉灰底。
 // 跟随 DU 波形只有 DU 一张表，不计数也不升级。
 // Every fb present goes through here. GL16 must be full-pixel (the extra white
-// frame depends on that). After APP_GC16_EVERY soft updates, this one is
+// frame depends on that). After APP_UI_GC16_EVERY whole-page updates, this one is
 // promoted to full-pixel GC16: area and fb stay the same, only the mode
 // changes, so content is not lost. Full-pixel is so unchanged pixels also run
 // the LUT; otherwise the gray floor will not clear. FOLLOW DU has only a DU
 // table and does not count or promote.
 static enum EpdDrawError hl_update(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode, bool full,
-    const EpdRect* area
+    const EpdRect* area, bool allow_gl16_diff
 ) {
-    full = full || (mode & 0xF) == MODE_GL16;
-    if (waveform != &E0470_FOLLOW_WAVEFORM) {
+    full = full || ((mode & 0xF) == MODE_GL16 && !allow_gl16_diff);
+    if (waveform != &E0470_FOLLOW_WAVEFORM && area == NULL) {
         if ((mode & 0xF) == MODE_GC16) {
-            s_soft_refreshes = 0;
-        } else if (APP_GC16_EVERY > 0 && ++s_soft_refreshes >= APP_GC16_EVERY) {
-            s_soft_refreshes = 0;
+            s_page_refreshes = 0;
+        } else if (APP_UI_GC16_EVERY > 0 && ++s_page_refreshes >= APP_UI_GC16_EVERY) {
+            s_page_refreshes = 0;
             mode = (enum EpdDrawMode)((mode & ~0xF) | MODE_GC16);
             full = true;
-            ESP_LOGI(TAG, "promote to GC16 after %d soft refreshes", APP_GC16_EVERY);
+            ESP_LOGI(TAG, "promote to GC16 after %d page transitions", APP_UI_GC16_EVERY);
         }
     }
     if (area != NULL) {
@@ -99,7 +100,36 @@ enum EpdDrawError update_display_mode(
 ) {
     use_scan_for(&E0470_WAVEFORM, mode);
     epd_poweron();
-    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL);
+    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL, false);
+    rails_keepalive();
+    return result;
+}
+
+enum EpdDrawError update_display_mode_diff(
+    EpdiyHighlevelState* hl, enum EpdDrawMode mode
+) {
+    use_scan_for(&E0470_WAVEFORM, mode);
+    epd_poweron();
+    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL, true);
+    rails_keepalive();
+    return result;
+}
+
+enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl) {
+    if (APP_UI_FAST_GC16_EVERY > 0 && ++s_page_refreshes >= APP_UI_FAST_GC16_EVERY) {
+        s_page_refreshes = 0;
+        use_scan_for(&E0470_WAVEFORM, MODE_GC16);
+        epd_poweron();
+        enum EpdDrawError result = epd_hl_update_screen_full(hl, MODE_GC16, 25);
+        rails_keepalive();
+        ESP_LOGI(TAG, "fast navigation cleanup after %d transitions", APP_UI_FAST_GC16_EVERY);
+        return result;
+    }
+    use_scan_for(&E0470_GRAY8_WAVEFORM, MODE_GL16);
+    epd_poweron();
+    epd_hl_waveform(hl, &E0470_GRAY8_WAVEFORM);
+    enum EpdDrawError result = epd_hl_update_screen(hl, MODE_GL16, 25);
+    epd_hl_waveform(hl, &E0470_WAVEFORM);
     rails_keepalive();
     return result;
 }
@@ -112,7 +142,7 @@ enum EpdDrawError update_display_from_white_with(
     epd_hl_waveform(hl, waveform);
     enum EpdDrawError result = epd_hl_update_screen_from_white(hl, mode, 25);
     epd_hl_waveform(hl, &E0470_WAVEFORM);
-    s_soft_refreshes = 0;
+    s_page_refreshes = 0;
     rails_keepalive();
     return result;
 }
@@ -141,7 +171,7 @@ bool display_take_white_exit(void) {
 enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
     use_scan_for(&E0470_WAVEFORM, MODE_GC16);
     epd_poweron();
-    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, MODE_GC16, true, NULL);
+    enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, MODE_GC16, true, NULL, false);
     rails_keepalive();
     return result;
 }
@@ -154,7 +184,7 @@ enum EpdDrawError update_display_with(
     use_scan_for(waveform, mode);
     epd_poweron();
     epd_hl_waveform(hl, waveform);
-    enum EpdDrawError result = hl_update(hl, waveform, mode, false, NULL);
+    enum EpdDrawError result = hl_update(hl, waveform, mode, false, NULL, false);
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     rails_keepalive();
     return result;
@@ -167,16 +197,57 @@ enum EpdDrawError update_display_area_with(
     use_scan_for(waveform, mode);
     epd_poweron();
     epd_hl_waveform(hl, waveform);
-    enum EpdDrawError result = hl_update(hl, waveform, mode, false, &area);
+    enum EpdDrawError result = hl_update(hl, waveform, mode, false, &area, false);
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     rails_keepalive();
     return result;
 }
 
+enum EpdDrawError update_display_area_diff_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
+    EpdRect area
+) {
+    use_scan_for(waveform, mode);
+    epd_poweron();
+    epd_hl_waveform(hl, waveform);
+    enum EpdDrawError result = hl_update(hl, waveform, mode, false, &area, true);
+    epd_hl_waveform(hl, &E0470_WAVEFORM);
+    rails_keepalive();
+    return result;
+}
+
+enum EpdDrawError update_display_water_turn(EpdiyHighlevelState* hl, EpdRect area,
+                                             e0470_turn_dir_t dir) {
+    // 只在阅读页显式调用；普通页面仍走原刷新路径。
+    // Only the reader calls this path; ordinary pages keep their existing refresh policy.
+    read_pico_epd_use_scan(READ_PICO_EPD_SCAN_FAST);
+    epd_lcd_set_prefill_lines(s_bulk_io ? 127 : 64);
+    epd_poweron();
+    enum EpdDrawError result = e0470_page_turn(hl, area, dir);
+    use_scan_for(&E0470_WAVEFORM, MODE_GL16);
+    rails_keepalive();
+    if (result == EPD_DRAW_SUCCESS) return result;
+    if (result == EPD_DRAW_NO_PHASES_AVAILABLE) {
+        ESP_LOGW(TAG, "water turn phases unavailable; use regular GL16");
+        return update_display_area_with(hl, &E0470_WAVEFORM, MODE_GL16, area);
+    }
+    // 中断可能把物理屏留在半途。清屏后按目标 front 重建整屏基准。
+    // An interrupted scan may leave intermediate pixels. Rebuild the whole baseline from white.
+    if (result & EPD_DRAW_EMPTY_LINE_QUEUE) {
+        s_pclk_mhz = DISPLAY_PCLK_SAFE_MHZ;
+        read_pico_epd_set_pclk(DISPLAY_PCLK_SAFE_MHZ);
+    }
+    use_scan_for(&E0470_WAVEFORM, MODE_GC16);
+    epd_clear();
+    enum EpdDrawError recovered = epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
+    s_page_refreshes = 0;
+    rails_keepalive();
+    ESP_LOGW(TAG, "water turn failed (%d), recovery=%d", result, recovered);
+    return recovered;
+}
+
 // 供数不足时的兜底：把频率退回安全值，整屏白一次，让后面的差分刷有干净参考帧。
 // Underrun fallback: drop to the safe clock and wipe the panel white so later differentials have a clean reference.
-static int s_pclk_mhz = DISPLAY_PCLK_DEFAULT_MHZ;
-
 int display_pclk_mhz(void) { return s_pclk_mhz; }
 
 void guard_draw_result(EpdiyHighlevelState* hl, enum EpdDrawError result) {
@@ -189,7 +260,7 @@ void guard_draw_result(EpdiyHighlevelState* hl, enum EpdDrawError result) {
     // 清物理屏后仅重置旧帧基准，保留目标页；否则局部刷新会留下整页白屏。
     // Reset only the old-frame baseline after clearing; preserving the target prevents blank pages after partial updates.
     epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
-    s_soft_refreshes = 0;
+    s_page_refreshes = 0;
     rails_keepalive();
     ESP_LOGW(TAG, "line queue underrun, pclk back to %d MHz", DISPLAY_PCLK_SAFE_MHZ);
 }

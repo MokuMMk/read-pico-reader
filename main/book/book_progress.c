@@ -103,7 +103,7 @@ bool book_progress_load(const char* path, uint32_t size, book_progress_t* out) {
     nvs_close(h);
     if (err != ESP_OK || !record_valid(data, len) ||
         strcmp((const char*)data + HEADER_SIZE, path) != 0 || get32(data + 4) != size ||
-        data[14] < 36 || data[14] > 72 || (data[14] - 36) % 4 != 0 || data[15] > 100) return false;
+        data[14] < 36 || data[14] > 72 || data[15] > 100) return false;
     *out = (book_progress_t){
         .file_size = get32(data + 4), .chapter = (uint16_t)(data[8] | (data[9] << 8)),
         .byte_off = get32(data + 10), .px = data[14], .pct = data[15],
@@ -126,7 +126,7 @@ static esp_err_t check_owner(nvs_handle_t h, const char* key, const char* path) 
 
 esp_err_t book_progress_save(const char* path, const book_progress_t* progress) {
     if (!path_valid(path) || progress == NULL || progress->px < 36 || progress->px > 72 ||
-        (progress->px - 36) % 4 != 0 || progress->pct > 100) return ESP_ERR_INVALID_ARG;
+        progress->pct > 100) return ESP_ERR_INVALID_ARG;
     uint8_t data[RECORD_CAP] = {'R', 'P', 'B', 2};
     put32(data + 4, progress->file_size);
     data[8] = (uint8_t)progress->chapter;

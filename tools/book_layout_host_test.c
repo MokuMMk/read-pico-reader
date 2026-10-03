@@ -14,7 +14,7 @@
 static char drawn[20000];
 static size_t measured_codepoints;
 static size_t measure_calls;
-static int first_draw_px, last_draw_px;
+static int first_draw_px, last_draw_px, first_draw_x, last_draw_x;
 int ttf_text_width_px(int px, const char* text) {
     int n = 0, width = 0;
     for (; *text; text++) if (((unsigned char)*text & 0xc0) != 0x80) {
@@ -28,10 +28,11 @@ int ttf_text_width_px(int px, const char* text) {
 int ttf_ascender_px(int px) { return px; }
 void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
                       enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
-    (void)fb; (void)x; (void)y; (void)px; (void)align;
+    (void)fb; (void)y; (void)px; (void)align;
     assert(fg <= 15 && bg <= 15);
-    if (!drawn[0]) first_draw_px = px;
+    if (!drawn[0]) { first_draw_px = px; first_draw_x = x; }
     last_draw_px = px;
+    last_draw_x = x;
     assert(strlen(drawn) + strlen(text) < sizeof(drawn));
     strcat(drawn, text);
 }
@@ -105,7 +106,8 @@ int main(void) {
     book_layout_free();
     assert(book_layout_page_count() == 0);
     const char styled[] = "Title\nbody";
-    blk_t blocks[] = {{0, 5, true}, {6, 4, false}};
+    blk_t blocks[] = {{.offset = 0, .len = 5, .heading = true, .image = -1},
+                      {.offset = 6, .len = 4, .heading = false, .image = -1}};
     r = (EpdRect){0, 0, 100, 45};
     assert(book_layout_build_blocks(styled, strlen(styled), blocks, 2, r, 10));
     assert(book_layout_page_count() == 2);
@@ -114,6 +116,30 @@ int main(void) {
     book_layout_draw_page(&fb, 0, r, 10);
     book_layout_draw_page(&fb, 1, r, 10);
     assert(!strcmp(drawn, "Titlebody") && first_draw_px == 18 && last_draw_px == 10);
+    const char punct[] = "甲乙，丙";
+    r = (EpdRect){0, 0, 20, 15};
+    assert(book_layout_build(punct, strlen(punct), r, 10));
+    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(1) == 9);
+    const char opener[] = "甲（乙丙";
+    assert(book_layout_build(opener, strlen(opener), r, 10));
+    assert(book_layout_page_count() == 3 && book_layout_page_start_offset(1) == 3);
+    const char aligned[] = "甲乙";
+    blk_t aligned_block = {.offset = 0, .len = strlen(aligned), .image = -1,
+                           .align = 1, .indent_percent = 100};
+    r = (EpdRect){10, 0, 100, 30};
+    assert(book_layout_build_blocks(aligned, strlen(aligned), &aligned_block, 1, r, 10));
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(first_draw_x == 55 && last_draw_x == 55);
+    r = (EpdRect){0, 0, 100, 45};
+    book_layout_set_chapter_lead(6, 20);
+    assert(book_layout_build_blocks(styled, strlen(styled), blocks, 2, r, 10));
+    assert(book_layout_page_count() == 1);
+    assert(book_layout_page_start_offset(0) == 6);
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(!strcmp(drawn, "body"));
+    book_layout_set_chapter_lead(0, 0);
     r.width = 20;
     assert(book_layout_build_blocks(styled, strlen(styled), blocks, 2, r, 10));
     assert(book_layout_page_count() == 6);
@@ -129,7 +155,8 @@ int main(void) {
     blocks[1].len = SIZE_MAX;
     assert(!book_layout_build_blocks(styled, strlen(styled), blocks, 2, r, 10));
     assert(!book_layout_build_blocks(styled, strlen(styled), NULL, 2, r, 10));
-    blk_t split_utf8[] = {{0, 1, true}, {2, 2, false}};
+    blk_t split_utf8[] = {{.offset = 0, .len = 1, .heading = true, .image = -1},
+                          {.offset = 2, .len = 2, .heading = false, .image = -1}};
     assert(!book_layout_build_blocks("甲\nx", 5, split_utf8, 2, r, 10));
     assert(book_layout_build("body", 4, r, 10));
     drawn[0] = 0;

@@ -44,6 +44,25 @@ int main(void) {
     t = parse("<h2>two</h2><h3>three</h3><h4>four</h4><li>x</li><tr>y</tr><hr><blockquote>z</blockquote>", "two\nthree\nfour\nx\ny\nz");
     assert(t.count == 6 && t.blocks[0].heading && t.blocks[1].heading && !t.blocks[2].heading);
     html_text_free(&t);
+    t = parse("<style>body{margin-bottom: .5em} p{ text-indent:2em; margin-top:8px } .center{text-align:center}</style>"
+              "<p class='center'>甲</p><p style='text-align:right; margin-bottom:25%'>乙</p>", "甲\n乙");
+    assert(t.count == 2);
+    assert(t.blocks[0].align == 1 && t.blocks[0].indent_percent == 200);
+    assert(t.blocks[0].margin_before_percent == 50 && t.blocks[0].margin_after_percent == 50);
+    assert(t.blocks[1].align == 2 && t.blocks[1].indent_percent == 200);
+    assert(t.blocks[1].margin_after_percent == 25);
+    html_text_free(&t);
+    t = parse("<p>前</p><img src='data:image/png;base64,x' data-src='../图&amp;文.png'/>"
+              "<svg:image xlink:href='../svg.png'/><object data='../obj.png'/>",
+              "前\n￼\n￼\n￼");
+    assert(t.image_count == 3 && !strcmp(t.images[0], "../图&文.png") &&
+           !strcmp(t.images[1], "../svg.png") && !strcmp(t.images[2], "../obj.png"));
+    html_text_free(&t);
+    const char* external = ".center{text-align:center}";
+    assert(html_to_blocks_with_css("<p class='center'>甲</p>", strlen("<p class='center'>甲</p>"),
+                                    external, strlen(external), &t) == ESP_OK);
+    assert(t.count == 1 && t.blocks[0].align == 1);
+    html_text_free(&t);
     t = parse("  <div><div> </div></div><br><hr> ", "");
     assert(t.count == 0);
     html_text_free(&t);

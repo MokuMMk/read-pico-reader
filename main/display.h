@@ -13,6 +13,7 @@
 
 #include "epd_highlevel.h"
 #include "epdiy.h"
+#include "e0470_page_turn.h"
 #include "read_pico_epd_timing.h"
 
 #ifdef __cplusplus
@@ -45,6 +46,12 @@ void rails_idle_check(int64_t now_ms);
 void display_set_bulk_io(bool active);
 
 enum EpdDrawError update_display_mode(EpdiyHighlevelState* hl, enum EpdDrawMode mode);
+/// 普通页面切换使用真实差分 GL16；未变化像素不进入 dirty map。
+/// True differential GL16 for ordinary page transitions; unchanged pixels stay clean.
+enum EpdDrawError update_display_mode_diff(EpdiyHighlevelState* hl, enum EpdDrawMode mode);
+/// 系统页切换：30 相 8 灰阶差分 GL16，累计若干次同步做 GC16 清残影；不安排延迟二次刷新。
+/// System page transition: 30-phase 8-gray differential GL16 with synchronous periodic GC16 cleanup and no delayed repaint.
+enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_from_white_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
@@ -64,6 +71,18 @@ enum EpdDrawError update_display_area_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 );
+/// 动画定稿只驱动真实差异，不强制把区域内所有 GL16 像素重刷。
+/// Animation settle drives real differences only instead of forcing every GL16 pixel in the area.
+enum EpdDrawError update_display_area_diff_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
+    EpdRect area
+);
+/// 阅读页可选的真实错相 GL16 翻页；缺相位时回退现有 GL16，失败时恢复基准帧。
+/// Optional staggered GL16 reader turn; fall back on missing phases and recover the baseline after failure.
+enum EpdDrawError update_display_water_turn(EpdiyHighlevelState* hl, EpdRect area,
+                                             e0470_turn_dir_t dir);
+/// 动画中间帧使用灰阶波形，但不累计周期清屏计数；动画最终帧走普通刷新出口。
+/// Use grayscale for animation strips without advancing periodic cleanup; the final frame uses the normal path.
 
 /// 当前像素时钟。/ Current pixel clock.
 int display_pclk_mhz(void);

@@ -1,0 +1,45 @@
+name: Publish web flasher
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - flash/index.html
+      - flash/notices.html
+      - flash/manifest.json
+      - flash/firmware.bin
+      - flash/bootloader.bin
+      - flash/partitions.bin
+      - flash/vendor/**
+      - flash/licenses/**
+      - THIRD_PARTY_NOTICES.md
+      - tools/stage_public_flash.py
+      - tools/verify_flash_bundle.py
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate and stage public flashing files
+        run: python3 tools/stage_public_flash.py _site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -51,8 +51,9 @@ typedef int BaseType_t;
 #define pdMS_TO_TICKS(x) (x)
 #define ESP_LOGW(...) ((void)0)
 #define ESP_LOGI(...) ((void)0)
-static bool present=true, drop_during_mount=false;
+static bool present=true, drop_during_mount=false, unmount_fail=false;
 static int mounts, unmounts, formats;
+static bool made_books, made_fonts, made_pictures;
 static sdmmc_card_t mock_card={.cid={"MOCK"},.csd={2048,512}};
 static void (*pending)(void*);
 static bool read_pico_sd_present(void) { return present; }
@@ -65,9 +66,15 @@ static int esp_vfs_fat_info(const char* p,uint64_t* total,uint64_t* freeb) {(voi
 static int esp_vfs_fat_sdmmc_mount(const char* p,const sdmmc_host_t* h,const sdmmc_slot_config_t* s,const esp_vfs_fat_sdmmc_mount_config_t* c,sdmmc_card_t** card) {
     (void)p;(void)h;(void)s;assert(!c->format_if_mount_failed);mounts++;*card=&mock_card;if(drop_during_mount)present=false;return 0;
 }
-static int esp_vfs_fat_sdcard_unmount(const char* p,sdmmc_card_t* c){(void)p;assert(c==&mock_card);unmounts++;return 0;}
+static int esp_vfs_fat_sdcard_unmount(const char* p,sdmmc_card_t* c){(void)p;assert(c==&mock_card);unmounts++;return unmount_fail ? ESP_FAIL : ESP_OK;}
 static int esp_vfs_fat_sdcard_format(const char* p,sdmmc_card_t* c){(void)p;(void)c;formats++;return 0;}
-static int mock_mkdir(const char* p,int mode){(void)p;(void)mode;return 0;}
+static int mock_mkdir(const char* p,int mode){
+    (void)mode;
+    if(!strcmp(p,"/sdcard/books")) made_books=true;
+    if(!strcmp(p,"/sdcard/fonts")) made_fonts=true;
+    if(!strcmp(p,"/sdcard/pictures")) made_pictures=true;
+    return 0;
+}
 #define mkdir mock_mkdir
 #include "../../components/read_pico/read_pico_sd.c"
 static void finish_probe(void) {assert(pending);void(*f)(void*)=pending;pending=NULL;f(NULL);}
@@ -88,6 +95,7 @@ int main(void) {
     assert(read_pico_sd_sync()==ESP_ERR_NOT_FINISHED);
     finish_probe();
     assert(read_pico_sd_get_info(&info)==ESP_OK && info.mounted && info.capacity_bytes);
+    assert(made_books && made_fonts && made_pictures);
     present=false;
     assert(read_pico_sd_get_info(&info)==ESP_ERR_NOT_FOUND);
     assert(!info.mounted && !info.needs_format && !info.capacity_bytes && !info.free_bytes && !info.name[0]);
@@ -117,6 +125,13 @@ int main(void) {
     assert(read_pico_sd_get_info(&info)==ESP_OK);
     assert(read_pico_sd_sync()==ESP_OK);
     assert(read_pico_sd_get_info(&info)==ESP_ERR_INVALID_STATE && !info.mounted && !info.capacity_bytes);
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    finish_probe();
+    unmount_fail=true;
+    assert(read_pico_sd_sync()==ESP_FAIL && card==&mock_card);
+    assert(read_pico_sd_get_info(&info)==ESP_FAIL && info.mounted);
+    unmount_fail=false;
+    assert(read_pico_sd_sync()==ESP_OK && card==NULL);
     pthread_t reader;
     assert(pthread_create(&reader,NULL,snapshot_reader,NULL)==0);
     for(int i=0;i<100;i++) {

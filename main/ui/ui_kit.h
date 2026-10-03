@@ -92,17 +92,34 @@ extern "C" {
 // epdiy 图形接口取 8 位灰度（仅高 4 位有效），字体属性取 4 位灰度，两者不可混用。
 // epdiy graphics uses 8-bit gray (high nibble only); font attrs use 4-bit gray. Do not mix them.
 #define UI_GRAY_WHITE 0xFF
-#define UI_GRAY_LIGHT 0xB0
+#define UI_GRAY_LIGHT 0x90
 #define UI_GRAY_BLACK 0x00
 #define UI_INK_WHITE 15
 #define UI_INK_BLACK 0
 
+/// 在现有画面上绘制半透明、轻度模糊的灰阶挡板。/ Draw a translucent, softly blurred grayscale guard over the existing image.
+void ui_draw_acrylic_guard(uint8_t *framebuffer, EpdRect rect);
+void ui_draw_frosted_pocket(uint8_t *framebuffer, EpdRect rect);
+
 /// 文字按「行的上沿」定位，基线由字号推出，调用处不用再算 ascender。
 /// Text is placed by the top of the line; the baseline comes from the size so callers skip the ascender.
+/// 系统页面字号放大 1.2 倍；阅读正文保持原字号。/ Enlarge system text by 1.2x while preserving reader text size.
+void ui_text_set_system_scale(bool enabled);
+void ui_text_set_system_font(bool enabled);
+int ui_text_effective_px(int px);
+/// 灰阶图片在绘制时增强明暗差，原始缓存保持不变。/ Increase image contrast at draw time without altering cached pixels.
+uint8_t ui_contrast_gray(uint8_t gray);
 void ui_text(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 );
+/// Draw UI metadata at the exact requested size, independent of the global UI-size preference.
+/// 按指定像素字号绘制系统信息，不受全局系统字号设置影响。
+void ui_text_fixed(
+    uint8_t* framebuffer, int x, int y_top, int px, const char* text,
+    enum EpdFontFlags align, bool inverted
+);
+int ui_text_fixed_width_px(int px, const char* text);
 void ui_text_bw(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted

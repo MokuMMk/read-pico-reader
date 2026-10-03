@@ -5,15 +5,23 @@
 #include "app_loop.h"
 #include "ui_gesture.h"
 #include "ui_menu.h"
+#include "ui_power_dialog.h"
 #include <assert.h>
 #include <setjmp.h>
 #include <stdio.h>
 #include <string.h>
 
+const app_desc_t app_book = {.title="book"};
+const app_desc_t app_transfer = {.title="transfer"};
+EpdRect ui_power_dialog_rect(void) {return (EpdRect){72,240,540,700};}
+void ui_power_dialog_draw(uint8_t* fb) {(void)fb;}
+ui_power_action_t ui_power_dialog_handle(const ui_gesture_event_t* event) {(void)event;return UI_POWER_ACTION_NONE;}
+void ui_power_final_draw(uint8_t* fb,bool restarting) {(void)fb;(void)restarting;}
+
 static jmp_buf done;
 typedef struct { int x, y, count, error; } sample_t;
 static sample_t samples[32];
-static int sample_count, step, ticks, enters, exits, touch_calls, keys[3], events[8];
+static int sample_count, step, ticks, enters, exits, touch_calls, keys[3], events[16];
 static int menus, highlights, restores, fulls, mode, tick_consumed[32];
 static int long_keys;
 static app_redraw_t long_key(app_ctx_t* c, int k) { assert(k==UI_KEY_2); ++long_keys; c->request_menu=true; return APP_REDRAW_NONE; }
@@ -46,16 +54,22 @@ void guard_draw_result(EpdiyHighlevelState* h,enum EpdDrawError e) {(void)h;asse
 enum EpdDrawError update_display_area_with(EpdiyHighlevelState*h,const void*w,int m,EpdRect a) {(void)h;(void)w;(void)a;if(m==MODE_DU)du_areas++;else if(m==MODE_GL16)gl_areas++;return 0;}
 enum EpdDrawError update_display_full(EpdiyHighlevelState*h) {(void)h;fulls++;return 0;}
 enum EpdDrawError update_display_mode(EpdiyHighlevelState*h,int m) {(void)h;(void)m;mode++;return 0;}
+enum EpdDrawError update_display_mode_diff(EpdiyHighlevelState*h,int m) {(void)h;(void)m;mode++;return 0;}
+enum EpdDrawError update_display_fast_page(EpdiyHighlevelState*h) {(void)h;mode++;return 0;}
 enum EpdDrawError update_display_white(EpdiyHighlevelState*h) {(void)h;return 0;}
 bool display_take_white_exit(void) {return false;}
 void rails_idle_check(int64_t n) {(void)n;}
 bool read_pico_pmu_ready(void) {return lock_due;}
-bool read_pico_pmu_take_key_short(void) {return true;}
-void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a) {(void)h;(void)t;(void)a;lock_due=false;time_offset+=1000000;}
+read_pico_pmu_key_action_t read_pico_pmu_take_key_action(void) {return READ_PICO_PMU_KEY_SHORT;}
+void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,bool reader) {(void)h;(void)t;(void)a;(void)reader;lock_due=false;time_offset+=1000000;}
+void app_lock_wait_key_idle(int ms) {(void)ms;}
+void app_enter_host_sleep(app_sleep_mode_t mode) {(void)mode;longjmp(done,1);}
+void app_restart_host(void) {longjmp(done,1);}
+void epd_poweroff(void) {}
 const char* app_settings_font_path(void) {return "builtin";}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
 bool ttf_font_ready(void) {return true;}
-bool ttf_font_is_builtin(void) {return !font_due&&!sd_font;}
+bool ttf_font_is_builtin(void) {return !sd_font;}
 const char* ttf_font_path(void) {return "other";}
 int ttf_font_open(const char*p) {(void)p;font_opens++;sd_font=true;return 0;}
 int ttf_font_open_builtin(void) {assert(media_lost>0);builtin_opens++;sd_font=font_due=false;return 0;}
@@ -147,7 +161,9 @@ int main(void) {
     reset();first.on_gesture=gesture;full_tick=true;add(100,400,1,0);add(0,0,0,0);run();
     assert(events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]);
     reset();first.on_gesture=gesture;font_due=true;time_offset=4000000;add(100,400,1,0);add(0,0,0,0);run();
-    assert(events[UI_GESTURE_CANCEL]==1&&!events[UI_GESTURE_TAP]&&tick_consumed[0]);
+    // 开机首帧前已加载保存字体，因此首个手势无需再被延迟字体切换取消。
+    // The saved font is ready before the first frame, so the first gesture is no longer cancelled.
+    assert(events[UI_GESTURE_PRESS]==1&&events[UI_GESTURE_TAP]==1&&font_opens==1);
     reset();first.owns_keys=true;add(650,1150,1,0);add(0,0,0,0);add(240,1500,1,0);add(0,0,0,0);add(400,1500,1,0);run();
     assert(!keys[1]&&!keys[2]&&fulls==2&&menus==2);
     reset();add(650,1150,1,0);add(0,0,0,0);
@@ -230,10 +246,10 @@ int main(void) {
     // No automatic probing after invalidation; an explicit remount restores saved-font loading and loss detection.
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=true;time_step=4000000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
-    assert(media_lost==1&&builtin_opens==1&&!probes&&font_opens==1);
+    assert(media_lost==1&&builtin_opens==1&&!probes&&!font_opens);
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=mounted_steps[2]=true;time_step=4000000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
-    assert(media_lost==2&&builtin_opens==2&&!probes&&font_opens==2);
+    assert(media_lost==2&&builtin_opens==2&&!probes&&font_opens==1);
     puts("app_loop: 42 scheduler scenarios passed");
     return 0;
 }

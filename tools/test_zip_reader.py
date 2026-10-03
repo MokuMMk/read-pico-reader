@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """生成正常/损坏 ZIP 并运行解析器。/ Generate valid/malformed ZIPs and exercise the parser."""
 import io
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -48,12 +49,12 @@ def main():
 
         payload = ("中文文本\n" * 1000).encode()
         for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
-            for data in (b"", b"hello", payload, bytes(range(256)) * 100):
+            for data in (b"", b"hello", payload, bytes(range(256)) * 100, os.urandom(128 * 1024)):
                 run("read", archive(data, method), expected=data)
         run("read", archive(payload, stream=True), expected=payload)
         run("read", archive(payload, comment=b"x" * 65535), expected=payload)
-        run("read", archive(b"x" * (2 * 1024 * 1024)), expected=b"x" * (2 * 1024 * 1024))
-        run("reject-open", archive(b"x" * (2 * 1024 * 1024 + 1)))
+        run("read", archive(b"x" * (8 * 1024 * 1024)), expected=b"x" * (8 * 1024 * 1024))
+        run("reject-extract", archive(b"x" * (8 * 1024 * 1024 + 1)))
         good = archive(payload)
         cd = good.index(b"PK\x01\x02")
         eocd = good.rindex(b"PK\x05\x06")
@@ -87,11 +88,11 @@ def main():
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w"): pass
         run("empty", buffer.getvalue())
-        for count in (512, 513):
+        for count in (4096, 4097):
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, "w") as z:
                 for i in range(count): z.writestr(f"entry{i}.txt", b"")
-            run("empty" if count == 512 else "reject-open", buffer.getvalue())
+            run("empty" if count == 4096 else "reject-open", buffer.getvalue())
         # ZIP64 扩展不依赖哨兵值也必须拒绝。/ Reject ZIP64 extras even without sentinel sizes.
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as z:

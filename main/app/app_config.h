@@ -12,9 +12,9 @@
 
 #include "epdiy.h"
 
-// 日常整页用 GL16，白底残影靠 APP_GC16_EVERY 周期 GC16 压掉。
+// 常规页面用 GL16；阅读翻页用 DU，并在翻页当下周期性 GC16 压残影，不做延迟二次刷新。
 // KEY2、铺白、睡眠画面这类「清屏重来」仍直接走 GC16。
-// Daily pages use GL16; APP_GC16_EVERY periodically GC16-cleans the gray floor.
+// General pages use GL16; reading turns use DU with immediate periodic GC16 ghost cleanup and no delayed second refresh.
 // KEY2, wipe-to-white and sleep faces still go GC16.
 #define APP_REFRESH_BALANCED 0
 #define APP_REFRESH_ALL_DU 1
@@ -37,8 +37,11 @@
 // 手指、传感器等连续变化过程始终优先响应速度。/ Motion always prefers DU.
 #define APP_DYNAMIC_REFRESH_MODE MODE_DU
 
-// 差分刷（DU/GL16）连续多少次后，下一次自动升为全像素 GC16 压掉累积的灰底。
-// 跟随 DU（E0470_FOLLOW_WAVEFORM）不计数也不升级。0 = 关闭。
-// After this many DU/GL16 updates, the next one is a full-pixel GC16.
-// FOLLOW DU does not count. 0 disables the upgrade.
-#define APP_GC16_EVERY 14
+// 系统页面只统计整页切换；按钮、弹窗和封面等局部刷新不累计，避免几次操作后就黑白全刷。
+// 阅读页另有独立的可选整屏清残影周期。
+// Count only whole system-page transitions; local controls, dialogs and cover updates do not advance
+// the cleanup cadence. Reading keeps its own configurable full-screen cleanup interval.
+#define APP_UI_GC16_EVERY 40
+// 普通系统页使用 8 灰阶差分 GL16；累计到此次数做一次完整 GC16，避免短 DU 的重残影。
+// Ordinary system pages use 8-gray differential GL16 and periodically run a full GC16 to avoid heavy short-DU ghosting.
+#define APP_UI_FAST_GC16_EVERY 12

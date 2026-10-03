@@ -158,5 +158,10 @@ int main(void) {
     connection_lost(&net, 100000);
     assert(connection_poll(&net, 100999) == 0);
     assert(connection_poll(&net, 101000) == 1 && net.attempts == 1);
+    assert(time_route(true, true, true, false) == TRANSFER_TIME_ONLINE);
+    assert(time_route(true, true, false, false) == TRANSFER_TIME_UNAVAILABLE);
+    assert(time_route(true, false, true, false) == TRANSFER_TIME_UNAVAILABLE);
+    assert(time_route(false, true, false, true) == TRANSFER_TIME_TEMPORARY);
+    assert(time_route(false, true, false, false) == TRANSFER_TIME_UNAVAILABLE);
     puts("transfer WiFi policy tests passed");
 }

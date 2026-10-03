@@ -8,6 +8,16 @@
 #include "transfer_ui_test_env.h"
 #include "../main/apps/app_transfer.c"
 #include <assert.h>
+static bool test_usb_active;
+static esp_err_t test_usb_stop_error;
+esp_err_t usb_storage_start(void) { test_usb_active = true; return ESP_OK; }
+esp_err_t usb_storage_stop(void) {
+    if (test_usb_stop_error != ESP_OK) return test_usb_stop_error;
+    test_usb_active = false;
+    return ESP_OK;
+}
+bool usb_storage_active(void) { return test_usb_active; }
+bool usb_storage_connected(void) { return test_usb_active; }
 static void tap(app_ctx_t* ctx, EpdRect rect) {
     ui_gesture_event_t ev = {.type = UI_GESTURE_PRESS, .x0 = rect.x + 2, .y0 = rect.y + 2, .x = rect.x + 2, .y = rect.y + 2};
     on_gesture(ctx, &ev);
@@ -20,8 +30,15 @@ static void qr_regression(app_ctx_t* ctx) {
     strcpy(test_status.url,"http://192.168.4.1");
     s_mode = READ_PICO_TRANSFER_MODE_AP;
     on_enter(ctx);
+    s_view = TRANSFER_HOME;
+    s_qr_url = true;
+    ctx->now_ms += 3000;
     on_tick(ctx);
-    assert(s_qr_ready && !s_qr_url && !strcmp(test_qr_payload,"ReadPico-test"));
+    assert(s_qr_ready && s_qr_url && !strcmp(test_qr_payload,test_status.url));
+    tap(ctx, control_rect(0));
+    assert(!s_qr_url && !strcmp(test_qr_payload,test_status.ssid));
+    tap(ctx, control_rect(1));
+    assert(s_qr_url && !strcmp(test_qr_payload,test_status.url));
     int encodes = test_qr_encodes;
     render(ctx,ctx->fb);
     assert(test_qr_encodes == encodes);
@@ -29,15 +46,6 @@ static void qr_regression(app_ctx_t* ctx) {
     ctx->now_ms += 3000;
     on_tick(ctx);
     assert(test_qr_encodes == encodes);
-    EpdRect toggle = control_rect(3);
-    assert(toggle.x+toggle.width < 404 && toggle.y+toggle.height <= 518);
-    ui_gesture_event_t ev={.type=UI_GESTURE_PRESS,.x0=toggle.x+2,.y0=toggle.y+2,.x=toggle.x+2,.y=toggle.y+2};
-    on_gesture(ctx,&ev);
-    ev.type=UI_GESTURE_TAP; ev.x=650;
-    on_gesture(ctx,&ev);
-    assert(!s_qr_url && test_qr_encodes==encodes);
-    tap(ctx,toggle);
-    assert(s_qr_url && s_qr_ready && !strcmp(test_qr_payload,test_status.url));
     strcpy(test_status.url,"http://192.168.4.2");
     ctx->now_ms += 3000;
     on_tick(ctx);
@@ -47,7 +55,7 @@ static void qr_regression(app_ctx_t* ctx) {
     on_tick(ctx);
     assert(!s_qr_ready && !test_qr_payload[0]);
     encodes=test_qr_encodes;
-    tap(ctx,toggle);
+    render(ctx,ctx->fb);
     assert(test_qr_encodes==encodes);
     test_status.network_ready=true;
     test_qr_failure=true;
@@ -62,7 +70,6 @@ static void qr_regression(app_ctx_t* ctx) {
     on_tick(ctx);
     assert(s_qr_url && s_qr_ready && !strcmp(test_qr_payload,test_status.url));
     encodes=test_qr_encodes;
-    tap(ctx,toggle);
     render(ctx,ctx->fb);
     assert(test_qr_encodes==encodes);
     stop_session();
@@ -86,23 +93,27 @@ int main(void) {
     }
     on_enter(&ctx);
     test_busy = true;
-    tap(&ctx, control_rect(1));
-    assert(s_view == TRANSFER_HOME);
+    tap(&ctx, method_control_rect(0));
+    assert(s_view == TRANSFER_METHODS);
     test_busy = false;
-    tap(&ctx, control_rect(1));
+    tap(&ctx, method_control_rect(0));
     assert(s_view == TRANSFER_NETWORKS && s_scan_pending);
     network_ui_tick(&ctx);
     assert(s_network_count == 8 && !s_scan_pending);
-    tap(&ctx, ui_row_rect(1, 2, 176, 84));
+    tap(&ctx, (EpdRect){540, UI_NAV_TOP + 16, 20, 20});
+    assert(test_nav_index == 3);
+    test_nav_index = -1;
+    assert(s_view == TRANSFER_NETWORKS);
+    tap(&ctx, network_control_rect(11));
     assert(test_forget_count == 0);
-    tap(&ctx, ui_row_rect(1, 2, 600, UI_BTN_H));
+    tap(&ctx, network_control_rect(12));
     assert(test_forget_count == 0 && s_saved_configured && !s_forget_confirm);
-    tap(&ctx, ui_row_rect(1, 2, 176, 84));
+    tap(&ctx, network_control_rect(11));
     test_forget_error = ESP_FAIL;
-    tap(&ctx, ui_row_rect(0, 2, 600, UI_BTN_H));
+    tap(&ctx, network_control_rect(11));
     assert(test_forget_count == 1 && s_saved_configured && s_forget_confirm);
     test_forget_error = ESP_OK;
-    tap(&ctx, ui_row_rect(0, 2, 600, UI_BTN_H));
+    tap(&ctx, network_control_rect(11));
     assert(test_forget_count == 2 && !s_saved_configured);
     test_configured = true;
     enter_networks();
@@ -143,7 +154,7 @@ int main(void) {
     assert(s_view == TRANSFER_HOME && s_mode == READ_PICO_TRANSFER_MODE_STA && s_start_pending);
     assert(!s_password[0]);
     assert(strcmp(test_saved_ssid, "中文家庭网络") == 0);
-    tap(&ctx, control_rect(1));
+    enter_networks();
     network_ui_tick(&ctx);
     tap(&ctx, network_control_rect(0));
     tap(&ctx, password_control_rect(0));
@@ -162,16 +173,26 @@ int main(void) {
     int stops_before = test_stop_count;
     tap(&ctx, control_rect(2));
     assert(test_stop_count == stops_before + 1 && !s_start_pending);
-    assert(ctx.request_return && ctx.request_app == NULL);
+    assert(s_view == TRANSFER_METHODS && !ctx.request_return && ctx.request_app == NULL);
     on_enter(&ctx);
+    tap(&ctx, method_control_rect(1));
     on_tick(&ctx);
+    test_busy = true;
+    stops_before = test_stop_count;
+    tap(&ctx, control_rect(2));
+    assert(test_stop_count == stops_before && s_view == TRANSFER_HOME && !ctx.request_return);
+    tap(&ctx, (EpdRect){540, UI_NAV_TOP + 16, 20, 20});
+    assert(test_stop_count == stops_before && test_nav_index == -1);
+    test_busy = false;
     test_status.changed_count = 1;
     ctx.now_ms = 3000;
-    assert(on_tick(&ctx) == APP_REDRAW_FULL);
+    assert(on_tick(&ctx) == APP_REDRAW_AREA);
     assert(s_status.changed_count == 1);
+    s_session_started = true;
     transfer_on_exit(&ctx);
     assert(test_store_changes == 1);
     on_enter(&ctx);
+    tap(&ctx, method_control_rect(1));
     on_tick(&ctx);
     s_root.is_flash = false;
     s_free = 123456;
@@ -179,9 +200,36 @@ int main(void) {
     app_transfer.on_media_lost(&ctx);
     assert(test_stop_count == stops_before + 1);
     assert(s_media_lost && !s_free && !s_qr_ready && !s_root.path[0]);
-    assert(!s_start_pending && !s_session_started && s_view == TRANSFER_HOME);
+    assert(!s_start_pending && !s_session_started && s_view == TRANSFER_METHODS);
     s_root.is_flash = true;
     app_transfer.on_media_lost(&ctx);
     assert(test_stop_count == stops_before + 1);
+    ctx.request_return = false;
+    test_configured = true;
+    app_transfer_request_wifi_upload();
+    on_enter(&ctx);
+    assert(s_direct_entry && s_view == TRANSFER_HOME && s_start_pending);
+    tap(&ctx, control_rect(2));
+    assert(ctx.request_return && s_view == TRANSFER_HOME);
+    ctx.request_return = false;
+    app_transfer_request_hotspot_start();
+    on_enter(&ctx);
+    assert(s_direct_entry && s_view == TRANSFER_HOME && s_start_pending);
+    tap(&ctx, control_rect(2));
+    assert(ctx.request_return && s_view == TRANSFER_HOME);
+    ctx.request_return = false;
+    app_transfer_request_usb_start();
+    on_enter(&ctx);
+    assert(s_usb_start_pending && !test_usb_active);
+    assert(on_tick(&ctx) == APP_REDRAW_PAGE);
+    assert(s_direct_entry && s_usb_entry && s_view == TRANSFER_HOME && test_usb_active);
+    test_usb_stop_error = ESP_FAIL;
+    tap(&ctx, (EpdRect){36, 79, 50, 50});
+    assert(test_usb_active && !ctx.request_return && s_view == TRANSFER_HOME);
+    assert(on_key(&ctx, UI_KEY_2) == APP_REDRAW_PAGE && !ctx.request_app);
+    assert(test_usb_active && s_usb_message[0]);
+    test_usb_stop_error = ESP_OK;
+    tap(&ctx, control_rect(2));
+    assert(ctx.request_return && !test_usb_active);
     puts("transfer_ui_host_test: PASS");
 }

@@ -1,0 +1,160 @@
+/*
+ * SPDX-FileCopyrightText: 2026 mindreset
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * 中文：内建 Noto Sans SC 子集与独立的 PSRAM 位图缓存。未知字交给阅读字体回退。
+ * English: Built-in Noto Sans SC subset with its own PSRAM bitmap cache; unknown glyphs fall back to the reading font.
+ */
+#include "ui_font.h"
+
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include "esp_heap_caps.h"
+
+#define STBTT_STATIC
+#define STB_TRUETYPE_IMPLEMENTATION
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#include "stb_truetype.h"
+#pragma GCC diagnostic pop
+
+#define UI_GLYPH_SLOTS 256
+#define UI_GLYPH_LIMIT (512u * 1024u)
+
+typedef struct {
+    uint32_t cp, age;
+    uint16_t px;
+    int16_t x0, y0, width, height, advance;
+    uint8_t *bitmap;
+    size_t bytes;
+    bool used;
+} ui_glyph_t;
+
+extern const uint8_t builtin_ttf_start[] asm("_binary_builtin_ttf_start");
+static stbtt_fontinfo s_font;
+static bool s_ready, s_attempted;
+static ui_glyph_t s_glyphs[UI_GLYPH_SLOTS];
+static size_t s_bytes;
+static uint32_t s_age;
+static uint8_t s_cover[256];
+
+static bool ready(void) {
+    if (s_attempted) return s_ready;
+    s_attempted = true;
+    int offset = stbtt_GetFontOffsetForIndex(builtin_ttf_start, 0);
+    s_ready = offset >= 0 && stbtt_InitFont(&s_font, builtin_ttf_start, offset);
+    for (int i = 0; i < 256; ++i)
+        s_cover[i] = (uint8_t)lroundf(255.f * powf((float)i / 255.f, 0.4f));
+    return s_ready;
+}
+
+static uint32_t next_cp(const char **p) {
+    const unsigned char *s = (const unsigned char *)*p;
+    uint32_t cp = *s++;
+    if (cp < 0x80) { *p = (const char *)s; return cp; }
+    int count = cp >= 0xc2 && cp <= 0xdf ? 1 : cp >= 0xe0 && cp <= 0xef ? 2 : cp >= 0xf0 && cp <= 0xf4 ? 3 : 0;
+    if (!count) { *p = (const char *)s; return '?'; }
+    cp &= (1u << (6 - count)) - 1;
+    for (int i = 0; i < count; ++i) {
+        if ((s[i] & 0xc0) != 0x80) { *p = (const char *)s; return '?'; }
+        cp = (cp << 6) | (s[i] & 0x3f);
+    }
+    *p = (const char *)(s + count);
+    return cp;
+}
+
+bool ui_font_has_text(const char *text) {
+    if (!text || !ready()) return false;
+    while (*text) if (!stbtt_FindGlyphIndex(&s_font, (int)next_cp(&text))) return false;
+    return true;
+}
+
+static int clamp_px(int px) { return px < 8 ? 8 : px > 72 ? 72 : px; }
+static float scale_for(int px) { return stbtt_ScaleForPixelHeight(&s_font, (float)clamp_px(px)); }
+
+int ui_font_ascender_px(int px) {
+    if (!ready()) return 0;
+    int asc, desc, gap;
+    stbtt_GetFontVMetrics(&s_font, &asc, &desc, &gap);
+    return (int)lroundf(asc * scale_for(px));
+}
+
+static void evict(ui_glyph_t *g) {
+    if (!g->used) return;
+    free(g->bitmap);
+    s_bytes -= g->bytes;
+    memset(g, 0, sizeof(*g));
+}
+
+static ui_glyph_t *glyph(uint32_t cp, int px) {
+    if (!ready()) return NULL;
+    px = clamp_px(px);
+    for (int i = 0; i < UI_GLYPH_SLOTS; ++i)
+        if (s_glyphs[i].used && s_glyphs[i].cp == cp && s_glyphs[i].px == px) {
+            s_glyphs[i].age = ++s_age;
+            return &s_glyphs[i];
+        }
+    int slot = 0;
+    for (int i = 0; i < UI_GLYPH_SLOTS; ++i)
+        if (!s_glyphs[i].used || s_glyphs[i].age < s_glyphs[slot].age) slot = i;
+    ui_glyph_t *g = &s_glyphs[slot];
+    evict(g);
+    float scale = scale_for(px);
+    int advance, left;
+    stbtt_GetCodepointHMetrics(&s_font, (int)cp, &advance, &left);
+    int x0, y0, x1, y1;
+    stbtt_GetCodepointBitmapBox(&s_font, (int)cp, scale, scale, &x0, &y0, &x1, &y1);
+    *g = (ui_glyph_t){.cp = cp, .px = px, .age = ++s_age, .used = true,
+        .x0 = x0, .y0 = y0, .width = x1 - x0, .height = y1 - y0,
+        .advance = (int16_t)lroundf(advance * scale)};
+    if (g->width <= 0 || g->height <= 0) return g;
+    g->bytes = (size_t)g->width * g->height;
+    while (s_bytes + g->bytes > UI_GLYPH_LIMIT) {
+        ui_glyph_t *oldest = NULL;
+        for (int i = 0; i < UI_GLYPH_SLOTS; ++i)
+            if (&s_glyphs[i] != g && s_glyphs[i].bitmap && (!oldest || s_glyphs[i].age < oldest->age)) oldest = &s_glyphs[i];
+        if (!oldest) break;
+        evict(oldest);
+    }
+    g->bitmap = heap_caps_malloc(g->bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (g->bitmap) {
+        stbtt_MakeCodepointBitmap(&s_font, g->bitmap, g->width, g->height, g->width,
+                                  scale, scale, (int)cp);
+        s_bytes += g->bytes;
+    } else g->bytes = 0;
+    return g;
+}
+
+int ui_font_text_width_px(int px, const char *text) {
+    if (!text || !ready()) return 0;
+    int width = 0;
+    while (*text) {
+        ui_glyph_t *g = glyph(next_cp(&text), px);
+        if (g) width += g->advance;
+    }
+    return width;
+}
+
+void ui_font_draw_text_px(uint8_t *fb, int x, int baseline, int px,
+                          const char *text, enum EpdFontFlags align,
+                          uint8_t fg, uint8_t bg, bool black_white) {
+    if (!fb || !text || !ready()) return;
+    int cursor = x;
+    if (align & EPD_DRAW_ALIGN_CENTER) cursor -= ui_font_text_width_px(px, text) / 2;
+    else if (align & EPD_DRAW_ALIGN_RIGHT) cursor -= ui_font_text_width_px(px, text);
+    while (*text) {
+        ui_glyph_t *g = glyph(next_cp(&text), px);
+        if (!g) continue;
+        if (g->bitmap) for (int y = 0; y < g->height; ++y)
+            for (int xx = 0; xx < g->width; ++xx) {
+                uint8_t alpha = g->bitmap[y * g->width + xx];
+                if (!alpha) continue;
+                uint8_t shade = black_white ? (alpha >= 128 ? fg : bg) :
+                    (uint8_t)(bg + s_cover[alpha] * ((int)fg - (int)bg) / 255);
+                if (shade != bg) epd_draw_pixel(cursor + g->x0 + xx, baseline + g->y0 + y,
+                                                 shade << 4, fb);
+            }
+        cursor += g->advance;
+    }
+}

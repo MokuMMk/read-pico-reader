@@ -132,3 +132,53 @@ bool read_pico_search_match(const char* filename, const char* query) {
     }
     return false;
 }
+
+static bool reading_is(uint32_t cp, const char* syllable) {
+    int group = lookup(cp);
+    if (group < 0) return false;
+    for (unsigned i = search_group_offsets[group]; i < search_group_offsets[group + 1]; ++i) {
+        const char* candidate = search_syllables + search_syllable_offsets[search_readings[i]];
+        if (!strcmp(candidate, syllable)) return true;
+    }
+    return false;
+}
+
+size_t read_pico_search_candidates(const char* syllable, uint32_t* out, size_t cap, size_t skip) {
+    if (!syllable || !out || !cap) return 0;
+    char normalized[9];
+    size_t n = strnlen(syllable, sizeof(normalized));
+    if (!n || n >= sizeof(normalized)) return 0;
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = lower((unsigned char)syllable[i]);
+        if (!letter(c)) return 0;
+        normalized[i] = c;
+    }
+    normalized[n] = 0;
+    static const char common[] =
+        "的一是不了人我在有他这中大来上国个到说们为子和你地出道也时年得就那要下以生会自着去之过家学对可她里后小心多天而能好都然没日于起还发成只如事把无明看本面知现所同手时方女新前想最太见被高用开么将行长身三间加由其从两情进已又些点样意力第话走实定才爱亲当问比很世书水名作每海边信安静远山慢读清晨章客花月风雨空云春夏秋冬你我他她它孩文字篇页故事";
+    size_t filled = 0, seen = 0, at = 0, length = sizeof(common) - 1;
+    while (at < length) {
+        size_t start = at;
+        uint32_t cp;
+        if (!utf8(common, length, &at, &cp)) break;
+        char encoded[4] = {(char)(0xe0 | (cp >> 12)),
+                           (char)(0x80 | ((cp >> 6) & 63)), (char)(0x80 | (cp & 63)), 0};
+        if (strstr(common, encoded) != common + start) continue;
+        if (!reading_is(cp, normalized)) continue;
+        if (seen++ < skip) continue;
+        out[filled++] = cp;
+        if (filled == cap) return filled;
+    }
+    const size_t count = sizeof(search_codepoints) / sizeof(search_codepoints[0]);
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t cp = search_codepoints[i];
+        if (cp < 0x4e00 || cp > 0x9fff || !reading_is(cp, normalized)) continue;
+        char encoded[4] = {(char)(0xe0 | (cp >> 12)),
+                           (char)(0x80 | ((cp >> 6) & 63)), (char)(0x80 | (cp & 63)), 0};
+        if (strstr(common, encoded)) continue;
+        if (seen++ < skip) continue;
+        out[filled++] = cp;
+        if (filled == cap) return filled;
+    }
+    return filled;
+}

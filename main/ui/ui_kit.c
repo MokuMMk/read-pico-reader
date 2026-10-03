@@ -11,12 +11,98 @@
 #include "ui_kit.h"
 
 #include <string.h>
+#include <stdlib.h>
 
 #include "datamatrix.h"
+#include "esp_heap_caps.h"
 #include "ttf_font.h"
+#include "ui_font.h"
+#include "settings.h"
 
 #define UI_SEL_INSET 4
 #define UI_SEL_RING 3
+
+static bool s_system_text_scale = true;
+static bool s_system_ttf;
+
+void ui_text_set_system_scale(bool enabled) { s_system_text_scale = enabled; }
+void ui_text_set_system_font(bool enabled) { s_system_ttf = enabled; }
+
+int ui_text_effective_px(int px) {
+    px += 2;
+    // 用户的系统字号只应用于系统界面；阅读正文及工具保持书内设置。
+    // Apply the UI-size preference only to system screens; reading uses its own settings.
+    return s_system_text_scale && px < 46 ?
+        (px * app_settings_system_font_size() + 50) / 100 : px;
+}
+
+uint8_t ui_contrast_gray(uint8_t gray) {
+    int value = 128 + ((int)gray - 128) * app_settings_system_contrast() / 100;
+    if (value < 0) value = 0;
+    if (value > 255) value = 255;
+    return (uint8_t)value & 0xf0;
+}
+
+static uint8_t ui_read_pixel(const uint8_t *fb, int x, int y) {
+    int px = x, py = y;
+    switch (epd_get_rotation()) {
+        case EPD_ROT_PORTRAIT: px = epd_width() - y - 1; py = x; break;
+        case EPD_ROT_INVERTED_LANDSCAPE: px = epd_width() - x - 1; py = epd_height() - y - 1; break;
+        case EPD_ROT_INVERTED_PORTRAIT: px = y; py = epd_height() - x - 1; break;
+        default: break;
+    }
+    return epd_get_pixel(px, py, epd_width(), epd_height(), fb) >> 4;
+}
+
+static void draw_frosted(uint8_t *fb, EpdRect rect, bool pocket) {
+    if (!fb || rect.width < 16 || rect.height < 16) return;
+    size_t count = (size_t)rect.width * rect.height;
+    uint8_t *source = heap_caps_malloc(count, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (source) {
+        for (int y = 0; y < rect.height; ++y)
+            for (int x = 0; x < rect.width; ++x)
+                source[(size_t)y * rect.width + x] = ui_read_pixel(fb, rect.x + x, rect.y + y);
+        for (int y = 0; y < rect.height; ++y) {
+            for (int x = 0; x < rect.width; ++x) {
+                int radius = pocket ? 12 : 9;
+                int inset = y < radius ? radius - y : y >= rect.height - radius ? y - (rect.height - radius + 1) : 0;
+                if (x < inset || x >= rect.width - inset) continue;
+                int delta = pocket ? 7 : 6;
+                int sum = source[(size_t)y * rect.width + x] * 4;
+                for (int oy = -delta; oy <= delta; oy += delta)
+                    for (int ox = -delta; ox <= delta; ox += delta) {
+                        int sx = x + ox, sy = y + oy;
+                        if (sx < 0) sx = 0; else if (sx >= rect.width) sx = rect.width - 1;
+                        if (sy < 0) sy = 0; else if (sy >= rect.height) sy = rect.height - 1;
+                        sum += source[(size_t)sy * rect.width + sx];
+                    }
+                int blur = sum / 13;
+                int tint = pocket ? 12 : 10;
+                int strength = pocket ? 48 : 38;
+                int gray = (blur * (100 - strength) + tint * strength + 50) / 100;
+                epd_draw_pixel(rect.x + x, rect.y + y, (uint8_t)(gray << 4), fb);
+            }
+        }
+        free(source);
+    } else {
+        for (int y = 0; y < rect.height; ++y)
+            for (int x = 0; x < rect.width; ++x)
+                if ((x + y) % 4 == 0) epd_draw_pixel(rect.x + x, rect.y + y, 0xb0, fb);
+    }
+    ui_hairline(fb, rect.y + 1, rect.x + 8, rect.width - 16, 0xe0);
+    ui_hairline(fb, rect.y + rect.height - 2, rect.x + 8, rect.width - 16, pocket ? 0x90 : 0x60);
+    epd_draw_line(rect.x, rect.y + 6, rect.x, rect.y + rect.height - 7, 0xa0, fb);
+    epd_draw_line(rect.x + rect.width - 1, rect.y + 6,
+                  rect.x + rect.width - 1, rect.y + rect.height - 7, 0xa0, fb);
+    if (pocket) return;
+    int cy = rect.y + rect.height - 18;
+    for (int cx = rect.x + 16; cx <= rect.x + rect.width - 17; cx += rect.width - 32) {
+        epd_draw_circle(cx, cy, 5, 0x70, fb);
+        epd_draw_line(cx - 2, cy, cx + 2, cy, 0x60, fb);
+    }
+}
+void ui_draw_acrylic_guard(uint8_t *fb, EpdRect rect) { draw_frosted(fb, rect, false); }
+void ui_draw_frosted_pocket(uint8_t *fb, EpdRect rect) { draw_frosted(fb, rect, true); }
 
 // 先用宽整数裁剪，再合并，避免异常坐标加法溢出。/ Clip using wide integers before union to avoid overflow on invalid coordinates.
 static EpdRect clip_refresh_rect(EpdRect r) {
@@ -52,36 +138,61 @@ void ui_text(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
-    ttf_draw_text_px(
-        framebuffer, x, y_top + ttf_ascender_px(px), px, text, align,
-        inverted ? UI_INK_WHITE : UI_INK_BLACK,
-        inverted ? UI_INK_BLACK : UI_INK_WHITE
-    );
+    px = ui_text_effective_px(px);
+    uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
+    uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
+    if (!s_system_ttf && ui_font_has_text(text))
+        ui_font_draw_text_px(framebuffer, x, y_top + ui_font_ascender_px(px), px, text, align, fg, bg, false);
+    else ttf_draw_text_px(framebuffer, x, y_top + ttf_ascender_px(px), px, text, align, fg, bg);
+}
+
+int ui_text_fixed_width_px(int px, const char* text) {
+    if (!text || px <= 0) return 0;
+    return !s_system_ttf && ui_font_has_text(text)
+        ? ui_font_text_width_px(px, text)
+        : ttf_text_width_px(px, text);
+}
+
+void ui_text_fixed(
+    uint8_t* framebuffer, int x, int y_top, int px, const char* text,
+    enum EpdFontFlags align, bool inverted
+) {
+    uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
+    uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
+    if (!s_system_ttf && ui_font_has_text(text))
+        ui_font_draw_text_px(framebuffer, x, y_top + ui_font_ascender_px(px), px, text, align, fg, bg, false);
+    else
+        ttf_draw_text_px(framebuffer, x, y_top + ttf_ascender_px(px), px, text, align, fg, bg);
 }
 
 void ui_text_bw(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
-    ttf_draw_text_px_bw(
-        framebuffer, x, y_top + ttf_ascender_px(px), px, text, align,
-        inverted ? UI_INK_WHITE : UI_INK_BLACK,
-        inverted ? UI_INK_BLACK : UI_INK_WHITE
-    );
+    px = ui_text_effective_px(px);
+    uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
+    uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
+    if (!s_system_ttf && ui_font_has_text(text))
+        ui_font_draw_text_px(framebuffer, x, y_top + ui_font_ascender_px(px), px, text, align, fg, bg, true);
+    else ttf_draw_text_px_bw(framebuffer, x, y_top + ttf_ascender_px(px), px, text, align, fg, bg);
 }
 
 void ui_text_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+    px = ui_text_effective_px(px);
     int above = 0;
     int below = 0;
-    ttf_measure_line_px(px, text, &above, &below);
-    ttf_draw_text_px(
-        framebuffer, x, center_y + (above - below) / 2, px, text, align,
-        inverted ? UI_INK_WHITE : UI_INK_BLACK,
-        inverted ? UI_INK_BLACK : UI_INK_WHITE
-    );
+    uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
+    uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
+    if (!s_system_ttf && ui_font_has_text(text)) {
+        int ascent = ui_font_ascender_px(px);
+        ui_font_draw_text_px(framebuffer, x, center_y + ascent / 2, px, text, align, fg, bg, false);
+    } else {
+        ttf_measure_line_px(px, text, &above, &below);
+        ttf_draw_text_px(framebuffer, x, center_y + (above - below) / 2, px, text, align, fg, bg);
+    }
 }
 
 void ui_blit_bmp(
@@ -150,6 +261,7 @@ static void draw_arc(
 void ui_draw_round_rect(
     uint8_t* framebuffer, EpdRect rect, int radius, uint8_t color
 ) {
+    color = ui_contrast_gray(color);
     if (rect.width <= 0 || rect.height <= 0) return;
     const int r = clamp_radius(rect, radius);
     const int x1 = rect.x + rect.width - 1;
@@ -222,6 +334,7 @@ void ui_fill_round_rect(
     uint8_t* framebuffer, EpdRect rect, int radius, uint8_t color
 ) {
     if (rect.width <= 0 || rect.height <= 0) return;
+    color = ui_contrast_gray(color);
     radius = clamp_radius(rect, radius);
 
     epd_fill_rect(
@@ -317,6 +430,7 @@ EpdRect ui_content_refresh_area(void) {
 }
 
 void ui_hairline(uint8_t* framebuffer, int y, int x, int w, uint8_t color) {
+    color = ui_contrast_gray(color);
     epd_fill_rect(
         (EpdRect){ .x = x, .y = y, .width = w, .height = 1 }, color, framebuffer
     );

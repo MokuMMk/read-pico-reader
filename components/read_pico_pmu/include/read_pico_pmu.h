@@ -165,9 +165,17 @@ esp_err_t read_pico_pmu_vcom_set(int mv);
 esp_err_t read_pico_pmu_uid_get(uint8_t out[PMU_CHIP_UID_LEN]);
 esp_err_t read_pico_pmu_event_ack(uint16_t event_id);
 esp_err_t read_pico_pmu_action(uint8_t action, uint16_t delay_ms, uint16_t reason);
+typedef enum {
+    READ_PICO_PMU_KEY_NONE = 0,
+    READ_PICO_PMU_KEY_SHORT,
+    READ_PICO_PMU_KEY_LONG,
+} read_pico_pmu_key_action_t;
 /// 抽干事件队列，不解释按键（开机丢掉上电/烧录残留）。
 /// / Drain the event queue without interpreting keys (drop boot/flash leftovers).
 void read_pico_pmu_drain_events(void);
+/// 抽干事件队列并返回本轮最高优先级按键动作；长按优先于短按。
+/// / Drain the queue and return the highest-priority key action; long wins over short.
+read_pico_pmu_key_action_t read_pico_pmu_take_key_action(void);
 /// 抽干事件队列；若有电源键短按返回 true。
 /// / Drain the queue; true if a power-key short press was seen.
 bool read_pico_pmu_take_key_short(void);

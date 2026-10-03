@@ -384,21 +384,28 @@ void read_pico_pmu_drain_events(void) {
     }
 }
 
-bool read_pico_pmu_take_key_short(void) {
-    bool lock = false;
+read_pico_pmu_key_action_t read_pico_pmu_take_key_action(void) {
+    read_pico_pmu_key_action_t action = READ_PICO_PMU_KEY_NONE;
     for (int i = 0; i < PMU_EVENT_FIFO_DEPTH; i++) {
         if (read_pico_pmu_poll() != ESP_OK) break;
         if (!s_snap.event_ok || s_snap.pending_events == 0) break;
         uint8_t type = s_snap.event.type;
         uint16_t id = s_snap.event.event_id;
         if (type == PMU_EVT_KEY_SHORT) {
-            lock = true;
+            if (action == READ_PICO_PMU_KEY_NONE) action = READ_PICO_PMU_KEY_SHORT;
             ESP_LOGI(TAG, "KEY_SHORT id=%u held=%u", (unsigned)id, (unsigned)s_snap.event.arg0);
+        } else if (type == PMU_EVT_KEY_LONG) {
+            action = READ_PICO_PMU_KEY_LONG;
+            ESP_LOGI(TAG, "KEY_LONG id=%u held=%u", (unsigned)id, (unsigned)s_snap.event.arg0);
         }
         if (id == 0) break;
         if (read_pico_pmu_event_ack(id) != ESP_OK) break;
     }
-    return lock;
+    return action;
+}
+
+bool read_pico_pmu_take_key_short(void) {
+    return read_pico_pmu_take_key_action() == READ_PICO_PMU_KEY_SHORT;
 }
 
 bool read_pico_pmu_take_key_wakeup(void) {

@@ -3,8 +3,13 @@ set(main_requires
     read_pico_transfer
     read_pico_search
     espressif__qrcode
+    espressif__esp_jpeg
+    espressif__libpng
+    espressif__zlib
+    espressif__esp_tinyusb
     continuous_du
     e0470_epaper_waveform
+    e0470_page_turn
     read_pico_pmu
     fatfs
     wear_levelling
@@ -28,34 +33,37 @@ idf_component_register(
         "app/app_registry.c"
         "ui/ui_kit.c"
         "ui/ui_gesture.c"
+        "ui/ui_power_dialog.c"
         "ui/ui_wifi_qr.c"
         "ui/datamatrix.c"
         "ui/ui_menu.c"
-        "apps/app_home.c"
-        "apps/app_refresh.c"
-        "apps/app_reading.c"
+        "ui/ui_nav.c"
+        "ui/ui_image_dither.c"
+        "ui/ui_wallpaper.c"
         "apps/app_book.c"
+        "apps/book_toc.c"
+        "apps/app_dashboard.c"
+        "apps/app_files.c"
+        "apps/app_device_settings.c"
+        "apps/app_image.c"
         "apps/app_transfer.c"
+        "apps/usb_storage.c"
         "book/book_store.c"
         "book/book_progress.c"
+        "book/book_title.c"
+        "book/book_ticket.c"
         "book/book_source.c"
+        "book/book_index_cache.c"
         "book/book_txt.c"
         "book/book_epub.c"
+        "book/book_cover.c"
         "book/zip_reader.c"
         "book/html_text.c"
         "book/book_layout.c"
         "book/gbk.c"
-        "apps/app_touch.c"
-        "apps/app_axis.c"
-        "apps/app_power.c"
-        "apps/app_ioe.c"
-        "apps/app_pmu.c"
-        "apps/app_sd.c"
-        "apps/app_font_pick.c"
-        "apps/app_sleep.c"
-        "apps/app_selftest.c"
-        "apps/app_key.c"
         "font/ttf_font.c"
+        "font/app_font_context.c"
+        "font/ui_font.c"
         "factory/pmu_selftest.c"
         "factory/vcom_setup.c"
     REQUIRES ${main_requires}
@@ -65,4 +73,5 @@ idf_component_register(
         "assets/loading_4bpp.bin"
         "assets/builtin.ttf"
         "assets/reading.md"
+        "assets/display-test.png"
 )

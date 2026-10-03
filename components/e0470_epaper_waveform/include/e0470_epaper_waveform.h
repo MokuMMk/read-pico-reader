@@ -80,6 +80,10 @@ extern const EpdWaveform E0470_WAVEFORM;
 #define E0470_FOLLOW_FRAMES 8
 extern const EpdWaveform E0470_FOLLOW_WAVEFORM;
 
+/// 单相位执行表供水波纹的错相 GL16 扫描使用；像素动作来自逐带相位 LUT。
+/// One-phase apply waveform for staggered GL16; per-band phase LUTs supply pixel actions.
+extern const EpdWaveform E0470_APPLY_WAVEFORM;
+
 /// 按上面的公式生成 frames 帧的跟随表写进 dst（容量 frames×16×4 字节）。
 /// / Build a follow table of `frames` into dst (frames×16×4 bytes).
 void e0470_follow_lut_build(int frames, uint8_t (*dst)[16][4]);

@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * 可变 TTF：卡上按需读扇区，glyf/gvar 能装下就整表进 PSRAM；字形按
- * codepoint/字号/字重缓存。内置字体是 ChillDuanSans 子集。
+ * codepoint/字号/字重缓存。内置字体是 Noto Sans SC Medium 子集。
  *
  * Variable TTF: sector I/O from the card; glyf/gvar map into PSRAM when
  * they fit. Glyphs are cached by codepoint, size and weight. The built-in
- * font is a ChillDuanSans subset.
+ * font is a Noto Sans SC Medium subset.
  */
 
 #include "ttf_font.h"
@@ -64,7 +64,7 @@ static void ttf_free(void* ptr, void* userdata) {
 #define TTF_MAX_VAR_PTS (TTF_MAX_PTS + 4)
 // 单字形 gvar 切片缓冲。/ Per-glyph gvar slice buffer.
 #define TTF_GVAR_SLICE_MAX 2048
-// wght 轴：ChillDuanSans 常用区间，默认最轻。/ wght axis used by ChillDuanSans; default is lightest.
+// 可变字重轴的通用边界；静态内建字体忽略此轴。/ Generic variable-weight bounds; the static built-in font ignores this axis.
 #define TTF_WGHT_MIN 300
 #define TTF_WGHT_MAX 800
 #define TTF_WGHT_DEF 300
@@ -83,7 +83,7 @@ static const char* TAG = "ttf_font";
 
 static const char* const k_font_dirs[] = {
     "/sdcard/assets/fonts",
-    "/sdcard/fonts",
+    NULL,
 };
 
 typedef struct glyph_entry {
@@ -552,10 +552,12 @@ static int s_catalog_n;
 int ttf_font_scan(void) {
     s_catalog_n = 0;
     for (size_t d = 0; d < sizeof(k_font_dirs) / sizeof(k_font_dirs[0]); d++) {
-        DIR* dir = opendir(k_font_dirs[d]);
+        const char* font_dir = k_font_dirs[d] ? k_font_dirs[d] : app_settings_fonts_dir();
+        DIR* dir = opendir(font_dir);
         if (dir == NULL) continue;
         struct dirent* ent;
         while ((ent = readdir(dir)) != NULL && s_catalog_n < TTF_FONT_MAX) {
+            if (ent->d_name[0] == '.') continue; // Ignore macOS ._ font sidecars.
             if (!is_ttf_name(ent->d_name)) continue;
             char name[TTF_FONT_NAME_MAX];
             font_stem(ent->d_name, name, sizeof(name));
@@ -564,7 +566,7 @@ int ttf_font_scan(void) {
             }
             snprintf(
                 s_catalog[s_catalog_n].path, sizeof(s_catalog[s_catalog_n].path),
-                "%s/%s", k_font_dirs[d], ent->d_name
+                "%s/%s", font_dir, ent->d_name
             );
             strlcpy(s_catalog[s_catalog_n].name, name, sizeof(s_catalog[0].name));
             s_catalog_n++;
@@ -617,10 +619,23 @@ bool ttf_font_is_builtin(void) {
 
 const char* ttf_font_display_name(void) {
     static char name[TTF_FONT_NAME_MAX];
-    if (ttf_font_is_builtin() || ttf_font_path_is_builtin(font_path)) return "内建";
+    if (ttf_font_is_builtin() || ttf_font_path_is_builtin(font_path)) return "思源黑体（内建）";
     if (font_path[0] == '\0') return "";
     font_stem(font_path, name, sizeof(name));
-    return name;
+    return ttf_font_localized_name(name);
+}
+
+const char* ttf_font_localized_name(const char* stem) {
+    if (!stem) return "";
+    if (!strcasecmp(stem, "Song")) return "思源宋体";
+    if (!strcasecmp(stem, "Hei")) return "思源黑体";
+    if (!strcasecmp(stem, "Kai")) return "思源楷体";
+    if (!strcasecmp(stem, "FangSong")) return "思源仿宋";
+    if (!strcasecmp(stem, "WenKai")) return "文楷";
+    if (!strcasecmp(stem, "KingHwa")) return "京华老宋";
+    if (!strcasecmp(stem, "ChillKai")) return "寒蝉正楷";
+    if (!strcasecmp(stem, "CangErYunHei05")) return "仓耳云黑05";
+    return stem;
 }
 
 static bool find_sfnt_table(
@@ -1759,14 +1774,21 @@ static void warm_text_io(int pixel_height, const char* text) {
 }
 
 static int measure_width(int pixel_height, const char* text) {
-    warm_text_io(pixel_height, text);
     int width = 0;
+    float scale = stbtt_ScaleForPixelHeight(&font_info, (float)pixel_height);
     const char* cursor = text;
     while (*cursor != '\0') {
         uint32_t cp = decode_utf8(&cursor);
-        const glyph_entry_t* glyph = get_glyph(cp, pixel_height);
-        if (glyph == NULL) continue;
-        width += glyph->advance_x;
+        const glyph_entry_t* glyph = cache_lookup(cp, pixel_height);
+        if (glyph != NULL) {
+            width += glyph->advance_x;
+        } else {
+            // 排版只需字宽；实际绘制时才读取轮廓并生成位图。/ Layout needs advances only; drawing loads outlines and rasterizes.
+            int advance = 0, lsb = 0;
+            int gid = stbtt_FindGlyphIndex(&font_info, (int)cp);
+            stbtt_GetGlyphHMetrics(&font_info, gid, &advance, &lsb);
+            width += (int)lroundf(advance * scale);
+        }
     }
     return width;
 }
@@ -2102,4 +2124,3 @@ void ttf_draw_text_px_bw(
         cursor_x += glyph->advance_x;
     }
 }
-

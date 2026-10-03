@@ -21,6 +21,8 @@
 #define PSRAM (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
 #define NAME_MAX_BYTES 1024U
 #define DIRECTORY_MAX (2U * 1024U * 1024U)
+#define ARCHIVE_ENTRY_MAX (256U * 1024U * 1024U)
+#define INFLATE_CHUNK 32768U
 
 typedef struct {
     char* name;
@@ -31,9 +33,18 @@ typedef struct {
 struct zip_reader {
     FILE* file;
     zip_entry_t* entries;
+    uint16_t* slots;
+    uint16_t slot_mask;
     uint32_t size, directory;
     uint16_t count;
 };
+
+static uint32_t name_hash(const char* name) {
+    uint32_t hash = UINT32_C(2166136261);
+    for (const unsigned char* p = (const unsigned char*)name; *p; ++p)
+        hash = (hash ^ *p) * UINT32_C(16777619);
+    return hash;
+}
 
 static uint16_t u16(const uint8_t* p) { return (uint16_t)(p[0] | ((uint16_t)p[1] << 8)); }
 static uint32_t u32(const uint8_t* p) { return (uint32_t)u16(p) | ((uint32_t)u16(p + 2) << 16); }
@@ -69,6 +80,7 @@ void zip_close(zip_reader_t* z) {
     if (z->file) fclose(z->file);
     if (z->entries) for (unsigned i = 0; i < z->count; ++i) free(z->entries[i].name);
     free(z->entries);
+    free(z->slots);
     free(z);
 }
 
@@ -109,7 +121,11 @@ esp_err_t zip_open(const char* path, zip_reader_t** out) {
     free(tail); tail = NULL;
     if (z->count) {
         z->entries = heap_caps_calloc(z->count, sizeof(*z->entries), PSRAM);
-        if (!z->entries) { err = ESP_ERR_NO_MEM; goto fail; }
+        unsigned slots = 16;
+        while (slots < (unsigned)z->count * 2) slots *= 2;
+        z->slots = heap_caps_calloc(slots, sizeof(*z->slots), PSRAM);
+        z->slot_mask = (uint16_t)(slots - 1);
+        if (!z->entries || !z->slots) { err = ESP_ERR_NO_MEM; goto fail; }
     }
     uint32_t pos = z->directory;
     for (unsigned i = 0; i < z->count; ++i) {
@@ -123,7 +139,8 @@ esp_err_t zip_open(const char* path, zip_reader_t** out) {
         uint32_t record_len = sizeof(h) + (uint32_t)name_len + extra_len + comment_len;
         err = ESP_ERR_NOT_SUPPORTED;
         if ((entry->flags & ~UINT16_C(0x080e)) || u16(h + 34) ||
-            (entry->method != 0 && entry->method != 8) || entry->packed > ZIP_INPUT_MAX || entry->unpacked > ZIP_OUTPUT_MAX) goto fail;
+            (entry->method != 0 && entry->method != 8) ||
+            entry->packed > ARCHIVE_ENTRY_MAX || entry->unpacked > ARCHIVE_ENTRY_MAX) goto fail;
         err = ESP_ERR_INVALID_SIZE;
         if (!name_len || name_len > NAME_MAX_BYTES || record_len > eocd_pos - pos ||
             entry->offset >= z->directory || z->directory - entry->offset < 30 ||
@@ -133,7 +150,12 @@ esp_err_t zip_open(const char* path, zip_reader_t** out) {
         if (!entry->name) { err = ESP_ERR_NO_MEM; goto fail; }
         if (!read_at(z, pos + 46, entry->name, name_len) || memchr(entry->name, 0, name_len)) goto fail;
         entry->name[name_len] = 0;
-        for (unsigned j = 0; j < i; ++j) if (!strcmp(entry->name, z->entries[j].name)) goto fail;
+        uint16_t slot = (uint16_t)(name_hash(entry->name) & z->slot_mask);
+        while (z->slots[slot]) {
+            if (!strcmp(entry->name, z->entries[z->slots[slot] - 1].name)) goto fail;
+            slot = (uint16_t)((slot + 1) & z->slot_mask);
+        }
+        z->slots[slot] = (uint16_t)(i + 1);
         if (!extras_valid(z, pos + 46 + name_len, extra_len)) goto fail;
         pos += record_len;
     }
@@ -147,7 +169,14 @@ fail:
 }
 
 int zip_find(const zip_reader_t* z, const char* name) {
-    if (z && name) for (unsigned i = 0; i < z->count; ++i) if (!strcmp(z->entries[i].name, name)) return (int)i;
+    if (z && name && z->slots) {
+        uint16_t slot = (uint16_t)(name_hash(name) & z->slot_mask);
+        while (z->slots[slot]) {
+            int index = z->slots[slot] - 1;
+            if (!strcmp(z->entries[index].name, name)) return index;
+            slot = (uint16_t)((slot + 1) & z->slot_mask);
+        }
+    }
     return -1;
 }
 
@@ -158,7 +187,8 @@ size_t zip_entry_size(const zip_reader_t* z, int index) {
 esp_err_t zip_extract(zip_reader_t* z, int index, void* dst, size_t cap) {
     if (!z || index < 0 || index >= z->count) return ESP_ERR_INVALID_ARG;
     const zip_entry_t* entry = &z->entries[index];
-    if (cap < entry->unpacked || (!dst && entry->unpacked)) return ESP_ERR_INVALID_SIZE;
+    if (entry->unpacked > ZIP_OUTPUT_MAX || entry->packed > ZIP_INPUT_MAX ||
+        cap < entry->unpacked || (!dst && entry->unpacked)) return ESP_ERR_INVALID_SIZE;
     uint8_t h[30];
     if (!read_at(z, entry->offset, h, sizeof(h)) || u32(h) != UINT32_C(0x04034b50) ||
         u16(h + 6) != entry->flags || u16(h + 8) != entry->method ||
@@ -177,16 +207,39 @@ esp_err_t zip_extract(zip_reader_t* z, int index, void* dst, size_t cap) {
     if (entry->method == 0) {
         if (!read_at(z, data_pos, output, entry->unpacked)) return ESP_FAIL;
     } else {
-        uint8_t* input = heap_caps_malloc(entry->packed ? entry->packed : 1, PSRAM);
+        uint8_t* input = heap_caps_malloc(INFLATE_CHUNK, PSRAM);
         tinfl_decompressor* state = heap_caps_malloc(sizeof(*state), PSRAM);
         if (!input || !state) { free(input); free(state); return ESP_ERR_NO_MEM; }
-        bool ok = read_at(z, data_pos, input, entry->packed);
+        bool ok = fseek(z->file, (long)data_pos, SEEK_SET) == 0;
         if (ok) {
             tinfl_init(state);
-            size_t in_size = entry->packed, out_size = entry->unpacked;
-            tinfl_status status = tinfl_decompress(state, input, &in_size, output, output, &out_size,
-                                                   TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
-            ok = status == TINFL_STATUS_DONE && in_size == entry->packed && out_size == entry->unpacked;
+            size_t remaining = entry->packed, buffered = 0, consumed = 0, produced = 0;
+            while (ok) {
+                if (consumed == buffered && remaining) {
+                    buffered = remaining < INFLATE_CHUNK ? remaining : INFLATE_CHUNK;
+                    if (fread(input, 1, buffered, z->file) != buffered) { ok = false; break; }
+                    remaining -= buffered;
+                    consumed = 0;
+                }
+                size_t in_size = buffered - consumed;
+                size_t out_size = entry->unpacked - produced;
+                tinfl_status status = tinfl_decompress(state, input + consumed, &in_size,
+                    output, output + produced, &out_size,
+                    TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF |
+                    (remaining ? TINFL_FLAG_HAS_MORE_INPUT : 0));
+                consumed += in_size;
+                produced += out_size;
+                if (status == TINFL_STATUS_DONE) {
+                    ok = !remaining && consumed == buffered && produced == entry->unpacked;
+                    break;
+                }
+                if (status < 0 || (status == TINFL_STATUS_NEEDS_MORE_INPUT &&
+                                   !remaining && consumed == buffered) ||
+                    (status == TINFL_STATUS_HAS_MORE_OUTPUT && produced == entry->unpacked) ||
+                    (!in_size && !out_size && consumed != buffered)) {
+                    ok = false; break;
+                }
+            }
         }
         free(input); free(state);
         if (!ok) return ESP_ERR_INVALID_SIZE;

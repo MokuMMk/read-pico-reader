@@ -19,6 +19,7 @@
 # Build artifacts and directories
 **/build/
 build/
+/_site/
 *.o
 *.a
 *.out
@@ -28,6 +29,12 @@ build/
 tools/fonts/
 /ChillDuanSansVF.ttf
 tools/buzzer_score_wav
+# Full fonts are local test data; only the built-in subset is distributed.
+/sdcard/fonts/
+/flash/fonts/
+/flash/sdcard/fonts/
+/flash/read-pico-fonts.zip
+/flash-backups/
 
 # Per-machine task handoff ledger; protocol lives in docs/HANDOFF.md
 /docs/HANDOFF.local.md
@@ -42,6 +49,9 @@ tools/buzzer_score_wav
 # ESP-IDF specific build outputs
 *.bin
 !main/assets/*.bin
+!/flash/bootloader.bin
+!/flash/partitions.bin
+!/flash/firmware.bin
 *.elf
 *.map
 flasher_args.json # Generated in build directory

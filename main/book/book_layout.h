@@ -19,6 +19,13 @@
 bool book_layout_build(const char* utf8, size_t len, EpdRect rect, int px);
 /// 借用块表；标题字号加8，块间单换行；原文与块表须存活至free。/ Borrow blocks; headings add 8 px, with one newline between blocks; text and blocks must outlive layout.
 bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks, size_t count, EpdRect rect, int px);
+/// 设置行高百分比与段后距离百分比，重排时生效。/ Set line height and paragraph gap percentages for the next layout.
+void book_layout_set_spacing(unsigned line_percent, unsigned paragraph_percent);
+/// EPUB 章节首页预留标题区并跳过已经在题头显示的前置标题块；每章重排前调用。
+/// Reserve a first-page chapter heading and skip heading blocks already shown there; call before each chapter layout.
+void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px);
+/// 返回该页的 EPUB 图片序号；文字页为 -1。/ Return an EPUB image index for this page, or -1 for text.
+int book_layout_page_image(size_t page);
 /// 释放页表，不释放原文。/ Free layout storage, never the borrowed text.
 void book_layout_free(void);
 /// 返回页数；未建立布局时为零。/ Return page count, zero without a layout.

@@ -134,7 +134,7 @@ void ui_draw_menu_page(uint8_t* framebuffer, const app_desc_t* current, int leaf
         "第 %d / %d 页　Page %d / %d",
         leaf + 1, leaves, leaf + 1, leaves
     );
-    ui_draw_header(framebuffer, "演示项目 Demo Projects", line);
+    ui_draw_header(framebuffer, "功能", line);
 
     for (int row = 0; row < count; row++) {
         ui_draw_menu_row_pressed(framebuffer, current, leaf, row, false);

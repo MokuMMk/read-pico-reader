@@ -5,15 +5,17 @@
  * EPUB 使用的只读、有界 ZIP 条目访问。
  * Read-only, bounded ZIP entry access for EPUB.
  *
- * 冻结：最多 512 条目、每条输出 2 MiB；不写文件、不支持加密或 ZIP64。
- * Frozen: at most 512 entries and 2 MiB output per entry; no writes, encryption or ZIP64.
+ * 冻结：最多 4096 条目，单次解压最多 8 MiB；大于解压上限的未使用资源可留在书内。
+ * Frozen: at most 4096 entries and 8 MiB per extraction; unused larger resources may remain in a book.
+ * 为兼容大 EPUB 调整容量决策；仍不写文件、不支持加密或 ZIP64。
+ * Capacity policy updated for large EPUBs; still no writes, encryption or ZIP64.
  */
 #pragma once
 #include <stddef.h>
 #include "esp_err.h"
 
-#define ZIP_ENTRY_MAX 512
-#define ZIP_OUTPUT_MAX (2U * 1024U * 1024U)
+#define ZIP_ENTRY_MAX 4096
+#define ZIP_OUTPUT_MAX (8U * 1024U * 1024U)
 #define ZIP_INPUT_MAX (ZIP_OUTPUT_MAX + 65536U)
 
 /// 持有文件与 PSRAM 目录；由 zip_close 释放。/ Owns the file and PSRAM directory; released by zip_close.

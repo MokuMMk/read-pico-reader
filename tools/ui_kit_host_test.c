@@ -12,6 +12,7 @@
 #include <string.h>
 #define W 100
 #define H 100
+uint8_t app_settings_system_contrast(void) { return 100; }
 void epd_draw_pixel(int x, int y, uint8_t color, uint8_t *fb) {
     assert(x >= 0 && x < W && y >= 0 && y < H); fb[y * W + x] = color;
 }

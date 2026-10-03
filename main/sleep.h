@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include "epd_highlevel.h"
+#include "esp_err.h"
 #include "sc7a20h.h"
 #include "settings.h"
 
@@ -26,7 +27,8 @@ typedef enum {
 } app_wake_source_t;
 
 void enter_lock_and_sleep(
-    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc
+    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc,
+    bool reader_background
 );
 
 /// 等电源键松开，避免进睡瞬间被同一下按住立刻唤醒。
@@ -39,6 +41,12 @@ app_wake_source_t app_last_wake_source(void);
 /// 软睡或关机，拉掉 EN 后停住，不会返回。
 /// Soft sleep or power-off: drop EN and halt; does not return.
 void app_enter_host_sleep(app_sleep_mode_t mode);
+/// 将当前系统时间写入常供电 PMU RTC；主控断电后由 PMU 继续走时。
+/// Sync system time to the always-on PMU RTC so it keeps ticking while the host is off.
+esp_err_t app_sync_time_to_pmu(void);
+/// 让 PMU 正常重启主控；先保存 RTC，调用后不会返回。
+/// Ask the PMU for a normal host restart after preserving RTC; does not return.
+void app_restart_host(void);
 
 #ifdef __cplusplus
 }

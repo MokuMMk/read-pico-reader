@@ -10,12 +10,23 @@
 
 #include "sleep.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <time.h>
+
 #include "app.h"
+#include "book_cover.h"
+#include "book_ticket.h"
 #include "display.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "pmu_selftest.h"
@@ -24,10 +35,18 @@
 #include "sc7a20h_lab.h"
 #include "settings.h"
 #include "ui_kit.h"
+#include "ui_image_dither.h"
+#include "ui_wallpaper.h"
 
 static const char* TAG = "read_pico";
 
 extern const uint8_t lock_4bpp_bin_start[] asm("_binary_lock_4bpp_bin_start");
+
+static bool draw_wallpaper(uint8_t *framebuffer) {
+    const char *path = app_settings_wallpaper_path();
+    return app_settings_lock_style() == 1 &&
+        ui_wallpaper_draw(framebuffer, path, (EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT});
+}
 
 static void lock_arm_ioe_wakeup(void) {
     gpio_config_t io = {
@@ -213,6 +232,7 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
 }
 
 void app_enter_host_sleep(app_sleep_mode_t mode) {
+    (void)app_sync_time_to_pmu();
     pmu_selftest_prepare_powerdown();
     if (mode == APP_SLEEP_OFF) {
         ESP_LOGI(TAG, "power off %s", esp_err_to_name(read_pico_pmu_power_off()));
@@ -222,31 +242,58 @@ void app_enter_host_sleep(app_sleep_mode_t mode) {
     while (true) vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
+esp_err_t app_sync_time_to_pmu(void) {
+    time_t now = time(NULL);
+    if (now < 946684800 || now > 4102444799U) {
+        ESP_LOGW(TAG, "skip PMU time sync: system clock invalid");
+        return ESP_ERR_INVALID_STATE;
+    }
+    uint32_t seconds = (uint32_t)now;
+    uint8_t payload[4] = {
+        (uint8_t)(seconds & 0xff),
+        (uint8_t)((seconds >> 8) & 0xff),
+        (uint8_t)((seconds >> 16) & 0xff),
+        (uint8_t)((seconds >> 24) & 0xff),
+    };
+    esp_err_t err = read_pico_pmu_cmd(PMU_CMD_TIME_SYNC, payload, sizeof(payload));
+    ESP_LOGI(TAG, "PMU time sync before power action: %s", esp_err_to_name(err));
+    return err;
+}
+
+void app_restart_host(void) {
+    (void)app_sync_time_to_pmu();
+    pmu_selftest_prepare_powerdown();
+    esp_err_t err = read_pico_pmu_action(PMU_ACTION_HOST_NORMAL_RESTART, 250, 0x5052);
+    ESP_LOGI(TAG, "normal restart: %s", esp_err_to_name(err));
+    if (err != ESP_OK) esp_restart();
+    while (true) vTaskDelay(pdMS_TO_TICKS(1000));
+}
+
 void enter_lock_and_sleep(
-    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc
+    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc,
+    bool reader_background
 ) {
     uint8_t* framebuffer = epd_hl_get_framebuffer(hl);
     epd_poweron();
     epd_clear();
     epd_hl_set_all_white(hl);
-    ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
+    // 阅读票根独占锁屏画布：始终先画最近书籍封面，再叠票根；自定义壁纸只属于壁纸模式。
+    // Ticket mode owns the lock canvas: book cover first, ticket on top. Custom wallpaper is wallpaper-only.
+    bool lock_drawn = app_settings_lock_style() == 0
+        ? book_ticket_draw(framebuffer, reader_background)
+        : draw_wallpaper(framebuffer);
+    if (!lock_drawn) {
+        epd_hl_set_all_white(hl);
+        ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
+    }
     epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
 
     app_lock_wait_key_idle(800);
-    app_sleep_mode_t mode = app_settings_sleep_mode();
-    ESP_LOGI(TAG, "lock %s", app_sleep_mode_name(mode));
-
-    switch (mode) {
-        case APP_SLEEP_OFF:
-        case APP_SLEEP_DEEP:
-            app_enter_host_sleep(mode);
-            break;
-        case APP_SLEEP_LIGHT:
-        default:
-            epd_poweroff();
-            app_light_sleep_wait(acc);
-            break;
-    }
+    // 短按电源键只锁屏并浅睡；深度关机只由长按电源菜单触发。
+    // A short press only locks and light-sleeps; deep shutdown belongs to the long-press menu.
+    ESP_LOGI(TAG, "lock LIGHT");
+    epd_poweroff();
+    app_light_sleep_wait(acc);
 
     // 参考帧和屏幕都归零，回到主循环后由当前页自己画一遍，不必知道是哪一页。
     // Zero the reference frame and the panel; the current page redraws after the loop resumes, without knowing which page it is.

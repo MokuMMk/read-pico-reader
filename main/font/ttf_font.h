@@ -42,7 +42,7 @@ typedef struct {
 /// 灰阶字覆盖率伽马。小于 1 抬中间覆盖率，抗锯齿边缘更深；满墨仍是 0。
 /// Coverage gamma for gray glyphs. Below 1 lifts mid coverage so AA edges are darker; full ink stays 0.
 #ifndef TTF_COVER_GAMMA
-#define TTF_COVER_GAMMA 0.6f
+#define TTF_COVER_GAMMA 0.5f
 #endif
 
 esp_err_t ttf_font_init(void);
@@ -56,6 +56,8 @@ int ttf_font_count(void);
 const ttf_font_item_t* ttf_font_item(int index);
 const char* ttf_font_path(void);
 const char* ttf_font_display_name(void);
+/// 已知随附字体的中文名称；未知名称原样返回。/ Chinese names for bundled fonts; unknown names pass through.
+const char* ttf_font_localized_name(const char* stem);
 bool ttf_font_ready(void);
 int ttf_ascender(int size);
 int ttf_ascender_px(int pixel_height);

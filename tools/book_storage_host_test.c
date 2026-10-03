@@ -100,7 +100,7 @@ int main(void){
     assert(book_progress_last_path(out,sizeof(out))&&!strcmp(out,long_path));assert(!book_progress_last_path(out,2)&&!out[0]);
     assert(book_progress_forget(long_path)==ESP_OK&&!has_last);
     assert(book_progress_set_last_path("")==ESP_OK);assert(!book_progress_last_path(out,sizeof(out))&&!out[0]);
-    p.px=37;assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_ARG);p.px=48;p.pct=101;assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_ARG);
+    p.px=35;assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_ARG);p.px=48;p.pct=101;assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_ARG);
     p.pct=83;sequence=UINT32_MAX;int before=commits;
     assert(book_progress_save(sd,&p)==ESP_ERR_INVALID_STATE&&commits==before&&sequence==UINT32_MAX);
     puts("book progress: v1/v2, sequence, collision, two roots, NVS-full, partial forget and retry passed");

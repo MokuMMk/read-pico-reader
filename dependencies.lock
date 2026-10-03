@@ -1,29 +1,59 @@
 dependencies:
   espressif/cjson:
-    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.0'
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 1.7.19~2
-  espressif/qrcode:
-    component_hash: 31e70991ce22f28d73a4386417fc9c0993f61e1aab1832474fd9e3db8da9dcbd
     dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: managed_components/espressif__cjson
+      type: local
+    version: 1.7.19~2
+  espressif/esp_jpeg:
+    dependencies: []
+    source:
+      path: managed_components/espressif__esp_jpeg
+      type: local
+    version: 1.3.1
+  espressif/esp_tinyusb:
+    dependencies: []
+    source:
+      path: components/espressif__esp_tinyusb
+      type: local
+    version: 2.3.0
+  espressif/libpng:
+    dependencies: []
+    source:
+      path: managed_components/espressif__libpng
+      type: local
+    version: 1.6.58~2
+  espressif/qrcode:
+    dependencies: []
+    source:
+      path: managed_components/espressif__qrcode
+      type: local
     version: 0.2.0
+  espressif/tinyusb:
+    dependencies: []
+    source:
+      path: managed_components/espressif__tinyusb
+      type: local
+    version: 0.21.0~2
+  espressif/zlib:
+    dependencies: []
+    source:
+      path: managed_components/espressif__zlib
+      type: local
+    version: 1.3.2~1
   idf:
     source:
       type: idf
     version: 6.1.0
 direct_dependencies:
 - espressif/cjson
+- espressif/esp_jpeg
+- espressif/esp_tinyusb
+- espressif/libpng
 - espressif/qrcode
+- espressif/tinyusb
+- espressif/zlib
 - idf
-manifest_hash: 15804665de5ccfbb784d3598fdc7e9322c498eb2c2681e2622ed0a03f16ecae9
+manifest_hash: 6e5371172e98a9dd169ed623069360fc5e3d0f578d96344dc4c3ea02656e9027
 target: esp32s3
 version: 3.0.0

@@ -10,13 +10,15 @@
  * the menu handle, on_exit/on_enter, present, lock, delayed SD font load.
  * Page state and refresh cadence stay in main/apps/; gesture recognition is shared.
  *
- * 冻结：主循环只产出手势、不解释含义；只有 owns_keys 页可接管三键，
- * 且必须提供强刷和 request_menu 入口；把手仍按下即触发。
+ * 冻结：主循环只产出手势、不解释含义；产品系统页接管三键，按用户要求
+ * 左右返回、中键首页；阅读页保留翻页、页面设置和长按回书架。把手仍按下即触发。
  * 接管页可选长按键回调，保留按下行为；同键单指500ms仅触发一次，中断取消。
- * Frozen: Produce gestures without interpreting page actions. KEY2 full refresh
- * and KEY3 menu are global unless owns_keys provides its own refresh/menu exits.
+ * Frozen: Produce gestures without interpreting page actions. Product system pages
+ * own Back/Home/Back keys; reading retains page turns, settings and hold-to-shelf.
  * Owners may opt into a single 500ms same-key hold callback after the press action; interruptions cancel it.
  * The menu handle still fires on press.
+ * 用户修订：系统页面切换使用 GL16，不再每次 GC16 全刷；锁屏、手动强刷和周期清残影仍可全刷。
+ * User revision: system page changes use GL16 instead of GC16; lock, manual refresh and periodic ghost cleanup may still use full refresh.
  * 冻结：返回消费最近切页来源，恢复原页及菜单位置，不跳固定首页。
  * Frozen: Return consumes the latest page origin, restoring its page and menu position.
  */
@@ -26,6 +28,7 @@
 #include <string.h>
 
 #include "app_registry.h"
+#include "app_content_open.h"
 #include "continuous_du.h"
 #include "display.h"
 #include "e0470_epaper_waveform.h"
@@ -35,13 +38,17 @@
 #include "freertos/task.h"
 #include "read_pico_board.h"
 #include "read_pico_pmu.h"
+#include "read_pico_transfer.h"
 #include "read_pico_sd.h"
 #include "settings.h"
 #include "sleep.h"
 #include "ttf_font.h"
+#include "app_font_context.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
 #include "ui_gesture.h"
+#include "ui_power_dialog.h"
+#include "usb_storage.h"
 
 #define TAG "app_loop"
 
@@ -50,10 +57,11 @@
 #define LOOP_TICK_MS 5
 // SD 卡插上或者刚挂好时，隔一会儿再试一次存在设置里的字体。
 // Retry the saved SD font shortly after a card appears or mounts.
-#define FONT_RETRY_INTERVAL_MS 3000
+#define FONT_RETRY_INTERVAL_MS 750
 #define MEDIA_POLL_INTERVAL_MS 500
 
 static int64_t s_lock_ignore_until_ms;
+extern const app_desc_t app_transfer;
 
 void app_lock_ignore_for(int64_t ms) {
     s_lock_ignore_until_ms = esp_timer_get_time() / 1000 + ms;
@@ -61,6 +69,7 @@ void app_lock_ignore_for(int64_t ms) {
 
 void app_present(app_ctx_t* ctx, const app_desc_t* app, app_redraw_t redraw) {
     enum EpdDrawError result = EPD_DRAW_SUCCESS;
+    ui_text_set_system_scale(true);
     if (app->present != NULL && app->present(ctx, redraw)) return;
     switch (redraw) {
         case APP_REDRAW_NONE:
@@ -86,7 +95,7 @@ void app_present(app_ctx_t* ctx, const app_desc_t* app, app_redraw_t redraw) {
         case APP_REDRAW_PAGE:
         default:
             if (app->render != NULL) app->render(ctx, ctx->fb);
-            result = update_display_mode(ctx->hl, APP_PAGE_REFRESH_MODE);
+            result = update_display_fast_page(ctx->hl);
             break;
     }
     guard_draw_result(ctx->hl, result);
@@ -156,6 +165,7 @@ static void switch_to(
     if (next == NULL || next == *current) return;
     if ((*current)->on_exit != NULL) (*current)->on_exit(ctx);
     *current = next;
+    app_font_activate_system();
     if (next->on_enter != NULL) next->on_enter(ctx);
     app_present(ctx, next, next->enter_full ? APP_REDRAW_FULL : APP_REDRAW_PAGE);
     ESP_LOGI(TAG, "page -> %s", next->title);
@@ -168,7 +178,7 @@ static void present_menu(app_ctx_t* ctx, const app_desc_t* current, int leaf, me
         guard_draw_result(ctx->hl, update_display_white(ctx->hl));
     }
     ui_draw_menu_page(ctx->fb, current, leaf);
-    guard_draw_result(ctx->hl, update_display_mode(ctx->hl, APP_PAGE_REFRESH_MODE));
+    guard_draw_result(ctx->hl, update_display_fast_page(ctx->hl));
 }
 
 // 空槽常带着抬起事件或残留坐标，不能进页面看到的快照；抬手后保留最后一次位置。
@@ -194,13 +204,6 @@ static void debounce_touch(
 }
 
 static bool try_load_saved_sd_font(bool allow_probe) {
-    const char* path = app_settings_font_path();
-    if (ttf_font_path_is_builtin(path)) return false;
-    if (ttf_font_ready() && !ttf_font_is_builtin()
-        && strcmp(ttf_font_path(), path) == 0) {
-        return false;
-    }
-
     read_pico_sd_info_t info;
     esp_err_t err = read_pico_sd_get_info(&info);
     if (err == ESP_ERR_NOT_FINISHED) return false;
@@ -208,13 +211,14 @@ static bool try_load_saved_sd_font(bool allow_probe) {
         if (allow_probe && err == ESP_ERR_INVALID_STATE) read_pico_sd_start_probe();
         return false;
     }
-    return ttf_font_open(path) == ESP_OK && !ttf_font_is_builtin();
+    return app_font_retry_active();
 }
 
 // 先停文件使用者，再换字体；此处只观察挂载，不卸载也不重新挂载。
 // Stop file consumers before font fallback; observe mounting without unmounting or remounting.
 static bool poll_media(app_ctx_t* ctx, const app_desc_t* current,
                        bool* mounted, bool* invalidated) {
+    if (usb_storage_active()) { *mounted = false; *invalidated = false; return false; }
     read_pico_sd_info_t info = {0};
     esp_err_t err = read_pico_sd_get_info(&info);
     if (err == ESP_ERR_NOT_FINISHED) return false;
@@ -226,7 +230,20 @@ static bool poll_media(app_ctx_t* ctx, const app_desc_t* current,
     *invalidated = true;
     if (current->on_media_lost) current->on_media_lost(ctx);
     if (ttf_font_ready() && !ttf_font_is_builtin()) ttf_font_open_builtin();
+    ui_text_set_system_font(false);
     return true;
+}
+
+// 电源动作先保存当前页面，再定稿一张不带时钟的静态画面；避免关机后留下会误读的冻结时间。
+// Save the current page first, then settle a clock-free static frame so shutdown never leaves a misleading frozen time.
+static void run_power_action(app_ctx_t *ctx, const app_desc_t *current, bool restart) {
+    if (current->on_before_lock) current->on_before_lock(ctx);
+    ui_power_final_draw(ctx->fb, restart);
+    guard_draw_result(ctx->hl, update_display_full(ctx->hl));
+    app_lock_wait_key_idle(800);
+    epd_poweroff();
+    if (restart) app_restart_host();
+    app_enter_host_sleep(APP_SLEEP_OFF);
 }
 
 void app_loop_run(const app_loop_config_t* config) {
@@ -252,6 +269,8 @@ void app_loop_run(const app_loop_config_t* config) {
     bool was_touched = false;
     bool menu_open = false;
     ui_gesture_t gesture = {0};
+    ui_gesture_t power_gesture = {0};
+    bool power_dialog_open = false;
     int menu_pressed = UI_MENU_HIT_NONE;
     menu_feedback_t feedback = {0};
     int menu_leaf = 0;
@@ -263,10 +282,14 @@ void app_loop_run(const app_loop_config_t* config) {
     int64_t last_lock_poll_ms = 0;
     int64_t last_font_retry_ms = 0;
     int64_t last_media_poll_ms = 0;
+    int64_t last_network_poll_ms = 0;
     bool media_mounted = ttf_font_ready() && !ttf_font_is_builtin();
     bool media_invalidated = false;
     app_lock_ignore_for(APP_LOCK_IGNORE_BOOT_MS);
 
+    // The SD probe starts during board setup and is usually ready by the first product frame.
+    // Retry here so the very first bookshelf paint already has a full CJK system face.
+    try_load_saved_sd_font(false);
     if (current->on_enter != NULL) current->on_enter(&ctx);
     poll_media(&ctx, current, &media_mounted, &media_invalidated);
     // 首帧必须整屏 GC16：fb 里还是 app_main 画的开机图，DU 盖不掉。
@@ -286,6 +309,10 @@ void app_loop_run(const app_loop_config_t* config) {
         const bool released = !touch.touched && was_touched;
         debounce_touch(&latest, &touch, released);
         ctx.now_ms = esp_timer_get_time() / 1000;
+        if (ctx.now_ms - last_network_poll_ms >= 500) {
+            last_network_poll_ms = ctx.now_ms;
+            read_pico_transfer_service_poll();
+        }
         ctx.pressed = pressed;
         ctx.released = released;
         ctx.consumed = false;
@@ -293,6 +320,7 @@ void app_loop_run(const app_loop_config_t* config) {
         ctx.request_menu = false;
         ctx.request_return = false;
         bool selected_from_menu = false;
+        const bool power_input_owned = power_dialog_open;
 
         if (ctx.now_ms - last_media_poll_ms >= MEDIA_POLL_INTERVAL_MS) {
             last_media_poll_ms = ctx.now_ms;
@@ -312,17 +340,38 @@ void app_loop_run(const app_loop_config_t* config) {
             }
         }
 
+        if (power_input_owned && err == ESP_OK) {
+            ui_gesture_event_t event;
+            ctx.consumed = false;
+            if (ui_gesture_feed(&power_gesture, &ctx, &event)) {
+                ui_power_action_t action = ui_power_dialog_handle(&event);
+                if (action == UI_POWER_ACTION_CANCEL) {
+                    power_dialog_open = false;
+                    ui_gesture_reset(&power_gesture);
+                    if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
+                    else app_present(&ctx, current, APP_REDRAW_PAGE);
+                } else if (action == UI_POWER_ACTION_SHUTDOWN) {
+                    run_power_action(&ctx, current, false);
+                } else if (action == UI_POWER_ACTION_RESTART) {
+                    run_power_action(&ctx, current, true);
+                }
+            }
+            ctx.consumed = true;
+        }
+
         if (err != ESP_OK) {
             held_key = -1;
             cancel_gesture(&ctx, current, &gesture);
+            ui_gesture_reset(&power_gesture);
             ctx.consumed = true;
             if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
             menu_pressed = UI_MENU_HIT_NONE;
         }
-        if (pressed && err == ESP_OK) {
+        if (!power_input_owned && pressed && err == ESP_OK) {
             held_key = -1;
             const int key = ui_key_hit_test(touch.x, touch.y);
-            const bool handle_hit = ui_menu_handle_hit_test(touch.x, touch.y);
+            const bool handle_hit = ui_menu_handle_hit_test(touch.x, touch.y) &&
+                (!current->menu_handle_enabled || current->menu_handle_enabled(&ctx));
             ctx.consumed = true;
             if (key >= 0 || handle_hit) {
                 cancel_gesture(&ctx, current, &gesture);
@@ -330,7 +379,8 @@ void app_loop_run(const app_loop_config_t* config) {
                 menu_pressed = UI_MENU_HIT_NONE;
             }
             if (key >= 0 && current->owns_keys && !menu_open) {
-                app_redraw_t redraw = current->on_key ? current->on_key(&ctx, key) : APP_REDRAW_NONE;
+                app_redraw_t redraw = current->on_key && !(key == UI_KEY_2 && current->defer_middle_short)
+                    ? current->on_key(&ctx, key) : APP_REDRAW_NONE;
                 present_page(&ctx, current, &gesture, redraw);
                 if (current->on_key_long && touch.count == 1) {
                     held_key = key;
@@ -346,7 +396,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     current->render(&ctx, ctx.fb);
                     guard_draw_result(ctx.hl, update_display_full(ctx.hl));
                 }
-            } else if (key == UI_KEY_3 || handle_hit) {
+            } else if ((key == UI_KEY_3 || handle_hit) && !usb_storage_active()) {
                 menu_open = !menu_open;
                 if (menu_open) {
                     menu_leaf = ui_menu_leaf_for_app(current);
@@ -384,7 +434,7 @@ void app_loop_run(const app_loop_config_t* config) {
             }
         }
         if (err == ESP_OK) was_touched = touch.touched;
-        if (menu_open && menu_pressed >= 0) {
+        if (!power_input_owned && menu_open && menu_pressed >= 0) {
             int hit = ui_menu_hit_test(latest.x, latest.y, menu_leaf);
             if (touch.count > 1 || hit != menu_pressed || released) {
                 int chosen = menu_pressed;
@@ -398,7 +448,7 @@ void app_loop_run(const app_loop_config_t* config) {
                 }
             }
         }
-        if (!menu_open && current->on_gesture && err == ESP_OK) {
+        if (!power_input_owned && !menu_open && current->on_gesture && err == ESP_OK) {
             ui_gesture_event_t event;
             if (ui_gesture_feed(&gesture, &ctx, &event)) {
                 app_redraw_t redraw = current->on_gesture(&ctx, &event);
@@ -412,19 +462,32 @@ void app_loop_run(const app_loop_config_t* config) {
 
         // 电源键短按 = 锁屏。自检页要连着占用 PMU，这时不抢它的事件队列。
         // Short power-key press locks. A page that holds the PMU keeps its event queue.
-        // Short power-key press locks. A page that holds the PMU keeps its event queue.
-        if (read_pico_pmu_ready() && !current->holds_pmu
+        if (read_pico_pmu_ready() && !current->holds_pmu && !usb_storage_active()
             && ctx.now_ms - last_lock_poll_ms >= APP_LOCK_POLL_MS) {
             last_lock_poll_ms = ctx.now_ms;
-            if (read_pico_pmu_take_key_short()) {
+            read_pico_pmu_key_action_t key_action = read_pico_pmu_take_key_action();
+            if (key_action != READ_PICO_PMU_KEY_NONE) {
                 if (ctx.now_ms < s_lock_ignore_until_ms) {
-                    ESP_LOGI(TAG, "ignore boot KEY_SHORT");
-                } else {
+                    ESP_LOGI(TAG, "ignore boot power-key action %d", (int)key_action);
+                } else if (key_action == READ_PICO_PMU_KEY_LONG) {
                     held_key = -1;
                     cancel_gesture(&ctx, current, &gesture);
                     if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
                     menu_pressed = UI_MENU_HIT_NONE;
-                    enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc);
+                    power_dialog_open = true;
+                    ui_gesture_reset(&power_gesture);
+                    ui_power_dialog_draw(ctx.fb);
+                    guard_draw_result(ctx.hl, update_display_area_with(
+                        ctx.hl, &E0470_WAVEFORM, MODE_GL16, ui_power_dialog_rect()));
+                } else if (!power_dialog_open) {
+                    held_key = -1;
+                    cancel_gesture(&ctx, current, &gesture);
+                    if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
+                    menu_pressed = UI_MENU_HIT_NONE;
+                    if (current->on_before_lock) current->on_before_lock(&ctx);
+                    extern const app_desc_t app_book;
+                    enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
+                                         !menu_open && current == &app_book && app_book_reader_body_visible());
                     ctx.now_ms = esp_timer_get_time() / 1000;
                     poll_media(&ctx, current, &media_mounted, &media_invalidated);
                     last_media_poll_ms = ctx.now_ms;
@@ -432,7 +495,6 @@ void app_loop_run(const app_loop_config_t* config) {
                     ctx.pressed = false;
                     ctx.released = false;
                     // 醒来还在同一页，重画一次免得留着锁屏图。
-                    // Still the same page; redraw so the lock image does not stay.
                     // Still the same page; redraw so the lock image does not stay.
                     if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
                     else app_present(&ctx, current, APP_REDRAW_PAGE);
@@ -443,7 +505,8 @@ void app_loop_run(const app_loop_config_t* config) {
         // 设置里存的字体在 SD 卡上，开机时卡可能还没挂好，这里定期重试。
         // The saved font lives on the card; retry until the mount is ready.
         // The saved font lives on the card; retry until the mount is ready.
-        if (ctx.now_ms - last_font_retry_ms >= FONT_RETRY_INTERVAL_MS) {
+        if (!power_dialog_open && !usb_storage_active() && current != &app_transfer &&
+            ctx.now_ms - last_font_retry_ms >= FONT_RETRY_INTERVAL_MS) {
             last_font_retry_ms = ctx.now_ms;
             if (try_load_saved_sd_font(!media_invalidated)) {
                 held_key = -1;
@@ -459,7 +522,17 @@ void app_loop_run(const app_loop_config_t* config) {
             }
         }
 
-        if (held_key >= 0) {
+        if (!power_dialog_open && released && held_key == UI_KEY_2 && ui_key_hit_test(latest.x, latest.y) == UI_KEY_2 &&
+            current->defer_middle_short && !menu_open &&
+            !ctx.request_app && !ctx.request_menu && !ctx.request_return) {
+            int key = held_key;
+            held_key = -1;
+            ctx.consumed = true;
+            app_redraw_t redraw = ctx.now_ms - held_since_ms >= UI_LONG_PRESS_MS
+                ? current->on_key_long(&ctx, key) : current->on_key(&ctx, key);
+            present_page(&ctx, current, &gesture, redraw);
+        }
+        if (!power_dialog_open && held_key >= 0) {
             if (menu_open || ctx.request_app || ctx.request_menu || ctx.request_return || !touch.touched ||
                 touch.count != 1 || ui_key_hit_test(touch.x, touch.y) != held_key ||
                 ctx.now_ms < held_since_ms) {
@@ -471,7 +544,7 @@ void app_loop_run(const app_loop_config_t* config) {
                 present_page(&ctx, current, &gesture, current->on_key_long(&ctx, key));
             }
         }
-        if (!menu_open && !ctx.request_app && !ctx.request_menu && !ctx.request_return && current->on_tick != NULL) {
+        if (!power_dialog_open && !menu_open && !ctx.request_app && !ctx.request_menu && !ctx.request_return && current->on_tick != NULL) {
             app_redraw_t redraw = current->on_tick(&ctx);
             if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) held_key = -1;
             present_page(&ctx, current, &gesture, redraw);
@@ -485,7 +558,14 @@ void app_loop_run(const app_loop_config_t* config) {
         if (!menu_open) feedback.updates = 0;
         // 返回来源优先；普通请求仍按切页优先处理。
         // Return requests win; ordinary requests still prioritize page switches.
-        if (ctx.request_return || ctx.request_app || ctx.request_menu) {
+        // USB MSC 持有 TF 卡时禁止任何页面切换；必须先安全停止并重新挂载。
+        // Never navigate while USB MSC owns the card; stop and remount it first.
+        if (usb_storage_active()) {
+            ctx.request_return = false;
+            ctx.request_app = NULL;
+            ctx.request_menu = false;
+        }
+        if (!power_dialog_open && (ctx.request_return || ctx.request_app || ctx.request_menu)) {
             held_key = -1;
             const app_desc_t* next = ctx.request_app;
             const bool go_back = ctx.request_return;
@@ -502,6 +582,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     if (current->on_exit) current->on_exit(&ctx);
                     current = return_app;
                     return_app = NULL;
+                    app_font_activate_system();
                     if (current->on_enter) current->on_enter(&ctx);
                     // 初始化后恢复通用页码，避免 on_enter 的默认页码覆盖来源。
                     // Restore the shared leaf after initialization overrides its default.
