@@ -44,6 +44,7 @@
 #define NVS_KEY_BOOK_PARA "bk_para"
 #define NVS_KEY_BOOK_MARGIN "bk_margin"
 #define NVS_KEY_BOOK_TRACK "bk_track"
+#define NVS_KEY_BOOK_INDENT "bk_indent"
 #define NVS_KEY_BOOK_RULE "bk_rule"
 #define NVS_KEY_SHELF_STYLE "shelf_ui"
 #define NVS_KEY_SHELF_V22 "shelf_v22"
@@ -56,7 +57,7 @@ static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
 static char s_font[FONT_PATH_MAX];
 static char s_system_font[FONT_PATH_MAX];
 static uint8_t s_system_size = 120;
-static uint8_t s_system_contrast = 130;
+static uint8_t s_system_contrast = 100;
 static uint8_t s_lock_style;
 static char s_wallpaper[288];
 static uint8_t s_last_wake;
@@ -70,6 +71,7 @@ static uint8_t s_book_line = 150, s_book_para = 50, s_book_margin = 36;
 static bool s_reader_power_turn;
 static bool s_reader_immersive;
 static uint8_t s_book_tracking = 2, s_book_reading_line;
+static uint8_t s_book_indent = 2;
 static uint8_t s_shelf_style = 2;
 static char s_books_dir[MEDIA_DIR_MAX] = "/sdcard/books";
 static char s_fonts_dir[MEDIA_DIR_MAX] = "/sdcard/fonts";
@@ -152,7 +154,7 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_SYS_SIZE, &system_size) == ESP_OK &&
         system_size >= 100 && system_size <= 140 && system_size % 10 == 0)
         s_system_size = system_size;
-    uint8_t system_contrast = 130;
+    uint8_t system_contrast = 100;
     if (nvs_get_u8(h, NVS_KEY_SYS_CONTRAST, &system_contrast) == ESP_OK &&
         system_contrast >= 100 && system_contrast <= 140 && system_contrast % 10 == 0)
         s_system_contrast = system_contrast;
@@ -182,11 +184,13 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_POWER_TURN, &power_turn) == ESP_OK) s_reader_power_turn = power_turn == 1;
     uint8_t immersive = 0;
     if (nvs_get_u8(h, NVS_KEY_IMMERSIVE, &immersive) == ESP_OK) s_reader_immersive = immersive == 1;
-    uint8_t tracking = 2, reading_line = 0;
+    uint8_t tracking = 2, reading_line = 0, indent = 2;
     if (nvs_get_u8(h, NVS_KEY_BOOK_TRACK, &tracking) == ESP_OK && tracking <= 4)
         s_book_tracking = tracking;
     if (nvs_get_u8(h, NVS_KEY_BOOK_RULE, &reading_line) == ESP_OK && reading_line <= 2)
         s_book_reading_line = reading_line;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_INDENT, &indent) == ESP_OK && indent <= 3)
+        s_book_indent = indent;
     uint8_t line = 150, para = 50, margin = 36;
     if (nvs_get_u8(h, NVS_KEY_BOOK_LINE, &line) == ESP_OK) {
         if (line >= 110 && line <= 150) s_book_line = line;
@@ -389,6 +393,12 @@ void app_settings_set_book_tracking(uint8_t index) {
     s_book_tracking = index;
     nvs_put_u8(NVS_KEY_BOOK_TRACK, index);
 }
+uint8_t app_settings_book_indent(void) { return s_book_indent; }
+void app_settings_set_book_indent(uint8_t em) {
+    if (em > 3 || em == s_book_indent) return;
+    s_book_indent = em;
+    nvs_put_u8(NVS_KEY_BOOK_INDENT, em);
+}
 uint8_t app_settings_book_reading_line(void) { return s_book_reading_line; }
 void app_settings_set_book_reading_line(uint8_t style) {
     if (style > 2 || style == s_book_reading_line) return;
@@ -465,6 +475,13 @@ static uint32_t backup_checksum(const settings_backup_v1_t *backup) {
     return hash;
 }
 
+static uint32_t backup_indent_checksum(const settings_backup_v1_t *backup, uint8_t indent) {
+    const uint8_t *data = (const uint8_t *)backup;
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < sizeof(*backup); ++i) hash = (hash ^ data[i]) * 16777619u;
+    return (hash ^ indent) * 16777619u;
+}
+
 static void backup_seal(settings_backup_v1_t *backup) {
     uint32_t value = backup_checksum(backup);
     for (int i = 0; i < 4; ++i) backup->checksum[i] = (uint8_t)(value >> (i * 8));
@@ -478,7 +495,7 @@ static bool backup_card_ready(void) {
 esp_err_t app_settings_backup_save(void) {
     if (!backup_card_ready()) return ESP_ERR_INVALID_STATE;
     settings_backup_v1_t backup = {0};
-    memcpy(backup.magic, "PICOSET1", sizeof(backup.magic));
+    memcpy(backup.magic, "PICOSET2", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -503,10 +520,14 @@ esp_err_t app_settings_backup_save(void) {
     strlcpy(backup.books_dir, s_books_dir, sizeof(backup.books_dir));
     strlcpy(backup.fonts_dir, s_fonts_dir, sizeof(backup.fonts_dir));
     backup_seal(&backup);
+    uint8_t indent_extension[5] = {s_book_indent};
+    uint32_t indent_hash = backup_indent_checksum(&backup, s_book_indent);
+    for (int i = 0; i < 4; ++i) indent_extension[i + 1] = (uint8_t)(indent_hash >> (i * 8));
 
     FILE *file = fopen(BACKUP_TEMP, "wb");
     if (!file) return ESP_FAIL;
     bool ok = fwrite(&backup, 1, sizeof(backup), file) == sizeof(backup);
+    if (ok) ok = fwrite(indent_extension, 1, sizeof(indent_extension), file) == sizeof(indent_extension);
     if (ok) ok = fflush(file) == 0;
     if (ok) ok = fsync(fileno(file)) == 0;
     if (fclose(file) != 0) ok = false;
@@ -542,7 +563,8 @@ static bool backup_valid(const settings_backup_v1_t *backup) {
     const uint8_t *f = backup->flags;
     uint32_t checksum = 0;
     for (int i = 0; i < 4; ++i) checksum |= (uint32_t)backup->checksum[i] << (i * 8);
-    if (memcmp(backup->magic, "PICOSET1", 8) || checksum != backup_checksum(backup)) return false;
+    if ((memcmp(backup->magic, "PICOSET1", 8) && memcmp(backup->magic, "PICOSET2", 8)) ||
+        checksum != backup_checksum(backup)) return false;
     if (f[BK_SLEEP] > APP_SLEEP_OFF || f[BK_PICKUP] > 1 ||
         f[BK_SYS_SIZE] < 100 || f[BK_SYS_SIZE] > 140 || f[BK_SYS_SIZE] % 10 ||
         f[BK_SYS_CONTRAST] < 100 || f[BK_SYS_CONTRAST] > 140 || f[BK_SYS_CONTRAST] % 10 ||
@@ -574,6 +596,17 @@ esp_err_t app_settings_backup_restore(void) {
     if (!file) return ESP_ERR_NOT_FOUND;
     settings_backup_v1_t backup;
     bool ok = fread(&backup, 1, sizeof(backup), file) == sizeof(backup);
+    uint8_t indent = 2;
+    if (ok && !memcmp(backup.magic, "PICOSET2", 8)) {
+        uint8_t extension[5];
+        ok = fread(extension, 1, sizeof(extension), file) == sizeof(extension);
+        if (ok) {
+            indent = extension[0];
+            uint32_t stored = 0;
+            for (int i = 0; i < 4; ++i) stored |= (uint32_t)extension[i + 1] << (i * 8);
+            ok = indent <= 3 && stored == backup_indent_checksum(&backup, indent);
+        }
+    }
     if (ok) ok = fgetc(file) == EOF && !ferror(file);
     if (fclose(file) != 0) ok = false;
     if (!ok || !backup_valid(&backup)) return ESP_ERR_INVALID_RESPONSE;
@@ -607,6 +640,7 @@ esp_err_t app_settings_backup_restore(void) {
     BACKUP_SET_U8(NVS_KEY_POWER_TURN, BK_POWER_TURN);
     BACKUP_SET_U8(NVS_KEY_IMMERSIVE, BK_IMMERSIVE);
     BACKUP_SET_U8(NVS_KEY_BOOK_TRACK, BK_TRACKING);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_INDENT, indent);
     BACKUP_SET_U8(NVS_KEY_BOOK_RULE, BK_READING_LINE);
     BACKUP_SET_U8(NVS_KEY_BOOK_LINE, BK_LINE_SPACING);
     BACKUP_SET_U8(NVS_KEY_BOOK_MARGIN, BK_MARGIN);
@@ -637,6 +671,7 @@ esp_err_t app_settings_backup_restore(void) {
     s_reader_power_turn = f[BK_POWER_TURN];
     s_reader_immersive = f[BK_IMMERSIVE];
     s_book_tracking = f[BK_TRACKING];
+    s_book_indent = indent;
     s_book_reading_line = f[BK_READING_LINE];
     s_book_line = f[BK_LINE_SPACING];
     s_book_margin = f[BK_MARGIN];

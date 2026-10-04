@@ -21,8 +21,12 @@ bool book_layout_build(const char* utf8, size_t len, EpdRect rect, int px);
 bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks, size_t count, EpdRect rect, int px);
 /// 设置行高百分比与段后距离百分比，重排时生效。/ Set line height and paragraph gap percentages for the next layout.
 void book_layout_set_spacing(unsigned line_percent, unsigned paragraph_percent);
-/// 正文默认首行缩进两字；额外字间距为 -4/-2/0/+2/+4 像素。/ Body defaults to two-em first-line indent; tracking is -4/-2/0/+2/+4 pixels.
+/// 正文额外字间距为 -4/-2/0/+2/+4 像素。/ Extra body tracking is -4/-2/0/+2/+4 pixels.
 void book_layout_set_typography(int tracking_px);
+/// 普通正文首行缩进 0..3 字；不改变标题及居中、右对齐块。/ Indent ordinary body paragraphs by 0..3 em; keep headings and aligned blocks unchanged.
+void book_layout_set_first_line_indent(unsigned em);
+/// 把正文宽度收齐到完整汉字列并居中，避免折行余量只堆在右侧。/ Center complete CJK columns so wrap slack does not accumulate on the right.
+EpdRect book_layout_balanced_rect(EpdRect outer, int px, int tracking_px);
 /// 正文阅读线：0 无，1 虚线，2 点线。/ Reading guides: none, dashed or dotted.
 void book_layout_set_reading_line(unsigned style);
 /// EPUB 章节首页预留标题区并跳过已经在题头显示的前置标题块；每章重排前调用。

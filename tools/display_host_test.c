@@ -15,10 +15,11 @@
 #include "e0470_epaper_waveform.h"
 
 #define FB_BYTES 128
-const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_GRAY8_WAVEFORM = {2};
+const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_GRAY8_WAVEFORM = {2}, E0470_FULL_WAVEFORM = {3};
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
 static int clocks, powerons, clears, draws, full_draws, safe_clock, prefill, last_mode, last_scan;
 static bool white_baseline, correct_target_at_draw;
+static const EpdWaveform *waveform_at_draw;
 static enum EpdDrawError water_result;
 static int water_calls;
 
@@ -46,6 +47,7 @@ static enum EpdDrawError draw(EpdiyHighlevelState* hl, enum EpdDrawMode mode, in
     ++draws;
     full_draws += full;
     last_mode = mode;
+    waveform_at_draw = hl->waveform;
     white_baseline = true;
     for (size_t i = 0; i < FB_BYTES; ++i) if (hl->back_fb[i] != 255) white_baseline = false;
     correct_target_at_draw = memcmp(hl->front_fb, target, FB_BYTES) == 0;
@@ -101,6 +103,15 @@ int main(void) {
     }
     assert(update_display_fast_page(&hl) == EPD_DRAW_SUCCESS);
     assert(last_mode == MODE_GC16 && last_scan == READ_PICO_EPD_SCAN_FULL && full_draws > 0);
+
+    // Image pages clear the optical state and use the full grayscale waveform.
+    memcpy(front, target, FB_BYTES);
+    memset(back, 0x55, FB_BYTES);
+    clears = draws = 0;
+    assert(update_display_image_gray(&hl) == EPD_DRAW_SUCCESS);
+    assert(clears == 1 && draws == 1 && white_baseline && correct_target_at_draw);
+    assert(last_mode == MODE_GC16 && waveform_at_draw == &E0470_FULL_WAVEFORM &&
+           hl.waveform == &E0470_WAVEFORM);
 
     clocks = powerons = clears = draws = full_draws = last_mode = 0;
     guard_draw_result(&hl, EPD_DRAW_SUCCESS);

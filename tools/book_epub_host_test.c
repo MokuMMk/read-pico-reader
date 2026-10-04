@@ -19,6 +19,11 @@ int main(int argc, char **argv) {
             printf("epub rejection passed: %s\n", argv[a]); continue;
         }
         assert(book_epub_open(argv[a], &book) == ESP_OK && book);
+        if (strstr(argv[a], "good_no_cover")) {
+            uint8_t *cover = NULL; size_t cover_size = 0; bool png = false;
+            assert(book_epub_cover(argv[a], &cover, &cover_size, &png) == ESP_ERR_NOT_FOUND);
+            assert(!cover && !cover_size && !png);
+        }
         if (strstr(argv[a], "good_body_")) {
             bool samefile = strstr(argv[a], "samefile") != NULL;
             bool partial = strstr(argv[a], "partial") != NULL;

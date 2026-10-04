@@ -38,6 +38,7 @@ esp_err_t nvs_erase_key(nvs_handle_t h, const char *key) { (void)h; (void)key; r
 esp_err_t nvs_commit(nvs_handle_t h) { (void)h; ++commit_count; return commit_fails ? ESP_FAIL : ESP_OK; }
 
 int main(void) {
+    assert(app_settings_system_contrast() == 100);
     (void)mkdir(APP_SETTINGS_BACKUP_ROOT, 0700);
     (void)remove(BACKUP_FILE);
     (void)remove(BACKUP_PREVIOUS);
@@ -47,6 +48,7 @@ int main(void) {
     card_mounted = true;
     s_book_px = 62;
     s_book_tracking = 4;
+    s_book_indent = 3;
     s_reader_full_pages = 5;
     s_reader_turn_effect = 1;
     s_shelf_style = 3;
@@ -56,13 +58,14 @@ int main(void) {
     assert(app_settings_backup_save() == ESP_OK);
     s_book_px = 48;
     s_book_tracking = 2;
+    s_book_indent = 0;
     s_reader_full_pages = 15;
     s_reader_turn_effect = 0;
     s_shelf_style = 2;
     s_lock_style = 0;
     s_wallpaper[0] = 0;
     assert(app_settings_backup_restore() == ESP_OK);
-    assert(s_book_px == 62 && s_book_tracking == 4 && s_reader_full_pages == 5);
+    assert(s_book_px == 62 && s_book_tracking == 4 && s_book_indent == 3 && s_reader_full_pages == 5);
     assert(s_reader_turn_effect == 1 && s_shelf_style == 3);
     assert(!s_font[0]); /* Missing external font falls back to built-in. */
     assert(s_lock_style == 0 && !s_wallpaper[0]); /* Missing wallpaper uses ticket. */
@@ -77,7 +80,23 @@ int main(void) {
     commit_fails = false;
     assert(app_settings_backup_restore() == ESP_OK && s_book_px == 70);
 
-    FILE *file = fopen(BACKUP_FILE, "r+b");
+    /* Existing PICOSET1 backups remain readable and use the two-em default. */
+    FILE *file = fopen(BACKUP_FILE, "rb");
+    assert(file);
+    settings_backup_v1_t legacy;
+    assert(fread(&legacy, 1, sizeof(legacy), file) == sizeof(legacy));
+    assert(fclose(file) == 0);
+    memcpy(legacy.magic, "PICOSET1", sizeof(legacy.magic));
+    backup_seal(&legacy);
+    file = fopen(BACKUP_FILE, "wb");
+    assert(file);
+    assert(fwrite(&legacy, 1, sizeof(legacy), file) == sizeof(legacy));
+    assert(fclose(file) == 0);
+    s_book_indent = 0;
+    assert(app_settings_backup_restore() == ESP_OK && s_book_indent == 2);
+    assert(app_settings_backup_save() == ESP_OK);
+
+    file = fopen(BACKUP_FILE, "r+b");
     assert(file);
     assert(fputc('X', file) != EOF);
     assert(fclose(file) == 0);

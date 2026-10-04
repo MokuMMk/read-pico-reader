@@ -28,6 +28,7 @@ static EpdRect s_rect;
 static int s_px;
 static unsigned s_line_percent = 150, s_paragraph_percent = 50;
 static int s_tracking_px;
+static unsigned s_first_line_indent_em = 2;
 static unsigned s_reading_line;
 static size_t s_lead_skip;
 static unsigned s_lead_height;
@@ -113,6 +114,19 @@ void book_layout_set_spacing(unsigned line_percent, unsigned paragraph_percent) 
 void book_layout_set_typography(int tracking_px) {
     s_tracking_px = tracking_px >= -4 && tracking_px <= 4 && tracking_px % 2 == 0 ? tracking_px : 0;
 }
+void book_layout_set_first_line_indent(unsigned em) {
+    s_first_line_indent_em = em <= 3 ? em : 2;
+}
+EpdRect book_layout_balanced_rect(EpdRect outer, int px, int tracking_px) {
+    if (px <= 0 || outer.width < px || tracking_px < -4 || tracking_px > 4) return outer;
+    int step = px + tracking_px;
+    if (step <= 0) return outer;
+    int columns = 1 + (outer.width - px) / step;
+    int used = px + (columns - 1) * step;
+    outer.x += (outer.width - used) / 2;
+    outer.width = used;
+    return outer;
+}
 void book_layout_set_reading_line(unsigned style) {
     s_reading_line = style <= 2 ? style : 0;
 }
@@ -154,11 +168,12 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
     *px = s_px + (*heading ? 8 : 0);
     bool first_line = block ? off == block->offset :
         off == 0 || s_text[off - 1] == '\n' || s_text[off - 1] == '\r';
-    *indent = first_line && block ? (int)((unsigned)*px * block->indent_percent / 100) : 0;
-    if (*indent >= s_rect.width) *indent = s_rect.width > 1 ? s_rect.width - 1 : 0;
     *align = block ? block->align : 0;
-    if (first_line && !*heading && !*align && !*indent)
-        *indent = *px * 2;
+    // 首行缩进由阅读设置统一控制；书内标题和对齐块仍保持原本的位置。
+    // The reader setting controls paragraph indent; headings and aligned blocks keep their placement.
+    *indent = first_line && block ? (int)((unsigned)*px * block->indent_percent / 100) : 0;
+    if (first_line && !*heading && !*align) *indent = *px * (int)s_first_line_indent_em;
+    if (*indent >= s_rect.width) *indent = s_rect.width > 1 ? s_rect.width - 1 : 0;
     if (*indent + *px > s_rect.width) *indent = 0;
     *margin_before = first_line && block ? (int)((unsigned)*px * block->margin_before_percent / 100) : 0;
     *margin_after = block ? (int)((unsigned)*px * block->margin_after_percent / 100) : 0;
@@ -185,14 +200,24 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
         if (candidate < 0) return false;
         if (candidate > available) {
             if (end == off) return false;
-            // 句末标点允许悬挂一个字宽，避免下一行以标点开头。
-            // Hang one closing mark into the margin rather than start the next line with it.
-            if (prohibited_line_start(cp) && candidate <= (int64_t)available + *px * 2) {
-                memcpy(s_line + end - off, glyph, n);
-                s_line[end - off + n] = 0;
-                width = candidate;
-                end += n;
-                break;
+            // 右标点与前一字一起移到下一行，避免把标点悬挂到右侧留白。
+            // Move a closing mark with the preceding glyph rather than hanging it into the right margin.
+            if (prohibited_line_start(cp)) {
+                if (last_start > off) {
+                    end = last_start;
+                    s_line[end - off] = 0;
+                    width = last_width;
+                    break;
+                }
+                // 极窄行容不下两个字时才保留悬挂，避免出现以标点开头的死循环。
+                // Only a one-glyph-wide line may hang punctuation to avoid a non-progressing wrap.
+                if (candidate <= (int64_t)available + *px * 2) {
+                    memcpy(s_line + end - off, glyph, n);
+                    s_line[end - off + n] = 0;
+                    width = candidate;
+                    end += n;
+                    break;
+                }
             }
             // 若最后一个字是左括号，将它回退到下一行；极窄行则让括号和首字成组悬挂。
             // Move a trailing opener to the next line; on a one-glyph line keep the pair together.

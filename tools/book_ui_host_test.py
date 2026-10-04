@@ -57,6 +57,9 @@ static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=
 typedef struct {char name[256],author[128],path[288];uint32_t size;uint16_t chapter;bool is_flash,has_progress;uint8_t pct;uint32_t recent;bool selected,removed,search_match;} shelf_entry_t;
 #define BOOK_ROWS 9
 #define BOOK_BULK_ROWS 6
+#define BOOKMARK_MAX 24
+typedef struct {uint16_t chapter,reserved;uint32_t byte_off,saved_s;} reader_bookmark_entry_t;
+typedef struct {uint32_t magic,file_size;uint16_t count,reserved;char path[288];reader_bookmark_entry_t entries[BOOKMARK_MAX];} reader_bookmarks_t;
 #define BOOK_STORE_PATH_MAX 288
 #define UI_BTN_H 84
 static EpdRect ui_row_rect(int i,int count,int y,int height){EpdRect r=ui_bar_rect(i,count);r.y=y;r.height=height;return r;}
@@ -123,7 +126,7 @@ static void invalidate_covers(void){}
 static shelf_entry_t s_managed;
 static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
-typedef enum {SHELF,SETTINGS,READING,TOC,MANAGE,BULK,SEARCH,EDIT} book_view_t;
+typedef enum {SHELF,SETTINGS,READING,TOC,MANAGE,BULK,IMPORT,SEARCH,EDIT} book_view_t;
 static book_view_t s_view,s_search_parent;
 typedef enum {READER_PANEL_NONE,READER_PANEL_TOOLS} reader_panel_t;
 static reader_panel_t s_reader_panel;
@@ -145,6 +148,8 @@ static int s_pressed_control;
 static bool s_scan_pending,s_toolbar;
 static bool s_resume_pending,s_reader_cleanup,s_shake_enabled;
 static bool s_reader_fullscreen,test_reader_immersive;
+static bool s_bookmark_edit,s_bookmark_delete_confirm,s_bookmark_delete_error;
+static uint32_t s_bookmark_selected;
 static int64_t s_stats_activity_ms;
 static int s_du_count;
 static int64_t s_size_settle_ms,s_poll_ms;
@@ -155,10 +160,12 @@ static int app_settings_book_margin(void){return 36;}
 static int app_settings_book_line_spacing(void){return 150;}
 static int app_settings_book_paragraph_spacing(void){return 50;}
 static int app_settings_book_tracking(void){return 2;}
+static int app_settings_book_indent(void){return 2;}
 static int app_settings_book_reading_line(void){return 0;}
 static bool app_settings_reader_immersive(void){return test_reader_immersive;}
 static void book_layout_set_spacing(int line,int para){(void)line;(void)para;}
 static void book_layout_set_typography(int tracking){(void)tracking;}
+static void book_layout_set_first_line_indent(unsigned em){(void)em;}
 static void book_layout_set_reading_line(int style){(void)style;}
 static bool app_settings_book_shake(void){return false;}
 static void read_pico_sd_start_probe(void){}
@@ -192,11 +199,20 @@ static int ui_content_width(void){return 604;}
 static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;text++)if(((unsigned char)*text&0xc0)!=0x80)width+=px;return width;}
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
-for name in ("reader_area", "progress_rect", "copy_text", "reader_footer_strip_number", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
+for name in ("inline_ink_gray", "reader_area", "progress_rect", "copy_text", "reader_footer_strip_number", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
+             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 unit += r'''
 int main(void) {
+    for (int gray=0; gray<=255; ++gray)
+        assert(inline_ink_gray((uint8_t)gray)==gray);
+    reader_bookmarks_t marks={.count=6};
+    for(unsigned i=0;i<marks.count;++i)marks.entries[i].byte_off=(i+1)*100;
+    bookmark_compact(&marks,(1u<<0)|(1u<<2)|(1u<<5));
+    assert(marks.count==3&&marks.entries[0].byte_off==200&&
+           marks.entries[1].byte_off==400&&marks.entries[2].byte_off==500);
+    bookmark_compact(&marks,(1u<<0)|(1u<<1)|(1u<<2));
+    assert(marks.count==0);
     EpdRect reading_body=reader_area(), reading_footer=progress_rect();
     assert(reading_body.y>=160&&reading_body.y%32==0);
     assert(reading_body.y+reading_body.height<=reading_footer.y);

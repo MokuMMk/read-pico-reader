@@ -176,6 +176,20 @@ enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
     return result;
 }
 
+enum EpdDrawError update_display_image_gray(EpdiyHighlevelState* hl) {
+    // 图片保留十六级原始灰阶；白底和完整 48 相波形稳定呈现层次。
+    // Images keep sixteen source grays; a white baseline and the full 48-phase table preserve tones.
+    use_scan_for(&E0470_FULL_WAVEFORM, MODE_GC16);
+    epd_poweron();
+    epd_clear();
+    epd_hl_waveform(hl, &E0470_FULL_WAVEFORM);
+    enum EpdDrawError result = epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
+    epd_hl_waveform(hl, &E0470_WAVEFORM);
+    s_page_refreshes = 0;
+    rails_keepalive();
+    return result;
+}
+
 // 指定波形整屏刷一次，刷完把默认波形装回去。用来 A/B 两条灰阶表。
 // Present the whole screen with a given waveform, then restore the default. Used to A/B two gray tables.
 enum EpdDrawError update_display_with(

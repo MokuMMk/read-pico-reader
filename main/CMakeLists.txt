@@ -44,6 +44,7 @@ idf_component_register(
         "apps/book_toc.c"
         "apps/app_dashboard.c"
         "apps/app_files.c"
+        "apps/file_tree.c"
         "apps/app_device_settings.c"
         "apps/app_image.c"
         "apps/app_transfer.c"

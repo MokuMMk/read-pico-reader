@@ -125,11 +125,31 @@ int main(void) {
     book_layout_draw_page(&fb, 0, r, 10);
     book_layout_draw_page(&fb, 1, r, 10);
     assert(!strcmp(drawn, "Titlebody") && first_draw_px == 18 && last_draw_px == 10);
+    EpdRect balanced = book_layout_balanced_rect((EpdRect){36, 0, 612, 100}, 48, 0);
+    assert(balanced.x == 54 && balanced.width == 576);
+    assert(balanced.x == 684 - balanced.x - balanced.width);
+    balanced = book_layout_balanced_rect((EpdRect){36, 0, 612, 100}, 48, 2);
+    assert(balanced.x == 43 && balanced.width == 598);
+    r = (EpdRect){0, 0, 100, 100};
+    for (unsigned em = 0; em <= 3; ++em) {
+        book_layout_set_first_line_indent(em);
+        assert(book_layout_build("甲乙\n丙丁", strlen("甲乙\n丙丁"), r, 10));
+        drawn[0] = 0;
+        book_layout_draw_page(&fb, 0, r, 10);
+        assert(first_draw_x == (int)em * 10);
+    }
+    book_layout_set_first_line_indent(2);
     const char punct[] = "甲乙，丙";
     r = (EpdRect){0, 0, 20, 15};
     assert(book_layout_build(punct, strlen(punct), r, 10));
-    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(1) == 9);
+    assert(book_layout_page_count() == 3 && book_layout_page_start_offset(1) == 3);
+    book_layout_set_first_line_indent(0);
+    r = (EpdRect){0, 0, 40, 15};
+    assert(book_layout_build("甲乙丙丁，戊", strlen("甲乙丙丁，戊"), r, 10));
+    assert(book_layout_page_start_offset(1) == 9);
+    book_layout_set_first_line_indent(2);
     const char opener[] = "甲（乙丙";
+    r.width = 20;
     assert(book_layout_build(opener, strlen(opener), r, 10));
     assert(book_layout_page_count() == 3 && book_layout_page_start_offset(1) == 3);
     const char aligned[] = "甲乙";

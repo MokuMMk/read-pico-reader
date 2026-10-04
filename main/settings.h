@@ -74,6 +74,9 @@ void app_settings_set_reader_immersive(bool on);
 /// 字间距档位 0..4，默认 2 居中；对应 -4/-2/0/+2/+4 像素。/ Tracking index 0..4, centered default 2; maps to -4/-2/0/+2/+4 pixels.
 uint8_t app_settings_book_tracking(void);
 void app_settings_set_book_tracking(uint8_t index);
+/// 普通正文首行缩进 0..3 字，默认两字。/ First-line indent: 0..3 em, default 2.
+uint8_t app_settings_book_indent(void);
+void app_settings_set_book_indent(uint8_t em);
 /// 正文阅读线：0 无，1 虚线，2 点线。/ Body reading guides: none, dashed or dotted.
 uint8_t app_settings_book_reading_line(void);
 void app_settings_set_book_reading_line(uint8_t style);

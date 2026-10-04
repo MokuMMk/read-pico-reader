@@ -78,6 +78,8 @@ def main():
             return lambda files: files.__setitem__('OPS/pkg/book.opf', files['OPS/pkg/book.opf'].replace(old, new))
 
         case('good_paths')
+        case('good_no_cover', lambda f: f.__setitem__(
+            'OPS/pkg/book.opf', f['OPS/pkg/book.opf'].replace('properties="cover nav"', 'properties="nav"')))
         case('good_navfallback', lambda f: f.__setitem__('OPS/toc/book.ncx', '<ncx><broken></ncx>'))
         case('good_navfallback_partial', lambda f: f.__setitem__('OPS/toc/book.ncx', f['OPS/toc/book.ncx'] + '<broken>'))
         case('good_navrole', lambda f: (f.pop('OPS/toc/book.ncx'), f.__setitem__('OPS/toc/nav.xhtml', f['OPS/toc/nav.xhtml'].replace('epub:type="toc"', 'role="doc-toc"'))))

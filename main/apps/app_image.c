@@ -2,8 +2,8 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 图片对比页：从 TF 卡读取 JPG/PNG，整屏灰阶显示，也提供内置测试图。
- * Image comparison page: show SD JPG/PNG in full-screen grayscale with a built-in chart.
+ * 图片页：从 TF 卡读取 JPG/PNG，使用独立的完整灰阶刷新。
+ * Image page: show SD JPG/PNG with a dedicated full-grayscale refresh.
  */
 #include <dirent.h>
 #include <stdio.h>
@@ -16,7 +16,6 @@
 #include "app_registry.h"
 #include "app_content_open.h"
 #include "book_cover.h"
-#include "ui_image_dither.h"
 #include "display.h"
 #include "esp_heap_caps.h"
 #include "read_pico_sd.h"
@@ -130,8 +129,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (unsigned y = 0; y < s_height; ++y)
             for (unsigned x = 0; x < s_width; ++x)
                 epd_draw_pixel(x0 + x, y0 + y,
-                    ui_image_dither_gray(ui_contrast_gray(s_gray[(size_t)y * s_width + x]),
-                                         x0 + x, y0 + y), fb);
+                    ui_contrast_gray(s_gray[(size_t)y * s_width + x]), fb);
         return;
     }
     ui_nav_status(fb);
@@ -157,7 +155,7 @@ static bool present(app_ctx_t *ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_NONE) return true;
     if (!s_viewing) return false;
     render(ctx, ctx->fb);
-    guard_draw_result(ctx->hl, update_display_full(ctx->hl));
+    guard_draw_result(ctx->hl, update_display_image_gray(ctx->hl));
     return true;
 }
 static void on_enter(app_ctx_t *ctx) {
