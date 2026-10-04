@@ -10,11 +10,12 @@ import subprocess
 import tempfile
 
 source = Path(__file__).resolve().parents[1] / "main/apps/app_book.c"
+layout_source = Path(__file__).resolve().parents[1] / "main/book/book_layout.c"
 
-def function(name):
-    text = source.read_text(encoding="utf-8")
+def function(name, path=source):
+    text = path.read_text(encoding="utf-8")
     import re
-    found = re.search(r"^static [^\n]+\b" + name + r"\([^\n]*\) \{", text, re.M)
+    found = re.search(r"^(?:static )?[^\n]+\b" + name + r"\([^;{}]*?\)\s*\{", text, re.M)
     assert found, name
     start, at, depth, quote, escape = found.start(), found.end(), 1, None, False
     while depth:
@@ -128,6 +129,8 @@ static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
 typedef enum {SHELF,SETTINGS,READING,TOC,MANAGE,BULK,IMPORT,SEARCH,EDIT} book_view_t;
 static book_view_t s_view,s_search_parent;
+static bool s_toc_jump_open,s_toc_jump_drag;
+static int s_toc_jump_percent;
 typedef enum {READER_PANEL_NONE,READER_PANEL_TOOLS} reader_panel_t;
 static reader_panel_t s_reader_panel;
 static int s_reader_slider=-1;
@@ -162,11 +165,13 @@ static int app_settings_book_paragraph_spacing(void){return 50;}
 static int app_settings_book_tracking(void){return 2;}
 static int app_settings_book_indent(void){return 2;}
 static int app_settings_book_reading_line(void){return 0;}
+static int app_settings_book_reading_line_offset(void){return 0;}
 static bool app_settings_reader_immersive(void){return test_reader_immersive;}
 static void book_layout_set_spacing(int line,int para){(void)line;(void)para;}
 static void book_layout_set_typography(int tracking){(void)tracking;}
 static void book_layout_set_first_line_indent(unsigned em){(void)em;}
 static void book_layout_set_reading_line(int style){(void)style;}
+static void book_layout_set_reading_line_offset(int offset){(void)offset;}
 static bool app_settings_book_shake(void){return false;}
 static void read_pico_sd_start_probe(void){}
 typedef struct {bool present,mounted;} read_pico_sd_info_t;
@@ -192,20 +197,33 @@ static char test_wrapped[512];
 #define UI_MARGIN 40
 #define UI_LOCK_WIDTH 684
 #define UI_LOCK_HEIGHT 1216
+#define READER_FULLSCREEN_PROGRESS_TOP (UI_LOCK_HEIGHT - 42)
 #define UI_BAR_TOP 1096
 #define UI_BAR_H 96
+#define BOOK_MARGIN_MIN 24
+#define BOOK_MARGIN_MAX 60
+#define BOOK_MARGIN_CHOICES (BOOK_MARGIN_MAX - BOOK_MARGIN_MIN + 1)
 #define EPD_DRAW_ALIGN_LEFT 0
 static int ui_content_width(void){return 604;}
 static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;text++)if(((unsigned char)*text&0xc0)!=0x80)width+=px;return width;}
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
-for name in ("inline_ink_gray", "reader_area", "progress_rect", "copy_text", "reader_footer_strip_number", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
+unit += function("book_layout_balanced_rect", layout_source) + "\n"
+for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "progress_rect", "copy_text", "reader_footer_strip_number", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
              "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 unit += r'''
 int main(void) {
     for (int gray=0; gray<=255; ++gray)
         assert(inline_ink_gray((uint8_t)gray)==gray);
+    EpdRect margin_slider={36,700,294,66};
+    int narrow=reader_margin_input(margin_slider,40,36,48,0);
+    int wide=reader_margin_input(margin_slider,325,36,48,0);
+    assert(reader_margin_level_for(36,48,0)==1);
+    assert(reader_margin_width(narrow,48,0)>reader_margin_width(36,48,0));
+    assert(reader_margin_width(wide,48,0)<reader_margin_width(36,48,0));
+    assert(reader_margin_width(reader_margin_input(margin_slider,325,36,48,-2),48,-2)
+           <reader_margin_width(36,48,-2));
     reader_bookmarks_t marks={.count=6};
     for(unsigned i=0;i<marks.count;++i)marks.entries[i].byte_off=(i+1)*100;
     bookmark_compact(&marks,(1u<<0)|(1u<<2)|(1u<<5));
@@ -220,10 +238,13 @@ int main(void) {
     assert(reading_footer.x==36&&reading_footer.width==612);
     s_reader_fullscreen=true;
     reading_body=reader_area();
-    assert(reading_body.y==80&&reading_body.height==UI_LOCK_HEIGHT-80);
+    EpdRect fullscreen_progress=reader_fullscreen_progress_area();
+    assert(reading_body.y==80&&reading_body.height==UI_LOCK_HEIGHT-122);
+    assert(reading_body.y+reading_body.height==fullscreen_progress.y);
+    assert(fullscreen_progress.y==UI_LOCK_HEIGHT-42&&fullscreen_progress.height==42);
     test_reader_immersive=true;
     reading_body=reader_area();
-    assert(reading_body.y==0&&reading_body.height==UI_LOCK_HEIGHT);
+    assert(reading_body.y==0&&reading_body.height==UI_LOCK_HEIGHT-42);
     s_reader_fullscreen=test_reader_immersive=false;
     char footer_name[72];
     reader_footer_strip_number(footer_name,sizeof(footer_name),"第一章：海边的信");
@@ -340,6 +361,10 @@ int main(void) {
     book_on_exit(&ctx);assert(!s_reader_return_home);
     s_view=READING;test_nav_target=-1;
     assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_PAGE&&test_nav_target==-1&&s_view==SHELF);
+    s_view=TOC;s_toc_jump_open=true;s_toc_jump_percent=50;
+    assert(on_key(&ctx,UI_KEY_1)==APP_REDRAW_PAGE&&s_toc_jump_percent==45);
+    assert(on_key(&ctx,UI_KEY_3)==APP_REDRAW_PAGE&&s_toc_jump_percent==50);
+    assert(on_key(&ctx,UI_KEY_2)==APP_REDRAW_PAGE&&!s_toc_jump_open);
     free(s_shelf);
     while(s_pending)pending_discard(s_pending->path);
     for(int i=0;i<65;i++){char path[340];snprintf(path,sizeof(path),"%s/book%03d.txt",test_roots[0].path,i);unlink(path);}rmdir(test_roots[0].path);

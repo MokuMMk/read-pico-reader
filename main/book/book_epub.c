@@ -31,7 +31,7 @@
 #define EPUB_ID_CAP 128
 #define EPUB_TITLE_CAP 160
 #define EPUB_ENTRY_MAX (4u * 1024u * 1024u)
-#define EPUB_CACHE_VERSION 10u
+#define EPUB_CACHE_VERSION 11u
 #define EPUB_META_CACHE_VERSION 1u
 #define EPUB_CSS_MAX (256u * 1024u)
 #define EPUB_CSS_FILE_MAX (128u * 1024u)
@@ -625,7 +625,14 @@ static esp_err_t navigation_parse(book_epub_t *book, const char *path, bool ncx)
             if (chapter_by_zip[book->chapters[i].zip_index] < 0)
                 chapter_by_zip[book->chapters[i].zip_index] = (int16_t)i;
     }
-    unsigned char previously_titled[EPUB_CHAPTER_MAX / 8] = {0};
+    // Keep the TOC rollback bitmap in PSRAM: this call runs under the UI task.
+    // 目录回退位图放在 PSRAM，避免和界面事件栈叠加。
+    unsigned char *previously_titled = psram(EPUB_CHAPTER_MAX / 8);
+    if (!previously_titled) {
+        free(chapter_by_zip); free(nodes); free(text);
+        return ESP_ERR_NO_MEM;
+    }
+    memset(previously_titled, 0, EPUB_CHAPTER_MAX / 8);
     for (size_t i = 0; i < book->count; ++i) if (book->chapters[i].titled) previously_titled[i / 8] |= (unsigned char)(1u << (i % 8));
     size_t original_count = book->authored_count;
     size_t count = 0, toc_depth = 0; bool fallback_used = false;
@@ -679,7 +686,91 @@ static esp_err_t navigation_parse(book_epub_t *book, const char *path, bool ncx)
             if (book->navigation[i].valid) book->navigation[write++] = book->navigation[i];
         book->authored_count = write;
     }
-    free(chapter_by_zip); free(nodes); free(text); return err;
+    free(previously_titled); free(chapter_by_zip); free(nodes); free(text); return err;
+}
+
+// 统计正式目录覆盖的正文文件；不完整 NCX 不能仅凭首条有效项屏蔽更完整的 NAV。
+// Count distinct spine files referenced by an authored directory. A short NCX must not
+// suppress a more complete EPUB 3 NAV just because its first entry was valid.
+static size_t navigation_coverage(const book_epub_t *book) {
+    uint8_t *covered = psram(EPUB_CHAPTER_MAX / 8);
+    if (!covered) return 0;
+    memset(covered, 0, EPUB_CHAPTER_MAX / 8);
+    size_t count = 0;
+    for (size_t i = 0; i < book->authored_count; ++i) {
+        const nav_entry_t *entry = &book->navigation[i];
+        if (!entry->valid || entry->chapter >= book->count) continue;
+        size_t chapter = entry->chapter;
+        uint8_t bit = (uint8_t)(1u << (chapter % 8));
+        if (!(covered[chapter / 8] & bit)) {
+            covered[chapter / 8] |= bit;
+            ++count;
+        }
+    }
+    free(covered);
+    return count;
+}
+
+static size_t navigation_entries_for_chapter(const nav_entry_t *items, size_t count,
+                                             uint16_t chapter) {
+    size_t found = 0;
+    for (size_t i = 0; i < count; ++i)
+        if (items[i].valid && items[i].chapter == chapter) ++found;
+    return found;
+}
+
+static bool navigation_same_target(const nav_entry_t *a, const nav_entry_t *b,
+                                   size_t a_chapter_entries, size_t b_chapter_entries) {
+    if (a->chapter != b->chapter) return false;
+    if (!strcmp(a->anchor, b->anchor)) return true;
+    // 若某格式没有锚点，而两边在该文件都只有一条，视作相同章节。
+    // One format may omit a fragment for a file containing just one chapter.
+    return (!a->anchor[0] || !b->anchor[0]) &&
+           a_chapter_entries == 1 && b_chapter_entries == 1;
+}
+
+// NAV 提供基本顺序，再按正文顺序插入仅见于 NCX 的目标。
+// NAV supplies the book's reading order; retain NCX-only targets in spine order.
+static void navigation_merge(book_epub_t *book, book_epub_t *nav_book) {
+    nav_entry_t *ncx = book->navigation;
+    size_t ncx_count = book->authored_count;
+    book->navigation = nav_book->navigation;
+    book->authored_count = nav_book->authored_count;
+    book->navigation_capacity = nav_book->navigation_capacity;
+    nav_book->navigation = NULL;
+    nav_book->authored_count = nav_book->navigation_capacity = 0;
+    for (size_t i = 0; i < ncx_count && book->authored_count < EPUB_NAV_MAX; ++i) {
+        const nav_entry_t *candidate = &ncx[i];
+        if (!candidate->valid) continue;
+        size_t ncx_entries = navigation_entries_for_chapter(ncx, ncx_count, candidate->chapter);
+        size_t nav_entries = navigation_entries_for_chapter(book->navigation,
+                                                            book->authored_count, candidate->chapter);
+        bool duplicate = false;
+        for (size_t j = 0; j < book->authored_count; ++j) {
+            if (navigation_same_target(candidate, &book->navigation[j], ncx_entries, nav_entries)) {
+                book->navigation[j] = *candidate;
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) continue;
+        if (!nav_reserve(book, book->authored_count + 1)) {
+            // 内存不足时保留原 NCX，避免用残缺的合并结果替换它。
+            // Keep the original NCX if the union cannot fit in memory.
+            free(book->navigation);
+            book->navigation = ncx;
+            book->authored_count = ncx_count;
+            book->navigation_capacity = ncx_count;
+            return;
+        }
+        size_t at = 0;
+        while (at < book->authored_count && book->navigation[at].chapter <= candidate->chapter) ++at;
+        memmove(book->navigation + at + 1, book->navigation + at,
+                (book->authored_count - at) * sizeof(*book->navigation));
+        book->navigation[at] = *candidate;
+        ++book->authored_count;
+    }
+    free(ncx);
 }
 
 /* ---- 后端公共接口 / Backend public interface ---- */
@@ -703,10 +794,26 @@ esp_err_t book_epub_open(const char *path, book_epub_t **out) {
     if (err == ESP_OK) err = container_path(book, opf);
     if (err == ESP_OK) err = package_parse(book, opf, ncx, nav);
     if (err == ESP_OK) {
-        // NCX 无有效目录时使用 EPUB 3 NAV；两者都不可用时按 spine 生成备用目录。
-        // Prefer authored NCX, then EPUB 3 NAV; spine remains the fallback.
+        // NCX 有缺项时补入 NAV 的有效目标；两者都不可用时按 spine 生成备用目录。
+        // Complete a partial NCX from NAV; spine remains the fallback.
         if (ncx[0]) (void)navigation_parse(book, ncx, true);
-        if (!book->authored_count && nav[0]) (void)navigation_parse(book, nav, false);
+        if (nav[0] && !book->authored_count) (void)navigation_parse(book, nav, false);
+        // 小书也核对同一正文文件内的多个锚点；大书仅在 NCX 缺正文文件时额外解析 NAV。
+        // Check intra-file anchors for small books; avoid a second full TOC parse on large complete books.
+        else if (nav[0] && (book->count <= 256 || navigation_coverage(book) < book->count)) {
+            book_epub_t *nav_book = psram(sizeof(*nav_book));
+            if (nav_book) {
+                memset(nav_book, 0, sizeof(*nav_book));
+                nav_book->zip = book->zip;
+                nav_book->chapters = book->chapters;
+                nav_book->count = book->count;
+                esp_err_t nav_err = navigation_parse(nav_book, nav, false);
+                if (nav_err == ESP_OK && nav_book->authored_count)
+                    navigation_merge(book, nav_book);
+                free(nav_book->navigation);
+                free(nav_book);
+            }
+        }
         if (book->navigation) {
             if (!book->authored_count) { free(book->navigation); book->navigation = NULL; book->navigation_capacity = 0; }
             else {

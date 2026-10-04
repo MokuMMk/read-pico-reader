@@ -125,11 +125,15 @@ enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl) {
         ESP_LOGI(TAG, "fast navigation cleanup after %d transitions", APP_UI_FAST_GC16_EVERY);
         return result;
     }
-    use_scan_for(&E0470_GRAY8_WAVEFORM, MODE_GL16);
+    use_scan_for(&E0470_WAVEFORM, MODE_GL16);
     epd_poweron();
-    epd_hl_waveform(hl, &E0470_GRAY8_WAVEFORM);
-    enum EpdDrawError result = epd_hl_update_screen(hl, MODE_GL16, 25);
     epd_hl_waveform(hl, &E0470_WAVEFORM);
+    // 间隔性驱动未变化区域，减少跨页白底与细线累积残影，不插入第二次刷新。
+    // Periodically drive unchanged areas to reduce old-page ghosts without a second repaint.
+    const bool settle = APP_UI_FAST_GL16_SETTLE_EVERY > 0 &&
+                        s_page_refreshes % APP_UI_FAST_GL16_SETTLE_EVERY == 0;
+    enum EpdDrawError result = settle ? epd_hl_update_screen_full(hl, MODE_GL16, 25)
+                                      : epd_hl_update_screen(hl, MODE_GL16, 25);
     rails_keepalive();
     return result;
 }

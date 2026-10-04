@@ -138,7 +138,9 @@ esp_err_t zip_open(const char* path, zip_reader_t** out) {
         uint16_t name_len = u16(h + 28), extra_len = u16(h + 30), comment_len = u16(h + 32);
         uint32_t record_len = sizeof(h) + (uint32_t)name_len + extra_len + comment_len;
         err = ESP_ERR_NOT_SUPPORTED;
-        if ((entry->flags & ~UINT16_C(0x080e)) || u16(h + 34) ||
+        // 部分制作工具为普通存储或 DEFLATE 条目设置 bit 4；内容仍按 method 与 CRC 验证。
+        // Some EPUB packagers set bit 4 on stored/DEFLATE entries; method and CRC still validate the payload.
+        if ((entry->flags & ~UINT16_C(0x081e)) || u16(h + 34) ||
             (entry->method != 0 && entry->method != 8) ||
             entry->packed > ARCHIVE_ENTRY_MAX || entry->unpacked > ARCHIVE_ENTRY_MAX) goto fail;
         err = ESP_ERR_INVALID_SIZE;

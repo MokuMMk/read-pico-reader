@@ -22,15 +22,13 @@
 #include "read_pico_pmu_protocol.h"
 #include "read_pico_transfer.h"
 #include "esp_log.h"
-#include "esp_system.h"
-#include "pmu_selftest.h"
-#include "soc/rtc_cntl_reg.h"
 #include "ttf_font.h"
 #include "app_font_context.h"
 #include "ui_gesture.h"
 #include "ui_kit.h"
 #include "ui_nav.h"
 #include "ui_wallpaper.h"
+#include "read_pico_search.h"
 #include "../assets/app_icons.h"
 
 static char s_notice[96];
@@ -38,14 +36,27 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_TIME_EDIT, SETTINGS_SHELF_STYLE, SETTINGS_SYSTEM_FONT,
                SETTINGS_SYSTEM_SIZE, SETTINGS_SYSTEM_CONTRAST, SETTINGS_LOCK_STYLE,
                SETTINGS_WALLPAPER, SETTINGS_WALLPAPER_PREVIEW,
-               SETTINGS_FIRMWARE, SETTINGS_READING, SETTINGS_CONFIG } settings_page_t;
+               SETTINGS_READING, SETTINGS_CONFIG,
+               SETTINGS_POWER_SLEEP, SETTINGS_PROFILE, SETTINGS_AVATAR,
+               SETTINGS_TEXT_EDIT } settings_page_t;
 static settings_page_t s_page;
-static bool s_boot_pending;
-static int s_style_scroll;
+static int s_style_scroll, s_main_scroll;
 static int s_font_page, s_wallpaper_page;
 static bool s_sync_pending;
 static bool s_config_confirm;
 static const char *const TAG = "device_settings";
+#define SETTINGS_WIRELESS_Y 315
+#define SETTINGS_DISPLAY_Y 427
+#define SETTINGS_DEVICE_Y 876
+#define SETTINGS_ROW_H 68
+#define SETTINGS_SCROLL_MAX 160
+static char s_editor[96], s_editor_pinyin[24], s_editor_notice[80];
+static bool s_editor_chinese;
+static bool s_editor_uppercase;
+static bool s_editor_signature;
+static int s_editor_candidate_page;
+static size_t s_editor_candidate_count;
+static uint32_t s_editor_candidates[5];
 static const char *system_font_label(const char *path) {
     if (!path || !path[0]) return "思源黑体";
     const char *name = strrchr(path, '/');
@@ -89,6 +100,52 @@ static void wallpaper_scan(void) {
     wallpaper_scan_dir("/sdcard/pictures");
     wallpaper_scan_dir("/sdcard/images");
     wallpaper_scan_dir("/sdcard");
+}
+
+static void profile_editor_refresh(void) {
+    s_editor_candidate_count = s_editor_chinese && s_editor_pinyin[0]
+        ? read_pico_search_candidates(s_editor_pinyin, s_editor_candidates, 5,
+                                      s_editor_candidate_page * 5) : 0;
+}
+static void profile_editor_open(bool signature) {
+    s_editor_signature = signature;
+    snprintf(s_editor, sizeof(s_editor), "%s", signature ? app_settings_status_signature() : app_settings_device_name());
+    s_editor_pinyin[0] = s_editor_notice[0] = 0;
+    s_editor_candidate_page = 0;
+    s_editor_candidate_count = 0;
+    s_editor_chinese = true;
+    s_editor_uppercase = false;
+    s_page = SETTINGS_TEXT_EDIT;
+}
+static void profile_editor_append(const char *text) {
+    size_t used = strlen(s_editor), added = strlen(text);
+    if (used + added < sizeof(s_editor)) {
+        memcpy(s_editor + used, text, added + 1);
+        s_editor_notice[0] = 0;
+    } else snprintf(s_editor_notice, sizeof(s_editor_notice), "文字已达到长度上限");
+}
+static void profile_editor_backspace(void) {
+    if (s_editor_pinyin[0]) {
+        s_editor_pinyin[strlen(s_editor_pinyin) - 1] = 0;
+        s_editor_candidate_page = 0;
+        profile_editor_refresh();
+        return;
+    }
+    size_t n = strlen(s_editor);
+    if (!n) return;
+    do { --n; } while (n && ((unsigned char)s_editor[n] & 0xc0) == 0x80);
+    s_editor[n] = 0;
+}
+static void profile_editor_candidate(int index) {
+    if (index < 0 || (size_t)index >= s_editor_candidate_count) return;
+    uint32_t cp = s_editor_candidates[index];
+    if (cp < 0x800 || cp > 0xffff) return;
+    char glyph[4] = {(char)(0xe0 | (cp >> 12)), (char)(0x80 | ((cp >> 6) & 63)),
+                     (char)(0x80 | (cp & 63)), 0};
+    profile_editor_append(glyph);
+    s_editor_pinyin[0] = 0;
+    s_editor_candidate_page = 0;
+    profile_editor_refresh();
 }
 
 static int days_in_month(int year, int month) {
@@ -200,6 +257,25 @@ static void setting_icon(uint8_t *fb, int index, int cx, int cy) {
         epd_draw_line(cx - 6, cy + 3, cx + 8, cy + 3, 0x58, fb);
         return;
     }
+    if (index == 9) {
+        epd_draw_circle(cx, cy + 3, 13, 0x58, fb);
+        epd_draw_circle(cx, cy + 3, 12, 0x58, fb);
+        epd_fill_rect((EpdRect){cx - 5, cy - 15, 10, 15}, UI_GRAY_WHITE, fb);
+        epd_fill_rect((EpdRect){cx - 2, cy - 17, 4, 17}, 0x58, fb);
+        return;
+    }
+    if (index == 10) {
+        epd_draw_line(cx - 15, cy - 12, cx + 15, cy - 12, 0x58, fb);
+        epd_draw_line(cx - 15, cy - 3, cx + 15, cy - 3, 0x58, fb);
+        epd_draw_line(cx - 7, cy + 8, cx + 7, cy + 8, 0x58, fb);
+        return;
+    }
+    if (index == 11) {
+        epd_draw_circle(cx, cy, 14, 0x58, fb);
+        epd_draw_line(cx - 1, cy - 8, cx - 1, cy + 1, 0x58, fb);
+        epd_draw_line(cx - 1, cy + 1, cx + 7, cy + 4, 0x58, fb);
+        return;
+    }
     const uint8_t *image = pico_setting_icons[index];
     for (int y = 0; y < PICO_SETTING_ICON_SIZE; ++y)
         for (int x = 0; x < PICO_SETTING_ICON_SIZE; ++x) {
@@ -222,7 +298,9 @@ static void fit_value(char *value, int width) {
 static void setting_group(uint8_t *fb, int title_y, const char *title,
                           int card_y, const int icons[], const char *const labels[],
                           const char *const values[], int count) {
-    const int row_height = 68;
+    const int row_height = SETTINGS_ROW_H;
+    title_y -= s_main_scroll;
+    card_y -= s_main_scroll;
     ui_text(fb, 42, title_y, 20, title, EPD_DRAW_ALIGN_LEFT, false);
     ui_fill_round_rect(fb, (EpdRect){36, card_y, 612, count * row_height}, 22, UI_GRAY_WHITE);
     for (int i = 0; i < count; ++i) {
@@ -275,6 +353,83 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_page == SETTINGS_MAIN || s_page == SETTINGS_SHELF_STYLE)
         epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, 0xe0, fb);
     ui_nav_status(fb);
+    if (s_page == SETTINGS_PROFILE) {
+        back_header(fb, "个人资料");
+        ui_text(fb, 42, 214, 21, "自定义名称与头像", EPD_DRAW_ALIGN_LEFT, false);
+        row(fb, 266, "设备名称", app_settings_device_name());
+        row(fb, 366, "更换头像", app_settings_avatar_path()[0] ? "已选择图片  ›" : "默认图标  ›");
+        ui_text(fb, 44, 612, 21, "Pico reader by Kiiko", EPD_DRAW_ALIGN_LEFT, false);
+        ui_nav_draw(fb, 3);
+        return;
+    }
+    if (s_page == SETTINGS_AVATAR) {
+        back_header(fb, "选择头像");
+        section(fb, 232, "TF 卡 pictures 文件夹中的 JPG / PNG 图片");
+        row(fb, 270, "使用默认图标", app_settings_avatar_path()[0] ? "选择  ›" : "当前  ✓");
+        if (!s_wallpaper_count) ui_text(fb, 52, 384, 23, "未找到图片，请放入 pictures 文件夹", EPD_DRAW_ALIGN_LEFT, false);
+        for (int i = 0; i < 7; ++i) {
+            int index = s_wallpaper_page * 7 + i;
+            if (index >= s_wallpaper_count) break;
+            EpdRect box = {36, 374 + i * 96, 612, 80};
+            bool active = !strcmp(s_wallpapers[index].path, app_settings_avatar_path());
+            ui_fill_round_rect(fb, box, 17, active ? 0xd0 : UI_GRAY_WHITE);
+            char name[96]; snprintf(name, sizeof(name), "%s", s_wallpapers[index].name);
+            fit_value(name, 490);
+            ui_text_vc(fb, 60, box.y + 40, 24, name, EPD_DRAW_ALIGN_LEFT, false);
+            if (active) epd_fill_circle(611, box.y + 40, 7, UI_GRAY_BLACK, fb);
+        }
+        ui_nav_draw(fb, 3);
+        return;
+    }
+    if (s_page == SETTINGS_TEXT_EDIT) {
+        back_header(fb, s_editor_signature ? "状态栏签名" : "设备名称");
+        ui_text(fb, 642, 95, 24, "完成", EPD_DRAW_ALIGN_RIGHT, false);
+        ui_text(fb, 36, 201, 21, s_editor_signature ? "状态栏中间显示，留空则隐藏" : "显示在设置页的 Pico 资料卡", EPD_DRAW_ALIGN_LEFT, false);
+        ui_draw_round_rect(fb, (EpdRect){36, 243, 612, 82}, 10, UI_GRAY_BLACK);
+        char shown[96]; snprintf(shown, sizeof(shown), "%s", s_editor);
+        fit_value(shown, 552);
+        ui_text_vc(fb, 55, 284, 28, shown[0] ? shown : " ", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 36, 354, 21, s_editor_chinese ? "拼音输入" :
+                s_editor_uppercase ? "英文大写" : "英文小写", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 36, 385, 25, s_editor_pinyin[0] ? s_editor_pinyin : " ", EPD_DRAW_ALIGN_LEFT, false);
+        for (int i = 0; i < 5; ++i) {
+            EpdRect box = {36 + i * 112, 426, 106, 57};
+            ui_draw_round_rect(fb, box, 5, 0x78);
+            if (i < (int)s_editor_candidate_count) {
+                uint32_t cp = s_editor_candidates[i];
+                char glyph[4] = {(char)(0xe0 | (cp >> 12)), (char)(0x80 | ((cp >> 6) & 63)),
+                                 (char)(0x80 | (cp & 63)), 0};
+                ui_text_vc(fb, box.x + 53, box.y + 28, 30, glyph, EPD_DRAW_ALIGN_CENTER, false);
+            }
+        }
+        ui_text_vc(fb, 631, 455, 26, "›", EPD_DRAW_ALIGN_CENTER, false);
+        static const char *keys[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
+        for (int r = 0; r < 3; ++r) {
+            int left = r == 0 ? 36 : r == 1 ? 67 : 123;
+            for (int c = 0; c < (int)strlen(keys[r]); ++c) {
+                EpdRect box = {left + c * 62, 519 + r * 74, 58, 61};
+                ui_draw_round_rect(fb, box, 5, 0x78);
+                char letter[2] = {s_editor_chinese || s_editor_uppercase ? keys[r][c] :
+                                  (char)(keys[r][c] + ('a' - 'A')), 0};
+                ui_text_vc(fb, box.x + 29, box.y + 30, 25, letter, EPD_DRAW_ALIGN_CENTER, false);
+            }
+        }
+        const char *actions[] = {s_editor_chinese ? "中 / a" : s_editor_uppercase ? "A / 中" : "a / A",
+                                 "空格", "删除", "确定"};
+        static const EpdRect buttons[] = {{36, 752, 102, 70}, {148, 752, 298, 70},
+                                          {456, 752, 98, 70}, {564, 752, 84, 70}};
+        for (int i = 0; i < 4; ++i) ui_draw_button(fb, buttons[i], actions[i], i == 3);
+        static const char *punct[] = {"，", "。", "！", "？", "-", "0", "1", "2", "3", "4",
+                                      "5", "6", "7", "8", "9"};
+        for (int i = 0; i < 15; ++i) {
+            EpdRect box = {36 + (i % 10) * 62, 844 + (i / 10) * 70, 58, 58};
+            ui_draw_round_rect(fb, box, 5, 0x78);
+            ui_text_vc(fb, box.x + 29, box.y + 29, 23, punct[i], EPD_DRAW_ALIGN_CENTER, false);
+        }
+        if (s_editor_notice[0]) ui_text(fb, 36, 1001, 21, s_editor_notice, EPD_DRAW_ALIGN_LEFT, false);
+        ui_nav_draw(fb, 3);
+        return;
+    }
     if (s_page == SETTINGS_SHELF_STYLE) {
         ui_nav_back(fb, 36, 79);
         ui_text_vc(fb, 342, 107, 34, "书架样式", EPD_DRAW_ALIGN_CENTER, false);
@@ -484,20 +639,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
-    if (s_page == SETTINGS_FIRMWARE) {
-        back_header(fb, "固件升级");
-        section(fb, 249, "从电脑刷写 Pico");
-        ui_fill_round_rect(fb, (EpdRect){36, 297, 612, 286}, 22, UI_GRAY_WHITE);
-        ui_text(fb, 61, 327, 29, "进入 BOOT 模式", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 61, 391, 22, "连接电脑，在 Chrome 或 Edge 打开", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 61, 433, 22, "Pico 的 GitHub 网页刷机页。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 61, 502, 20, "进入后，屏幕会停留在当前画面。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_draw_button(fb, (EpdRect){36, 638, 612, 80},
-                       s_boot_pending ? "正在进入 BOOT 模式" : "进入 BOOT 模式", false);
-        ui_text(fb, 54, 770, 20, "刷写完成后，Pico 会重新启动。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_nav_draw(fb, 3);
-        return;
-    }
     if (s_page == SETTINGS_READING) {
         back_header(fb, "阅读操作");
         section(fb, 240, "阅读正文");
@@ -508,13 +649,32 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
+    if (s_page == SETTINGS_POWER_SLEEP) {
+        back_header(fb, "关机睡眠");
+        section(fb, 248, "选择电源菜单中“关机”的方式");
+        const char *labels[] = {"彻底关机", "先浅睡，10 分钟后深睡"};
+        const char *details[] = {"完全断电，长按电源键开机",
+                                 "锁屏画面保留；深睡后短按电源键开机"};
+        for (int i = 0; i < 2; ++i) {
+            EpdRect box = {36, 300 + i * 154, 612, 132};
+            bool active = app_settings_staged_shutdown() == (i == 1);
+            ui_fill_round_rect(fb, box, 22, active ? 0xd0 : UI_GRAY_WHITE);
+            ui_text(fb, 64, box.y + 23, 29, labels[i], EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 64, box.y + 79, 20, details[i], EPD_DRAW_ALIGN_LEFT, false);
+            if (active) epd_fill_circle(609, box.y + 66, 8, UI_GRAY_BLACK, fb);
+        }
+        ui_text(fb, 54, 664, 21, "浅睡时按键直接返回，深睡时会重新开机。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 54, 708, 21, "锁屏样式同时适用于壁纸与阅读票根。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_nav_draw(fb, 3);
+        return;
+    }
     if (s_page == SETTINGS_CONFIG) {
         back_header(fb, "保存与恢复配置");
         section(fb, 248, "换机或刷机后，快速恢复个性化设置");
         ui_fill_round_rect(fb, (EpdRect){36, 299, 612, 197}, 22, UI_GRAY_WHITE);
         ui_text(fb, 60, 326, 26, "TF 卡根目录", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 60, 377, 23, "Pico-settings.backup", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 60, 435, 19, "字体、字号、排版、书架、锁屏及阅读操作", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 435, 19, "文字排版、显示、锁屏、设备资料与阅读操作", EPD_DRAW_ALIGN_LEFT, false);
         ui_draw_button(fb, (EpdRect){36, 561, 612, 83}, "保存当前配置到 TF 卡", false);
         ui_draw_button(fb, (EpdRect){36, 681, 612, 83},
                        s_config_confirm ? "再次点按，确认恢复配置" : "从 TF 卡恢复配置", false);
@@ -524,17 +684,28 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
-    ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
-    ui_fill_round_rect(fb, (EpdRect){36, 171, 612, 127}, 24, UI_GRAY_WHITE);
-    ui_fill_round_rect(fb, (EpdRect){57, 192, 82, 84}, 20, 0x30);
-    ui_text(fb, 98, 207, 49, "P", EPD_DRAW_ALIGN_CENTER, true);
-    ui_text(fb, 164, 198, 30, "Pico", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, 164, 241, 19, "墨水屏阅读器 · 684 × 1216", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, 618, 241, 19, "升级  ›", EPD_DRAW_ALIGN_RIGHT, false);
-    const pmu_snapshot_t *pmu = read_pico_pmu_get();
-    if (pmu && pmu->soc_permille <= 1000) {
-        char battery[12]; snprintf(battery, sizeof(battery), "%u%%", (unsigned)pmu->soc_permille / 10);
-        ui_text(fb, 618, 205, 22, battery, EPD_DRAW_ALIGN_RIGHT, false);
+    const int profile_y = 164 - s_main_scroll;
+    if (profile_y + 106 > 160) {
+        ui_fill_round_rect(fb, (EpdRect){36, profile_y, 612, 106}, 24, UI_GRAY_WHITE);
+        ui_fill_round_rect(fb, (EpdRect){57, profile_y + 11, 82, 82}, 20, 0x30);
+        bool avatar_ok = app_settings_avatar_path()[0] &&
+            ui_wallpaper_draw_rounded(fb, app_settings_avatar_path(),
+                                      (EpdRect){58, profile_y + 12, 80, 80}, 19);
+        if (!avatar_ok) ui_text(fb, 98, profile_y + 25, 49, "P", EPD_DRAW_ALIGN_CENTER, true);
+        char profile_name[64]; snprintf(profile_name, sizeof(profile_name), "%s", app_settings_device_name());
+        while (profile_name[0] && ttf_text_width_px(ui_text_effective_px(30), profile_name) > 345) {
+            size_t n = strlen(profile_name) - 1;
+            while (n && ((unsigned char)profile_name[n] & 0xc0) == 0x80) --n;
+            profile_name[n] = 0;
+        }
+        ui_text(fb, 164, profile_y + 19, 30, profile_name, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 164, profile_y + 62, 19, "Pico reader by Kiiko", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 618, profile_y + 62, 19, "编辑  ›", EPD_DRAW_ALIGN_RIGHT, false);
+        const pmu_snapshot_t *pmu = read_pico_pmu_get();
+        if (pmu && pmu->soc_permille <= 1000) {
+            char battery[12]; snprintf(battery, sizeof(battery), "%u%%", (unsigned)pmu->soc_permille / 10);
+            ui_text(fb, 618, profile_y + 26, 22, battery, EPD_DRAW_ALIGN_RIGHT, false);
+        }
     }
     char wifi_ssid[33] = {0}; bool wifi_saved = false;
     (void)read_pico_transfer_get_saved_wifi(wifi_ssid, &wifi_saved);
@@ -543,8 +714,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     fit_value(wireless_value, 235);
     const char *wireless_values[] = {wireless_value};
     static const int wireless_icons[] = {0};
-    setting_group(fb, 324, "无线连接", 365, wireless_icons, wireless_labels, wireless_values, 1);
-    const char *reading_labels[] = {"系统字体", "系统字号", "系统对比度", "书架样式"};
+    setting_group(fb, 285, "无线连接", SETTINGS_WIRELESS_Y,
+                  wireless_icons, wireless_labels, wireless_values, 1);
+    const char *reading_labels[] = {"系统字体", "系统字号", "系统对比度", "书架样式", "状态栏签名", "首页强刷"};
     char font[96];
     const char *chosen_font = app_settings_system_font_path();
     snprintf(font, sizeof(font), "%s  ›", system_font_label(chosen_font));
@@ -552,22 +724,33 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     char size[32]; snprintf(size, sizeof(size), "%u%%  ›", app_settings_system_font_size());
     char contrast[32]; snprintf(contrast, sizeof(contrast), "%u%%  ›", app_settings_system_contrast());
     static const char *const styles[] = {"深色书轨  ›", "深色书轨  ›", "亚克力书架  ›", "半透明书袋  ›"};
-    const char *reading_values[] = {font, size, contrast, styles[app_settings_shelf_style()]};
-    static const int reading_icons[] = {2, 3, 7, 4};
-    setting_group(fb, 453, "显示", 493, reading_icons, reading_labels, reading_values, 4);
-    const char *display_labels[] = {"锁屏样式", "阅读操作", "日期与时间", "保存与恢复"};
-    const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›", "设置  ›", "设置  ›", "配置  ›"};
-    static const int display_icons[] = {5, 2, 6, 8};
-    setting_group(fb, 773, "阅读与设备", 809, display_icons, display_labels, display_values, 4);
+    char signature_value[96];
+    snprintf(signature_value, sizeof(signature_value), "%s  ›",
+             app_settings_status_signature()[0] ? app_settings_status_signature() : "未设置");
+    fit_value(signature_value, 235);
+    const char *reading_values[] = {font, size, contrast, styles[app_settings_shelf_style()],
+                                    signature_value, app_settings_home_full_refresh() ? "开启  ›" : "关闭  ›"};
+    static const int reading_icons[] = {2, 3, 7, 4, 10, 11};
+    setting_group(fb, 397, "显示", SETTINGS_DISPLAY_Y,
+                  reading_icons, reading_labels, reading_values, 6);
+    const char *display_labels[] = {"锁屏样式", "关机睡眠", "阅读操作", "日期与时间", "保存与恢复"};
+    const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›",
+                                    app_settings_staged_shutdown() ? "先浅后深  ›" : "彻底断电  ›",
+                                    "设置  ›", "设置  ›", "配置  ›"};
+    static const int display_icons[] = {5, 9, 2, 6, 8};
+    setting_group(fb, 842, "阅读与设备", SETTINGS_DEVICE_Y,
+                  display_icons, display_labels, display_values, 5);
+    epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, 160}, 0xe0, fb);
+    ui_nav_status(fb);
+    ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
     ui_nav_draw(fb, 3);
 }
 
 static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
     s_notice[0] = 0;
-    s_boot_pending = false;
     s_page = SETTINGS_MAIN;
-    s_style_scroll = s_font_page = s_wallpaper_page = 0;
+    s_style_scroll = s_main_scroll = s_font_page = s_wallpaper_page = 0;
     s_wallpaper_selected = -1;
     s_wallpaper_confirm = s_wallpaper_preview_ok = false;
     s_sync_pending = false;
@@ -576,16 +759,6 @@ static void on_enter(app_ctx_t *ctx) {
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
     (void)ctx;
-    if (s_boot_pending) {
-        s_boot_pending = false;
-        pmu_selftest_prepare_powerdown();
-        uint8_t req[2] = {0, 0};
-        esp_err_t err = read_pico_pmu_cmd(PMU_CMD_HOST_REQUEST_RESET, req, sizeof(req));
-        if (err != ESP_OK) ESP_LOGW(TAG, "BOOT PMU notice: %s", esp_err_to_name(err));
-        REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
-        esp_restart();
-        return APP_REDRAW_NONE;
-    }
     if (!s_sync_pending) return APP_REDRAW_NONE;
     s_sync_pending = false;
     uint32_t utc = 0;
@@ -615,7 +788,101 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
     return APP_REDRAW_PAGE;
 }
 
+static app_redraw_t profile_editor_gesture(const ui_gesture_event_t *ev) {
+    if (ev->type == UI_GESTURE_SWIPE_L && s_editor_pinyin[0]) {
+        ++s_editor_candidate_page; profile_editor_refresh(); return APP_REDRAW_PAGE;
+    }
+    if (ev->type == UI_GESTURE_SWIPE_R && s_editor_candidate_page) {
+        --s_editor_candidate_page; profile_editor_refresh(); return APP_REDRAW_PAGE;
+    }
+    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+    int x = ev->x0, y = ev->y0;
+    if (y < 160) {
+        if (x < 160) { s_page = s_editor_signature ? SETTINGS_MAIN : SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
+        if (x > 510) goto save_text;
+    }
+    if (y >= 426 && y < 483) {
+        if (x >= 604) { ++s_editor_candidate_page; profile_editor_refresh(); return APP_REDRAW_PAGE; }
+        if (x >= 36) profile_editor_candidate((x - 36) / 112);
+        return APP_REDRAW_PAGE;
+    }
+    static const char *keys[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
+    for (int r = 0; r < 3; ++r) {
+        int left = r == 0 ? 36 : r == 1 ? 67 : 123, top = 519 + r * 74;
+        if (y < top || y >= top + 61 || x < left) continue;
+        int c = (x - left) / 62;
+        if (c < 0 || c >= (int)strlen(keys[r]) || x >= left + c * 62 + 58) continue;
+        char letter = keys[r][c];
+        if (s_editor_chinese) {
+            size_t n = strlen(s_editor_pinyin);
+            if (n + 1 < sizeof(s_editor_pinyin)) {
+                s_editor_pinyin[n] = (char)(letter + ('a' - 'A'));
+                s_editor_pinyin[n + 1] = 0;
+                s_editor_candidate_page = 0;
+                profile_editor_refresh();
+            }
+        } else { char value[2] = {s_editor_uppercase ? letter : (char)(letter + ('a' - 'A')), 0};
+                 profile_editor_append(value); }
+        return APP_REDRAW_PAGE;
+    }
+    if (y >= 752 && y < 822) {
+        if (x >= 36 && x < 138) {
+            if (!s_editor_pinyin[0]) {
+                if (s_editor_chinese) { s_editor_chinese = false; s_editor_uppercase = false; }
+                else if (!s_editor_uppercase) s_editor_uppercase = true;
+                else s_editor_chinese = true;
+            }
+            else snprintf(s_editor_notice, sizeof(s_editor_notice), "请先选择候选字");
+        } else if (x >= 148 && x < 446) {
+            if (s_editor_pinyin[0] && s_editor_candidate_count) profile_editor_candidate(0);
+            else if (s_editor_pinyin[0]) {
+                profile_editor_append(s_editor_pinyin);
+                s_editor_pinyin[0] = 0;
+                profile_editor_refresh();
+            } else profile_editor_append(" ");
+        } else if (x >= 456 && x < 554) profile_editor_backspace();
+        else if (x >= 564) goto save_text;
+        return APP_REDRAW_PAGE;
+    }
+    if (y >= 844 && y < 972 && x >= 36 && x < 648) {
+        static const char *punct[] = {"，", "。", "！", "？", "-", "0", "1", "2", "3", "4",
+                                      "5", "6", "7", "8", "9"};
+        int row = (y - 844) / 70, col = (x - 36) / 62;
+        int i = row * 10 + col;
+        if (row < 2 && col < 10 && i < 15 && (y - 844) % 70 < 58 &&
+            x < 36 + col * 62 + 58) profile_editor_append(punct[i]);
+        return APP_REDRAW_PAGE;
+    }
+    return APP_REDRAW_NONE;
+save_text:
+    if (s_editor_pinyin[0]) {
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "请先选择候选字");
+        return APP_REDRAW_PAGE;
+    }
+    if (s_editor_signature) app_settings_set_status_signature(s_editor);
+    else if (s_editor[0]) app_settings_set_device_name(s_editor);
+    else { snprintf(s_editor_notice, sizeof(s_editor_notice), "设备名称不能为空"); return APP_REDRAW_PAGE; }
+    s_page = s_editor_signature ? SETTINGS_MAIN : SETTINGS_PROFILE;
+    return APP_REDRAW_PAGE;
+}
+
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (s_page == SETTINGS_TEXT_EDIT) return profile_editor_gesture(ev);
+    if (s_page == SETTINGS_MAIN &&
+        (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
+        int next = s_main_scroll + (ev->type == UI_GESTURE_SWIPE_U ? 80 : -80);
+        if (next < 0) next = 0;
+        if (next > SETTINGS_SCROLL_MAX) next = SETTINGS_SCROLL_MAX;
+        if (next == s_main_scroll) return APP_REDRAW_NONE;
+        s_main_scroll = next;
+        return APP_REDRAW_PAGE;
+    }
+    if (s_page == SETTINGS_AVATAR && (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
+        int pages = (s_wallpaper_count + 6) / 7;
+        if (ev->type == UI_GESTURE_SWIPE_U && s_wallpaper_page + 1 < pages) ++s_wallpaper_page;
+        if (ev->type == UI_GESTURE_SWIPE_D && s_wallpaper_page > 0) --s_wallpaper_page;
+        return APP_REDRAW_PAGE;
+    }
     if (s_page == SETTINGS_WALLPAPER_PREVIEW && !s_wallpaper_confirm &&
         (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
         int next = s_wallpaper_selected + (ev->type == UI_GESTURE_SWIPE_U ? 1 : -1);
@@ -666,6 +933,25 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     int tab = ui_nav_hit(ev->x0, ev->y0);
     if (tab >= 0) { ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
     int y = ev->y0;
+    if (s_page == SETTINGS_PROFILE) {
+        if (y < 190) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
+        if (y >= 266 && y < 350) { profile_editor_open(false); return APP_REDRAW_PAGE; }
+        if (y >= 366 && y < 450) { wallpaper_scan(); s_page = SETTINGS_AVATAR; return APP_REDRAW_PAGE; }
+        return APP_REDRAW_NONE;
+    }
+    if (s_page == SETTINGS_AVATAR) {
+        if (y < 190) { s_page = SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
+        if (y >= 270 && y < 354) { app_settings_set_avatar_path(""); s_page = SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
+        if (y >= 374 && y < 1046) {
+            int i = (y - 374) / 96, index = s_wallpaper_page * 7 + i;
+            if (index >= 0 && index < s_wallpaper_count && (y - 374) % 96 < 80) {
+                app_settings_set_avatar_path(s_wallpapers[index].path);
+                s_page = SETTINGS_PROFILE;
+                return APP_REDRAW_PAGE;
+            }
+        }
+        return APP_REDRAW_NONE;
+    }
     if (s_page == SETTINGS_WALLPAPER_PREVIEW) {
         if (y < 190) { s_page = SETTINGS_WALLPAPER; return APP_REDRAW_PAGE; }
         if (s_wallpaper_preview_ok && y >= 194 && y < 1032) {
@@ -756,13 +1042,6 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (y >= 518 && y < 588) { time_open(); return APP_REDRAW_PAGE; }
         return APP_REDRAW_NONE;
     }
-    if (s_page == SETTINGS_FIRMWARE) {
-        if (y >= 638 && y < 718) {
-            s_boot_pending = true;
-            return APP_REDRAW_PAGE;
-        }
-        return APP_REDRAW_NONE;
-    }
     if (s_page == SETTINGS_READING) {
         if (y >= 281 && y < 407) {
             app_settings_set_reader_power_turn(!app_settings_reader_power_turn());
@@ -770,6 +1049,17 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         if (y >= 431 && y < 557) {
             app_settings_set_reader_immersive(!app_settings_reader_immersive());
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
+    if (s_page == SETTINGS_POWER_SLEEP) {
+        if (y >= 300 && y < 432) {
+            app_settings_set_staged_shutdown(false);
+            return APP_REDRAW_PAGE;
+        }
+        if (y >= 454 && y < 586) {
+            app_settings_set_staged_shutdown(true);
             return APP_REDRAW_PAGE;
         }
         return APP_REDRAW_NONE;
@@ -807,48 +1097,62 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         return APP_REDRAW_NONE;
     }
-    if (y >= 171 && y < 298) {
-        s_page = SETTINGS_FIRMWARE;
+    if (y < 160 || y >= UI_NAV_TOP) return APP_REDRAW_NONE;
+    y += s_main_scroll;
+    if (y >= 164 && y < 270) {
+        s_page = SETTINGS_PROFILE;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 365 && y < 433) {
+    if (y >= SETTINGS_WIRELESS_Y && y < SETTINGS_WIRELESS_Y + SETTINGS_ROW_H) {
         extern const app_desc_t app_transfer;
         app_transfer_request_wifi_setup();
         ctx->request_app = &app_transfer;
         return APP_REDRAW_NONE;
     }
-    if (y >= 493 && y < 561) {
+    if (y >= SETTINGS_DISPLAY_Y && y < SETTINGS_DISPLAY_Y + SETTINGS_ROW_H) {
         ttf_font_scan();
         s_font_page = 0;
         s_page = SETTINGS_SYSTEM_FONT;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 561 && y < 629) {
+    if (y >= SETTINGS_DISPLAY_Y + SETTINGS_ROW_H && y < SETTINGS_DISPLAY_Y + 2 * SETTINGS_ROW_H) {
         s_page = SETTINGS_SYSTEM_SIZE;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 629 && y < 697) {
+    if (y >= SETTINGS_DISPLAY_Y + 2 * SETTINGS_ROW_H && y < SETTINGS_DISPLAY_Y + 3 * SETTINGS_ROW_H) {
         s_page = SETTINGS_SYSTEM_CONTRAST;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 697 && y < 765) {
+    if (y >= SETTINGS_DISPLAY_Y + 3 * SETTINGS_ROW_H && y < SETTINGS_DISPLAY_Y + 4 * SETTINGS_ROW_H) {
         s_page = SETTINGS_SHELF_STYLE;
         s_style_scroll = 0;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 809 && y < 877) {
+    if (y >= SETTINGS_DISPLAY_Y + 4 * SETTINGS_ROW_H && y < SETTINGS_DISPLAY_Y + 5 * SETTINGS_ROW_H) {
+        profile_editor_open(true);
+        return APP_REDRAW_PAGE;
+    }
+    if (y >= SETTINGS_DISPLAY_Y + 5 * SETTINGS_ROW_H && y < SETTINGS_DISPLAY_Y + 6 * SETTINGS_ROW_H) {
+        app_settings_set_home_full_refresh(!app_settings_home_full_refresh());
+        return APP_REDRAW_PAGE;
+    }
+    if (y >= SETTINGS_DEVICE_Y && y < SETTINGS_DEVICE_Y + SETTINGS_ROW_H) {
         s_page = SETTINGS_LOCK_STYLE;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 877 && y < 945) {
+    if (y >= SETTINGS_DEVICE_Y + SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 2 * SETTINGS_ROW_H) {
+        s_page = SETTINGS_POWER_SLEEP;
+        return APP_REDRAW_PAGE;
+    }
+    if (y >= SETTINGS_DEVICE_Y + 2 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 3 * SETTINGS_ROW_H) {
         s_page = SETTINGS_READING;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 945 && y < 1013) {
+    if (y >= SETTINGS_DEVICE_Y + 3 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 4 * SETTINGS_ROW_H) {
         s_page = SETTINGS_TIME;
         return APP_REDRAW_PAGE;
     }
-    if (y >= 1013 && y < 1081) {
+    if (y >= SETTINGS_DEVICE_Y + 4 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 5 * SETTINGS_ROW_H) {
         s_page = SETTINGS_CONFIG;
         s_config_confirm = false;
         s_notice[0] = 0;
@@ -864,6 +1168,9 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
         return APP_REDRAW_PAGE;
     }
     if (s_page == SETTINGS_WALLPAPER) { s_page = SETTINGS_LOCK_STYLE; return APP_REDRAW_PAGE; }
+    if (s_page == SETTINGS_AVATAR) { s_page = SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
+    if (s_page == SETTINGS_TEXT_EDIT) { s_page = s_editor_signature ? SETTINGS_MAIN : SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
+    if (s_page == SETTINGS_PROFILE) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
     if (s_page == SETTINGS_TIME_EDIT) { s_page = SETTINGS_TIME; return APP_REDRAW_PAGE; }
     if (s_page != SETTINGS_MAIN) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
     ui_nav_request(ctx, 0);

@@ -113,18 +113,13 @@ static void text_fit(char *text, int px, int width) {
         text[n] = 0;
     }
 }
-static uint8_t *cover_load(const char *path) {
-    const char *ext = strrchr(path, '.');
-    if (!ext || strcasecmp(ext, ".epub")) return NULL;
-    uint8_t *encoded = NULL; size_t size = 0; bool png = false;
-    if (book_epub_cover(path, &encoded, &size, &png) != ESP_OK) return NULL;
+static uint8_t *cover_load(const char *path, const char *title, const char *author) {
     uint8_t *gray = heap_caps_malloc(BOOK_COVER_W * BOOK_COVER_H,
                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (gray && !book_cover_thumbnail(encoded, size, png, gray)) {
+    if (gray && !book_cover_load_gray(path, title, author, gray, true, NULL)) {
         free(gray);
         gray = NULL;
     }
-    free(encoded);
     return gray;
 }
 static void cover_background_draw(uint8_t *fb, const uint8_t *gray) {
@@ -215,7 +210,7 @@ bool book_ticket_draw(uint8_t *fb, bool reader_background) {
     }
     ticket_stats_t stats; stats_load(&stats);
     uint32_t day = local_day();
-    uint8_t *gray = cover_load(path);
+    uint8_t *gray = cover_load(path, title, author);
     cover_background_draw(fb, gray);
     ticket_shadow_draw(fb);
     ticket_paper_draw(fb);

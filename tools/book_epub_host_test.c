@@ -19,6 +19,40 @@ int main(int argc, char **argv) {
             printf("epub rejection passed: %s\n", argv[a]); continue;
         }
         assert(book_epub_open(argv[a], &book) == ESP_OK && book);
+        if (strstr(argv[a], "good_dual_samefile_partial_ncx")) {
+            assert(book_epub_chapter_count(book) == 1);
+            assert(book_epub_navigation_count(book) == 2);
+            for (size_t i = 0; i < 2; ++i) {
+                assert(book_epub_navigation_chapter(book, i) == 0);
+                char title[160];
+                assert(book_epub_navigation_title(book, i, title, sizeof(title)) == ESP_OK);
+                assert(!strcmp(title, i ? "第二章 继续" : "第一章 起点"));
+                assert(book_epub_navigation_anchor(book, i) &&
+                       !strcmp(book_epub_navigation_anchor(book, i), i ? "two" : "one"));
+            }
+            book_epub_close(book);
+            printf("epub dual-TOC same-file fixture passed: %s\n", argv[a]);
+            continue;
+        }
+        if (strstr(argv[a], "good_ncx_")) {
+            bool corrupt = strstr(argv[a], "corrupt") != NULL;
+            assert(book_epub_chapter_count(book) == 4);
+            assert(book_epub_navigation_count(book) == (corrupt ? 2 : 4));
+            for (size_t i = 0; i < (corrupt ? 2u : 4u); ++i) {
+                size_t expected_chapter = corrupt ? i * 2 : i;
+                assert(book_epub_navigation_chapter(book, i) == expected_chapter);
+                char title[160];
+                assert(book_epub_navigation_title(book, i, title, sizeof(title)) == ESP_OK);
+                const char *source = corrupt || i % 2 == 0 ? "NCX" : "NAV";
+                char expected[32];
+                snprintf(expected, sizeof(expected), "%s %u", source,
+                         (unsigned)expected_chapter + 1);
+                assert(!strcmp(title, expected));
+            }
+            book_epub_close(book);
+            printf("epub partial-navigation fixture passed: %s\n", argv[a]);
+            continue;
+        }
         if (strstr(argv[a], "good_no_cover")) {
             uint8_t *cover = NULL; size_t cover_size = 0; bool png = false;
             assert(book_epub_cover(argv[a], &cover, &cover_size, &png) == ESP_ERR_NOT_FOUND);

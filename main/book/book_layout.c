@@ -30,6 +30,7 @@ static unsigned s_line_percent = 150, s_paragraph_percent = 50;
 static int s_tracking_px;
 static unsigned s_first_line_indent_em = 2;
 static unsigned s_reading_line;
+static int s_reading_line_offset;
 static size_t s_lead_skip;
 static unsigned s_lead_height;
 
@@ -129,6 +130,9 @@ EpdRect book_layout_balanced_rect(EpdRect outer, int px, int tracking_px) {
 }
 void book_layout_set_reading_line(unsigned style) {
     s_reading_line = style <= 2 ? style : 0;
+}
+void book_layout_set_reading_line_offset(int offset_px) {
+    s_reading_line_offset = offset_px < -8 ? -8 : offset_px > 8 ? 8 : offset_px;
 }
 void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px) {
     s_lead_skip = skip_bytes;
@@ -365,12 +369,13 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
         used += leading;
         if (s_line[0]) {
             if (s_reading_line) {
-                int guide_y = rect.y + (int)used + line_px + (line_height - line_px) / 2;
+                int guide_y = rect.y + (int)used + line_px + (line_height - line_px) / 2 +
+                              s_reading_line_offset;
                 int dash = s_reading_line == 1 ? 19 : 2;
                 int period = s_reading_line == 1 ? 31 : 13;
                 for (int dx = 0; dx < rect.width; dx += period) {
                     int width = dx + dash <= rect.width ? dash : rect.width - dx;
-                    epd_fill_rect((EpdRect){rect.x + dx, guide_y, width, 1}, 0x80, fb);
+                    epd_fill_rect((EpdRect){rect.x + dx, guide_y, width, 2}, 0x50, fb);
                 }
             }
             int x = rect.x + indent;

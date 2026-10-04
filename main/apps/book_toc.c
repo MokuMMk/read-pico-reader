@@ -63,16 +63,46 @@ static void fit_line(char *text, int px, int width) {
 
 int book_toc_hit(uint16_t x, uint16_t y, int page, size_t chapters) {
     if (x < 100 && y >= 76 && y < 151) return BOOK_TOC_BACK;
-    if (y >= 1033 && y < 1111) {
-        if (x < 183) return BOOK_TOC_PREV;
-        if (x >= 501) return BOOK_TOC_NEXT;
+    if (y >= 1018 && y < 1086) {
+        if (x >= 36 && x < 140) return BOOK_TOC_SKIP_PREV;
+        if (x >= 150 && x < 246) return BOOK_TOC_PREV;
+        if (x >= 438 && x < 534) return BOOK_TOC_NEXT;
+        if (x >= 544 && x < 648) return BOOK_TOC_SKIP_NEXT;
     }
+    if (x >= 36 && x < 648 && y >= 1100 && y < 1174) return BOOK_TOC_JUMP;
     for (int row = 0; row < BOOK_TOC_ROWS; ++row) {
         size_t index = (size_t)page * BOOK_TOC_ROWS + row;
         if (index >= chapters) break;
         if (ui_rect_hit(book_toc_row_rect(row), x, y)) return (int)index;
     }
     return -1;
+}
+
+int book_toc_jump_hit(uint16_t x, uint16_t y) {
+    if (x >= 75 && x < 330 && y >= 850 && y < 907) return BOOK_TOC_JUMP_CANCEL;
+    if (x >= 354 && x < 609 && y >= 850 && y < 907) return BOOK_TOC_JUMP_CONFIRM;
+    if (x >= 75 && x < 609 && y >= 600 && y < 711) return BOOK_TOC_JUMP_TRACK;
+    return -1;
+}
+
+int book_toc_jump_percent(uint16_t x) {
+    if (x <= 92) return 0;
+    if (x >= 592) return 100;
+    return ((int)x - 92) * 100 / 500;
+}
+
+int book_toc_page_from_percent(int percent, int pages) {
+    if (pages <= 1 || percent <= 0) return 0;
+    if (percent >= 100) return pages - 1;
+    int page = (percent * pages + 99) / 100 - 1;
+    return page < pages ? page : pages - 1;
+}
+
+static void toc_pill(uint8_t *fb, EpdRect rect, const char *text, int px, bool selected) {
+    ui_fill_round_rect(fb, rect, 20, selected ? 0xc0 : UI_GRAY_WHITE);
+    ui_text_fixed(fb, rect.x + rect.width / 2,
+                  rect.y + (rect.height - px) / 2, px, text,
+                  EPD_DRAW_ALIGN_CENTER, false);
 }
 
 void book_toc_render(uint8_t *fb, const char *book_title, size_t chapters,
@@ -86,11 +116,11 @@ void book_toc_render(uint8_t *fb, const char *book_title, size_t chapters,
     char title[160];
     one_line(title, sizeof(title), book_title ? book_title : "");
     if (!title[0]) strcpy(title, "当前书籍");
-    fit_line(title, 21, 445);
-    ui_text_fixed(fb, TOC_LEFT, 169, 21, title, EPD_DRAW_ALIGN_LEFT, false);
+    fit_line(title, 23, 445);
+    ui_text_fixed(fb, TOC_LEFT, 169, 23, title, EPD_DRAW_ALIGN_LEFT, false);
     char total[48];
     snprintf(total, sizeof(total), "%u 节", (unsigned)chapters);
-    ui_text_fixed(fb, TOC_RIGHT, 171, 18, total, EPD_DRAW_ALIGN_RIGHT, false);
+    ui_text_fixed(fb, TOC_RIGHT, 171, 20, total, EPD_DRAW_ALIGN_RIGHT, false);
     ui_hairline(fb, 213, TOC_LEFT, TOC_RIGHT - TOC_LEFT, 0x90);
 
     if (message && *message) {
@@ -108,7 +138,7 @@ void book_toc_render(uint8_t *fb, const char *book_title, size_t chapters,
             bool selected = index == current;
             ui_fill_round_rect(fb, r, 20, selected ? 0xc0 : UI_GRAY_WHITE);
             char number[16]; snprintf(number, sizeof(number), "%02u", (unsigned)index + 1);
-            ui_text_fixed(fb, r.x + 22, r.y + 33, 19, number, EPD_DRAW_ALIGN_LEFT, false);
+            ui_text_fixed(fb, r.x + 22, r.y + 32, 21, number, EPD_DRAW_ALIGN_LEFT, false);
             char raw[160] = "", label[160];
             if (book_navigation_title(index, raw, sizeof(raw)) != ESP_OK || !raw[0])
                 snprintf(raw, sizeof(raw), "第 %u 节", (unsigned)index + 1);
@@ -118,16 +148,61 @@ void book_toc_render(uint8_t *fb, const char *book_title, size_t chapters,
                 snprintf(raw, sizeof(raw), "第 %u 节", (unsigned)index + 1);
             one_line(label, sizeof(label), raw);
             if (!label[0]) snprintf(label, sizeof(label), "第 %u 节", (unsigned)index + 1);
-            fit_line(label, 27, selected ? 427 : 482);
-            ui_text_fixed(fb, r.x + 79, r.y + 28, 27, label, EPD_DRAW_ALIGN_LEFT, false);
+            fit_line(label, 30, selected ? 420 : 495);
+            ui_text_fixed(fb, r.x + 79, r.y + 27, 30, label, EPD_DRAW_ALIGN_LEFT, false);
             if (selected)
-                ui_text_fixed(fb, r.x + r.width - 22, r.y + 34, 18, "当前",
+                ui_text_fixed(fb, r.x + r.width - 22, r.y + 32, 20, "当前",
                               EPD_DRAW_ALIGN_RIGHT, false);
         }
     }
     const int pages = book_toc_pages(chapters);
-    if (page > 0) ui_text_fixed(fb, TOC_LEFT, 1052, 21, "‹ 上一页", EPD_DRAW_ALIGN_LEFT, false);
-    if (page + 1 < pages) ui_text_fixed(fb, TOC_RIGHT, 1052, 21, "下一页 ›", EPD_DRAW_ALIGN_RIGHT, false);
+    toc_pill(fb, (EpdRect){36, 1018, 104, 68}, "« 10页", 18, false);
+    toc_pill(fb, (EpdRect){150, 1018, 96, 68}, "‹ 上页", 19, false);
     char position[32]; snprintf(position, sizeof(position), "%02d / %02d", page + 1, pages);
-    ui_text_fixed(fb, 342, 1054, 18, position, EPD_DRAW_ALIGN_CENTER, false);
+    toc_pill(fb, (EpdRect){256, 1018, 172, 68}, position, 19, true);
+    toc_pill(fb, (EpdRect){438, 1018, 96, 68}, "下页 ›", 19, false);
+    toc_pill(fb, (EpdRect){544, 1018, 104, 68}, "10页 »", 18, false);
+    ui_fill_round_rect(fb, (EpdRect){36, 1100, 612, 74}, 21, UI_GRAY_WHITE);
+    ui_text_fixed(fb, 58, 1125, 22, "按百分比跳转", EPD_DRAW_ALIGN_LEFT, false);
+    char percent[24];
+    snprintf(percent, sizeof(percent), "%d%%  ›", (page + 1) * 100 / pages);
+    ui_text_fixed(fb, 626, 1127, 21, percent, EPD_DRAW_ALIGN_RIGHT, false);
+}
+
+void book_toc_render_jump(uint8_t *fb, size_t chapters, int percent) {
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    EpdRect card = {44, 356, 596, 572};
+    ui_fill_round_rect(fb, card, 30, UI_GRAY_WHITE);
+    ui_draw_round_rect(fb, card, 30, 0x40);
+    ui_text_fixed(fb, 342, 393, 32, "跳到目录位置", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_fixed(fb, 342, 450, 21, "选择百分比，先预览目标位置",
+                  EPD_DRAW_ALIGN_CENTER, false);
+    char value[24]; snprintf(value, sizeof(value), "%d%%", percent);
+    ui_text_fixed(fb, 342, 515, 55, value, EPD_DRAW_ALIGN_CENTER, false);
+    ui_fill_round_rect(fb, (EpdRect){92, 637, 500, 8}, 4, 0xb0);
+    int width = 500 * percent / 100;
+    if (width) ui_fill_round_rect(fb, (EpdRect){92, 637, width, 8}, 4, 0x40);
+    int knob = 92 + width;
+    epd_fill_circle(knob, 641, 25, UI_GRAY_WHITE, fb);
+    epd_draw_circle(knob, 641, 25, 0x40, fb);
+    static const char *ticks[] = {"0", "25", "50", "75", "100%"};
+    for (int i = 0; i < 5; ++i)
+        ui_text_fixed(fb, 92 + i * 125, 678, 20, ticks[i], EPD_DRAW_ALIGN_CENTER, false);
+    ui_fill_round_rect(fb, (EpdRect){75, 740, 534, 84}, 19, 0xe8);
+    ui_text_fixed(fb, 99, 751, 20, "目标位置", EPD_DRAW_ALIGN_LEFT, false);
+    int pages = book_toc_pages(chapters);
+    int target = book_toc_page_from_percent(percent, pages);
+    size_t first = (size_t)target * BOOK_TOC_ROWS + 1;
+    size_t last = first + BOOK_TOC_ROWS - 1;
+    if (last > chapters) last = chapters;
+    char summary[96];
+    if (chapters)
+        snprintf(summary, sizeof(summary), "约第 %d / %d 页 · 第 %u～%u 节",
+                 target + 1, pages, (unsigned)first, (unsigned)last);
+    else snprintf(summary, sizeof(summary), "这本书没有可用目录");
+    ui_text_fixed(fb, 99, 786, 23, summary, EPD_DRAW_ALIGN_LEFT, false);
+    toc_pill(fb, (EpdRect){75, 850, 255, 57}, "取消", 22, false);
+    ui_fill_round_rect(fb, (EpdRect){354, 850, 255, 57}, 20, 0x40);
+    ui_text_fixed(fb, 481, 868, 22, "跳转", EPD_DRAW_ALIGN_CENTER, true);
 }

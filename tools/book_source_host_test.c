@@ -29,7 +29,7 @@ static void roundtrip(const char *s, size_t n) {
 int main(int argc, char **argv) {
     const char *s = "Chapter 1 Start\nhello\nChapter 2 End\nworld\n";
     write_bytes(s, strlen(s)); assert(book_open(path) == ESP_OK);
-    assert(book_chapter_count() == 2); char title[41];
+    assert(book_chapter_count() == 2); char title[256];
     assert(book_chapter_title(1, title, sizeof(title)) == ESP_OK);
     assert(strcmp(title, "Chapter 2 End") == 0); book_close(); roundtrip(s, strlen(s));
     s = "第一章 开始\n你好\n第二章 结束\n再见\n";

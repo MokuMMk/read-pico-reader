@@ -49,8 +49,8 @@ enum EpdDrawError update_display_mode(EpdiyHighlevelState* hl, enum EpdDrawMode 
 /// 普通页面切换使用真实差分 GL16；未变化像素不进入 dirty map。
 /// True differential GL16 for ordinary page transitions; unchanged pixels stay clean.
 enum EpdDrawError update_display_mode_diff(EpdiyHighlevelState* hl, enum EpdDrawMode mode);
-/// 系统页切换：30 相 8 灰阶差分 GL16，累计若干次同步做 GC16 清残影；不安排延迟二次刷新。
-/// System page transition: 30-phase 8-gray differential GL16 with synchronous periodic GC16 cleanup and no delayed repaint.
+/// 系统页切换：16 灰阶差分 GL16，间隔性全像素灰阶整理，累计若干次同步做 GC16；不安排延迟二次刷新。
+/// System page transition: 16-gray differential GL16 with periodic full-pixel gray settling and synchronous GC16 cleanup.
 enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_from_white_with(

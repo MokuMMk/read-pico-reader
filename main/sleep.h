@@ -24,6 +24,7 @@ typedef enum {
     APP_WAKE_NONE = 0,
     APP_WAKE_KEY,
     APP_WAKE_PICKUP,
+    APP_WAKE_TIMEOUT,
 } app_wake_source_t;
 
 void enter_lock_and_sleep(
@@ -37,6 +38,9 @@ void app_lock_wait_key_idle(int timeout_ms);
 /// ESP 浅睡，按键或拿起唤醒。acc 为空则只等按键。
 /// ESP light sleep; wake on key or pickup. Key only when acc is NULL.
 app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc);
+/// ESP 浅睡至按键、拿起或超时；超时以毫秒计，0 表示不设期限。
+/// ESP light sleep until key, pickup, or timeout; 0 means no deadline.
+app_wake_source_t app_light_sleep_wait_timed(sc7a20h_handle_t acc, uint32_t timeout_ms);
 app_wake_source_t app_last_wake_source(void);
 /// 软睡或关机，拉掉 EN 后停住，不会返回。
 /// Soft sleep or power-off: drop EN and halt; does not return.

@@ -42,6 +42,9 @@
 // Count only whole system-page transitions; local controls, dialogs and cover updates do not advance
 // the cleanup cadence. Reading keeps its own configurable full-screen cleanup interval.
 #define APP_UI_GC16_EVERY 40
-// 普通系统页使用 8 灰阶差分 GL16；累计到此次数做一次完整 GC16，避免短 DU 的重残影。
-// Ordinary system pages use 8-gray differential GL16 and periodically run a full GC16 to avoid heavy short-DU ghosting.
+// 普通系统页使用 16 灰阶 GL16；每隔几次做一遍全像素灰阶整理，避免只刷变化区域留下旧页轮廓。
+// Ordinary system pages use 16-gray GL16; periodically drive unchanged pixels as well to suppress prior-page outlines.
+#define APP_UI_FAST_GL16_SETTLE_EVERY 3
+// 全像素灰阶仍不能无限消除累积残影，达到阈值时同步做完整 GC16。
+// Full-pixel gray updates cannot remove unlimited ghosting, so periodically run a synchronous GC16.
 #define APP_UI_FAST_GC16_EVERY 12

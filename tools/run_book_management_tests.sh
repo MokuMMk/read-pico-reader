@@ -12,6 +12,10 @@ build/book-tests/settings-backup
 python3 tools/book_ui_host_test.py
 python3 tools/test_home_recent.py
 python3 tools/test_book_toc.py
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+    -Itools/book_cover_auto_stubs -Imain/book -Imain/font \
+    tools/book_cover_auto_host_test.c main/book/book_cover_auto.c -o build/book-tests/auto-cover
+build/book-tests/auto-cover
 python3 tools/test_search.py
 flags=(-std=gnu11 -Wall -Wextra -Werror -Wno-deprecated-declarations -g -fsanitize=address,undefined)
 gcc "${flags[@]}" -Itools/file_tree_stubs -Imain/apps tools/file_tree_host_test.c main/apps/file_tree.c -o build/book-tests/file-tree

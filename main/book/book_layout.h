@@ -29,6 +29,8 @@ void book_layout_set_first_line_indent(unsigned em);
 EpdRect book_layout_balanced_rect(EpdRect outer, int px, int tracking_px);
 /// 正文阅读线：0 无，1 虚线，2 点线。/ Reading guides: none, dashed or dotted.
 void book_layout_set_reading_line(unsigned style);
+/// 阅读线相对默认位置上下移动 -8..+8 像素；负值上移。/ Move guide -8..+8 px; negative is up.
+void book_layout_set_reading_line_offset(int offset_px);
 /// EPUB 章节首页预留标题区并跳过已经在题头显示的前置标题块；每章重排前调用。
 /// Reserve a first-page chapter heading and skip heading blocks already shown there; call before each chapter layout.
 void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px);

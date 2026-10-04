@@ -25,6 +25,11 @@
 #define TAG "settings"
 #define NVS_NS "read_pico"
 #define NVS_KEY_SLEEP "sleep"
+#define NVS_KEY_SHUTDOWN_MODE "shutdown"
+#define NVS_KEY_HOME_FULL "home_full"
+#define NVS_KEY_DEVICE_NAME "dev_name"
+#define NVS_KEY_AVATAR "dev_avatar"
+#define NVS_KEY_STATUS_SIGNATURE "status_sig"
 #define NVS_KEY_FONT "font"
 #define NVS_KEY_SYS_FONT "sys_font"
 #define NVS_KEY_SYS_SIZE "sys_size"
@@ -46,6 +51,7 @@
 #define NVS_KEY_BOOK_TRACK "bk_track"
 #define NVS_KEY_BOOK_INDENT "bk_indent"
 #define NVS_KEY_BOOK_RULE "bk_rule"
+#define NVS_KEY_BOOK_RULE_OFFSET "bk_rule_y"
 #define NVS_KEY_SHELF_STYLE "shelf_ui"
 #define NVS_KEY_SHELF_V22 "shelf_v22"
 #define NVS_KEY_BOOKS_DIR "books_dir"
@@ -54,6 +60,11 @@
 #define MEDIA_DIR_MAX 96
 
 static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
+static bool s_staged_shutdown;
+static bool s_home_full_refresh;
+static char s_device_name[64] = "Pico";
+static char s_avatar[288];
+static char s_status_signature[96];
 static char s_font[FONT_PATH_MAX];
 static char s_system_font[FONT_PATH_MAX];
 static uint8_t s_system_size = 120;
@@ -70,7 +81,7 @@ static uint8_t s_reader_turn_effect;
 static uint8_t s_book_line = 150, s_book_para = 50, s_book_margin = 36;
 static bool s_reader_power_turn;
 static bool s_reader_immersive;
-static uint8_t s_book_tracking = 2, s_book_reading_line;
+static uint8_t s_book_tracking = 2, s_book_reading_line, s_book_rule_offset = 4;
 static uint8_t s_book_indent = 2;
 static uint8_t s_shelf_style = 2;
 static char s_books_dir[MEDIA_DIR_MAX] = "/sdcard/books";
@@ -143,6 +154,20 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_SLEEP, &raw) == ESP_OK && raw <= APP_SLEEP_OFF) {
         s_sleep = (app_sleep_mode_t)raw;
     }
+    raw = 0;
+    if (nvs_get_u8(h, NVS_KEY_SHUTDOWN_MODE, &raw) == ESP_OK)
+        s_staged_shutdown = raw == 1;
+    raw = 0;
+    if (nvs_get_u8(h, NVS_KEY_HOME_FULL, &raw) == ESP_OK) s_home_full_refresh = raw == 1;
+    size_t value_len = sizeof(s_device_name);
+    if (nvs_get_str(h, NVS_KEY_DEVICE_NAME, s_device_name, &value_len) != ESP_OK || !s_device_name[0])
+        strlcpy(s_device_name, "Pico", sizeof(s_device_name));
+    value_len = sizeof(s_avatar);
+    if (nvs_get_str(h, NVS_KEY_AVATAR, s_avatar, &value_len) != ESP_OK ||
+        (s_avatar[0] && strncmp(s_avatar, "/sdcard/", 8))) s_avatar[0] = 0;
+    value_len = sizeof(s_status_signature);
+    if (nvs_get_str(h, NVS_KEY_STATUS_SIGNATURE, s_status_signature, &value_len) != ESP_OK)
+        s_status_signature[0] = 0;
     size_t font_len = sizeof(s_font);
     if (nvs_get_str(h, NVS_KEY_FONT, s_font, &font_len) != ESP_OK) {
         s_font[0] = '\0';
@@ -175,7 +200,8 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_BOOK_SHAKE, &book_shake) == ESP_OK) s_book_shake = book_shake != 0;
     uint8_t reader_full_pages = 15;
     if (nvs_get_u8(h, NVS_KEY_READER_FULL, &reader_full_pages) == ESP_OK &&
-        (reader_full_pages == 5 || reader_full_pages == 10 || reader_full_pages == 15))
+        (reader_full_pages == 0 || reader_full_pages == 5 || reader_full_pages == 10 ||
+         reader_full_pages == 15 || reader_full_pages == 30))
         s_reader_full_pages = reader_full_pages;
     uint8_t reader_turn_effect = 0;
     if (nvs_get_u8(h, NVS_KEY_READER_TURN, &reader_turn_effect) == ESP_OK && reader_turn_effect <= 1)
@@ -184,11 +210,13 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_POWER_TURN, &power_turn) == ESP_OK) s_reader_power_turn = power_turn == 1;
     uint8_t immersive = 0;
     if (nvs_get_u8(h, NVS_KEY_IMMERSIVE, &immersive) == ESP_OK) s_reader_immersive = immersive == 1;
-    uint8_t tracking = 2, reading_line = 0, indent = 2;
+    uint8_t tracking = 2, reading_line = 0, rule_offset = 4, indent = 2;
     if (nvs_get_u8(h, NVS_KEY_BOOK_TRACK, &tracking) == ESP_OK && tracking <= 4)
         s_book_tracking = tracking;
     if (nvs_get_u8(h, NVS_KEY_BOOK_RULE, &reading_line) == ESP_OK && reading_line <= 2)
         s_book_reading_line = reading_line;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_RULE_OFFSET, &rule_offset) == ESP_OK && rule_offset <= 8)
+        s_book_rule_offset = rule_offset;
     if (nvs_get_u8(h, NVS_KEY_BOOK_INDENT, &indent) == ESP_OK && indent <= 3)
         s_book_indent = indent;
     uint8_t line = 150, para = 50, margin = 36;
@@ -248,6 +276,47 @@ void app_settings_set_sleep_mode(app_sleep_mode_t mode) {
     nvs_set_u8(h, NVS_KEY_SLEEP, (uint8_t)mode);
     nvs_commit(h);
     nvs_close(h);
+}
+
+bool app_settings_staged_shutdown(void) { return s_staged_shutdown; }
+void app_settings_set_staged_shutdown(bool staged) {
+    if (staged == s_staged_shutdown) return;
+    s_staged_shutdown = staged;
+    nvs_put_u8(NVS_KEY_SHUTDOWN_MODE, staged ? 1 : 0);
+}
+
+bool app_settings_home_full_refresh(void) { return s_home_full_refresh; }
+void app_settings_set_home_full_refresh(bool enabled) {
+    if (enabled == s_home_full_refresh) return;
+    s_home_full_refresh = enabled;
+    nvs_put_u8(NVS_KEY_HOME_FULL, enabled ? 1 : 0);
+}
+
+static void nvs_put_str(const char *key, const char *value) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    if (nvs_set_str(h, key, value) == ESP_OK) (void)nvs_commit(h);
+    nvs_close(h);
+}
+
+const char *app_settings_device_name(void) { return s_device_name; }
+void app_settings_set_device_name(const char *name) {
+    if (!name || !name[0] || strnlen(name, sizeof(s_device_name)) >= sizeof(s_device_name)) return;
+    strlcpy(s_device_name, name, sizeof(s_device_name));
+    nvs_put_str(NVS_KEY_DEVICE_NAME, s_device_name);
+}
+const char *app_settings_avatar_path(void) { return s_avatar; }
+void app_settings_set_avatar_path(const char *path) {
+    if (!path || (path[0] && strncmp(path, "/sdcard/", 8)) ||
+        strnlen(path, sizeof(s_avatar)) >= sizeof(s_avatar)) return;
+    strlcpy(s_avatar, path, sizeof(s_avatar));
+    nvs_put_str(NVS_KEY_AVATAR, s_avatar);
+}
+const char *app_settings_status_signature(void) { return s_status_signature; }
+void app_settings_set_status_signature(const char *signature) {
+    if (!signature || strnlen(signature, sizeof(s_status_signature)) >= sizeof(s_status_signature)) return;
+    strlcpy(s_status_signature, signature, sizeof(s_status_signature));
+    nvs_put_str(NVS_KEY_STATUS_SIGNATURE, s_status_signature);
 }
 
 const char* app_settings_font_path(void) {
@@ -365,7 +434,8 @@ void app_settings_set_book_shake(bool on) {
 }
 uint8_t app_settings_reader_full_pages(void) { return s_reader_full_pages; }
 void app_settings_set_reader_full_pages(uint8_t pages) {
-    if ((pages != 5 && pages != 10 && pages != 15) || pages == s_reader_full_pages) return;
+    if ((pages != 0 && pages != 5 && pages != 10 && pages != 15 && pages != 30) ||
+        pages == s_reader_full_pages) return;
     s_reader_full_pages = pages;
     nvs_put_u8(NVS_KEY_READER_FULL, pages);
 }
@@ -404,6 +474,14 @@ void app_settings_set_book_reading_line(uint8_t style) {
     if (style > 2 || style == s_book_reading_line) return;
     s_book_reading_line = style;
     nvs_put_u8(NVS_KEY_BOOK_RULE, style);
+}
+int8_t app_settings_book_reading_line_offset(void) { return (int8_t)((int)s_book_rule_offset - 4) * 2; }
+void app_settings_set_book_reading_line_offset(int8_t offset_px) {
+    if (offset_px < -8 || offset_px > 8 || offset_px % 2) return;
+    uint8_t index = (uint8_t)(offset_px / 2 + 4);
+    if (index == s_book_rule_offset) return;
+    s_book_rule_offset = index;
+    nvs_put_u8(NVS_KEY_BOOK_RULE_OFFSET, index);
 }
 uint8_t app_settings_book_line_spacing(void) { return s_book_line; }
 void app_settings_set_book_line_spacing(uint8_t percent) {
@@ -460,6 +538,14 @@ typedef struct {
     uint8_t checksum[4];
 } settings_backup_v1_t;
 
+typedef struct {
+    char device_name[64];
+    char avatar[288];
+    char status_signature[96];
+    uint8_t home_full_refresh;
+    uint8_t checksum[4];
+} settings_backup_profile_t;
+
 enum {
     BK_SLEEP, BK_PICKUP, BK_SYS_SIZE, BK_SYS_CONTRAST, BK_LOCK,
     BK_BOOK_PX, BK_SHAKE, BK_FULL_PAGES, BK_TURN, BK_POWER_TURN,
@@ -481,6 +567,23 @@ static uint32_t backup_indent_checksum(const settings_backup_v1_t *backup, uint8
     for (size_t i = 0; i < sizeof(*backup); ++i) hash = (hash ^ data[i]) * 16777619u;
     return (hash ^ indent) * 16777619u;
 }
+static uint32_t backup_rule_offset_checksum(const settings_backup_v1_t *backup, uint8_t indent,
+                                            uint8_t rule_offset) {
+    return (backup_indent_checksum(backup, indent) ^ rule_offset) * 16777619u;
+}
+static uint32_t backup_shutdown_checksum(const settings_backup_v1_t *backup, uint8_t indent,
+                                         uint8_t rule_offset, uint8_t staged_shutdown) {
+    return (backup_rule_offset_checksum(backup, indent, rule_offset) ^ staged_shutdown) * 16777619u;
+}
+static uint32_t backup_profile_checksum(const settings_backup_v1_t *backup, uint8_t indent,
+                                        uint8_t rule_offset, uint8_t staged_shutdown,
+                                        const settings_backup_profile_t *profile) {
+    uint32_t hash = backup_shutdown_checksum(backup, indent, rule_offset, staged_shutdown);
+    const uint8_t *data = (const uint8_t *)profile;
+    for (size_t i = 0; i < offsetof(settings_backup_profile_t, checksum); ++i)
+        hash = (hash ^ data[i]) * 16777619u;
+    return hash;
+}
 
 static void backup_seal(settings_backup_v1_t *backup) {
     uint32_t value = backup_checksum(backup);
@@ -495,7 +598,7 @@ static bool backup_card_ready(void) {
 esp_err_t app_settings_backup_save(void) {
     if (!backup_card_ready()) return ESP_ERR_INVALID_STATE;
     settings_backup_v1_t backup = {0};
-    memcpy(backup.magic, "PICOSET2", sizeof(backup.magic));
+    memcpy(backup.magic, "PICOSET5", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -520,14 +623,23 @@ esp_err_t app_settings_backup_save(void) {
     strlcpy(backup.books_dir, s_books_dir, sizeof(backup.books_dir));
     strlcpy(backup.fonts_dir, s_fonts_dir, sizeof(backup.fonts_dir));
     backup_seal(&backup);
-    uint8_t indent_extension[5] = {s_book_indent};
-    uint32_t indent_hash = backup_indent_checksum(&backup, s_book_indent);
-    for (int i = 0; i < 4; ++i) indent_extension[i + 1] = (uint8_t)(indent_hash >> (i * 8));
+    uint8_t extension[7] = {s_book_indent, s_book_rule_offset, s_staged_shutdown ? 1 : 0};
+    uint32_t extension_hash = backup_shutdown_checksum(&backup, s_book_indent,
+                                                        s_book_rule_offset, extension[2]);
+    for (int i = 0; i < 4; ++i) extension[i + 3] = (uint8_t)(extension_hash >> (i * 8));
+    settings_backup_profile_t profile = {0};
+    strlcpy(profile.device_name, s_device_name, sizeof(profile.device_name));
+    strlcpy(profile.avatar, s_avatar, sizeof(profile.avatar));
+    strlcpy(profile.status_signature, s_status_signature, sizeof(profile.status_signature));
+    profile.home_full_refresh = s_home_full_refresh;
+    uint32_t profile_hash = backup_profile_checksum(&backup, extension[0], extension[1], extension[2], &profile);
+    for (int i = 0; i < 4; ++i) profile.checksum[i] = (uint8_t)(profile_hash >> (i * 8));
 
     FILE *file = fopen(BACKUP_TEMP, "wb");
     if (!file) return ESP_FAIL;
     bool ok = fwrite(&backup, 1, sizeof(backup), file) == sizeof(backup);
-    if (ok) ok = fwrite(indent_extension, 1, sizeof(indent_extension), file) == sizeof(indent_extension);
+    if (ok) ok = fwrite(extension, 1, sizeof(extension), file) == sizeof(extension);
+    if (ok) ok = fwrite(&profile, 1, sizeof(profile), file) == sizeof(profile);
     if (ok) ok = fflush(file) == 0;
     if (ok) ok = fsync(fileno(file)) == 0;
     if (fclose(file) != 0) ok = false;
@@ -563,13 +675,17 @@ static bool backup_valid(const settings_backup_v1_t *backup) {
     const uint8_t *f = backup->flags;
     uint32_t checksum = 0;
     for (int i = 0; i < 4; ++i) checksum |= (uint32_t)backup->checksum[i] << (i * 8);
-    if ((memcmp(backup->magic, "PICOSET1", 8) && memcmp(backup->magic, "PICOSET2", 8)) ||
+    if ((memcmp(backup->magic, "PICOSET1", 8) && memcmp(backup->magic, "PICOSET2", 8) &&
+         memcmp(backup->magic, "PICOSET3", 8) && memcmp(backup->magic, "PICOSET4", 8) &&
+         memcmp(backup->magic, "PICOSET5", 8)) ||
         checksum != backup_checksum(backup)) return false;
     if (f[BK_SLEEP] > APP_SLEEP_OFF || f[BK_PICKUP] > 1 ||
         f[BK_SYS_SIZE] < 100 || f[BK_SYS_SIZE] > 140 || f[BK_SYS_SIZE] % 10 ||
         f[BK_SYS_CONTRAST] < 100 || f[BK_SYS_CONTRAST] > 140 || f[BK_SYS_CONTRAST] % 10 ||
         f[BK_LOCK] > 1 || f[BK_BOOK_PX] < 36 || f[BK_BOOK_PX] > 72 ||
-        f[BK_SHAKE] > 1 || (f[BK_FULL_PAGES] != 5 && f[BK_FULL_PAGES] != 10 && f[BK_FULL_PAGES] != 15) ||
+        f[BK_SHAKE] > 1 || (f[BK_FULL_PAGES] != 0 && f[BK_FULL_PAGES] != 5 &&
+                            f[BK_FULL_PAGES] != 10 && f[BK_FULL_PAGES] != 15 &&
+                            f[BK_FULL_PAGES] != 30) ||
         f[BK_TURN] > 1 || f[BK_POWER_TURN] > 1 || f[BK_IMMERSIVE] > 1 ||
         f[BK_TRACKING] > 4 || f[BK_READING_LINE] > 2 ||
         f[BK_LINE_SPACING] < 110 || f[BK_LINE_SPACING] > 150 ||
@@ -596,7 +712,8 @@ esp_err_t app_settings_backup_restore(void) {
     if (!file) return ESP_ERR_NOT_FOUND;
     settings_backup_v1_t backup;
     bool ok = fread(&backup, 1, sizeof(backup), file) == sizeof(backup);
-    uint8_t indent = 2;
+    uint8_t indent = 2, rule_offset = 4, staged_shutdown = 0;
+    settings_backup_profile_t profile = {.device_name = "Pico"};
     if (ok && !memcmp(backup.magic, "PICOSET2", 8)) {
         uint8_t extension[5];
         ok = fread(extension, 1, sizeof(extension), file) == sizeof(extension);
@@ -605,6 +722,40 @@ esp_err_t app_settings_backup_restore(void) {
             uint32_t stored = 0;
             for (int i = 0; i < 4; ++i) stored |= (uint32_t)extension[i + 1] << (i * 8);
             ok = indent <= 3 && stored == backup_indent_checksum(&backup, indent);
+        }
+    } else if (ok && !memcmp(backup.magic, "PICOSET3", 8)) {
+        uint8_t extension[6];
+        ok = fread(extension, 1, sizeof(extension), file) == sizeof(extension);
+        if (ok) {
+            indent = extension[0]; rule_offset = extension[1];
+            uint32_t stored = 0;
+            for (int i = 0; i < 4; ++i) stored |= (uint32_t)extension[i + 2] << (i * 8);
+            ok = indent <= 3 && rule_offset <= 8 &&
+                 stored == backup_rule_offset_checksum(&backup, indent, rule_offset);
+        }
+    } else if (ok && (!memcmp(backup.magic, "PICOSET4", 8) || !memcmp(backup.magic, "PICOSET5", 8))) {
+        uint8_t extension[7];
+        ok = fread(extension, 1, sizeof(extension), file) == sizeof(extension);
+        if (ok) {
+            indent = extension[0]; rule_offset = extension[1]; staged_shutdown = extension[2];
+            uint32_t stored = 0;
+            for (int i = 0; i < 4; ++i) stored |= (uint32_t)extension[i + 3] << (i * 8);
+            ok = indent <= 3 && rule_offset <= 8 && staged_shutdown <= 1 &&
+                 stored == backup_shutdown_checksum(&backup, indent, rule_offset, staged_shutdown);
+        }
+        if (ok && !memcmp(backup.magic, "PICOSET5", 8)) {
+            ok = fread(&profile, 1, sizeof(profile), file) == sizeof(profile);
+            if (ok) {
+                uint32_t stored = 0;
+                for (int i = 0; i < 4; ++i) stored |= (uint32_t)profile.checksum[i] << (i * 8);
+                ok = stored == backup_profile_checksum(&backup, indent, rule_offset,
+                                                        staged_shutdown, &profile) &&
+                     strnlen(profile.device_name, sizeof(profile.device_name)) < sizeof(profile.device_name) &&
+                     profile.device_name[0] &&
+                     strnlen(profile.status_signature, sizeof(profile.status_signature)) < sizeof(profile.status_signature) &&
+                     profile.home_full_refresh <= 1 &&
+                     backup_path_valid(profile.avatar, sizeof(profile.avatar));
+            }
         }
     }
     if (ok) ok = fgetc(file) == EOF && !ferror(file);
@@ -620,6 +771,7 @@ esp_err_t app_settings_backup_restore(void) {
         backup.flags[BK_LOCK] = 0;
     }
     if (!backup.wallpaper[0]) backup.flags[BK_LOCK] = 0;
+    if (profile.avatar[0] && !backup_file_exists(profile.avatar, false)) profile.avatar[0] = 0;
     if (!backup_file_exists(backup.books_dir, true)) strlcpy(backup.books_dir, "/sdcard/books", sizeof(backup.books_dir));
     if (!backup_file_exists(backup.fonts_dir, true)) strlcpy(backup.fonts_dir, "/sdcard/fonts", sizeof(backup.fonts_dir));
 
@@ -629,6 +781,11 @@ esp_err_t app_settings_backup_restore(void) {
 #define BACKUP_SET_U8(key, index) do { if (err == ESP_OK) err = nvs_set_u8(h, key, backup.flags[index]); } while (0)
 #define BACKUP_SET_STR(key, value) do { if (err == ESP_OK) err = nvs_set_str(h, key, value); } while (0)
     BACKUP_SET_U8(NVS_KEY_SLEEP, BK_SLEEP);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHUTDOWN_MODE, staged_shutdown);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HOME_FULL, profile.home_full_refresh);
+    if (err == ESP_OK) err = nvs_set_str(h, NVS_KEY_DEVICE_NAME, profile.device_name);
+    if (err == ESP_OK) err = nvs_set_str(h, NVS_KEY_AVATAR, profile.avatar);
+    if (err == ESP_OK) err = nvs_set_str(h, NVS_KEY_STATUS_SIGNATURE, profile.status_signature);
     BACKUP_SET_U8(NVS_KEY_PICKUP, BK_PICKUP);
     BACKUP_SET_U8(NVS_KEY_SYS_SIZE, BK_SYS_SIZE);
     BACKUP_SET_U8(NVS_KEY_SYS_CONTRAST, BK_SYS_CONTRAST);
@@ -642,6 +799,7 @@ esp_err_t app_settings_backup_restore(void) {
     BACKUP_SET_U8(NVS_KEY_BOOK_TRACK, BK_TRACKING);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_INDENT, indent);
     BACKUP_SET_U8(NVS_KEY_BOOK_RULE, BK_READING_LINE);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_RULE_OFFSET, rule_offset);
     BACKUP_SET_U8(NVS_KEY_BOOK_LINE, BK_LINE_SPACING);
     BACKUP_SET_U8(NVS_KEY_BOOK_MARGIN, BK_MARGIN);
     BACKUP_SET_U8(NVS_KEY_BOOK_PARA, BK_PARAGRAPH);
@@ -660,6 +818,11 @@ esp_err_t app_settings_backup_restore(void) {
 
     const uint8_t *f = backup.flags;
     s_sleep = (app_sleep_mode_t)f[BK_SLEEP];
+    s_staged_shutdown = staged_shutdown != 0;
+    s_home_full_refresh = profile.home_full_refresh != 0;
+    strlcpy(s_device_name, profile.device_name, sizeof(s_device_name));
+    strlcpy(s_avatar, profile.avatar, sizeof(s_avatar));
+    strlcpy(s_status_signature, profile.status_signature, sizeof(s_status_signature));
     s_pickup_wake = f[BK_PICKUP];
     s_system_size = f[BK_SYS_SIZE];
     s_system_contrast = f[BK_SYS_CONTRAST];
@@ -673,6 +836,7 @@ esp_err_t app_settings_backup_restore(void) {
     s_book_tracking = f[BK_TRACKING];
     s_book_indent = indent;
     s_book_reading_line = f[BK_READING_LINE];
+    s_book_rule_offset = rule_offset;
     s_book_line = f[BK_LINE_SPACING];
     s_book_margin = f[BK_MARGIN];
     s_book_para = f[BK_PARAGRAPH];

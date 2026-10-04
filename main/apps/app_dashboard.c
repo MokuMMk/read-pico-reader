@@ -47,6 +47,7 @@ static home_book_t s_current, s_recent[6];
 typedef struct {
     char path[BOOK_STORE_PATH_MAX];
     char title[128];
+    char author[128];
     off_t size;
     time_t modified;
     uint8_t *pixels;
@@ -63,6 +64,7 @@ static char s_cached_last_path[BOOK_STORE_PATH_MAX];
 static EpdRect s_area;
 static uint32_t s_reading_days[30];
 static bool s_reading_days_valid;
+static bool s_home_force_full_once;
 
 static home_book_t *book_at(int index);
 
@@ -190,6 +192,7 @@ static void restore_cover_cache(void) {
         if (!book->path[0] || stat(book->path, &st) || !S_ISREG(st.st_mode)) continue;
         for (int j = 0; j < 7; ++j) {
             if (!old[j].pixels || strcmp(book->path, old[j].path) ||
+                strcmp(book->title, old[j].title) || strcmp(book->author, old[j].author) ||
                 st.st_size != old[j].size || st.st_mtime != old[j].modified) continue;
             s_cover_cache[i] = old[j];
             book->cover = old[j].pixels;
@@ -201,15 +204,9 @@ static void restore_cover_cache(void) {
 }
 
 static bool load_cover(home_book_t *item, int slot) {
-    const char *ext = strrchr(item->path, '.');
-    if (!ext || strcasecmp(ext, ".epub")) return false;
-    uint8_t *encoded = NULL;
-    size_t size = 0;
-    bool png = false;
-    if (book_epub_cover(item->path, &encoded, &size, &png) != ESP_OK) return false;
     uint8_t *pixels = heap_caps_malloc(BOOK_COVER_W * BOOK_COVER_H, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    bool ok = pixels && book_cover_thumbnail(encoded, size, png, pixels);
-    free(encoded);
+    bool ok = pixels && book_cover_load_gray(item->path, item->title, item->author,
+                                              pixels, true, NULL);
     if (!ok) { free(pixels); return false; }
     struct stat st;
     if (stat(item->path, &st) || !S_ISREG(st.st_mode)) { free(pixels); return false; }
@@ -217,6 +214,7 @@ static bool load_cover(home_book_t *item, int slot) {
     free(cached->pixels);
     snprintf(cached->path, sizeof(cached->path), "%s", item->path);
     snprintf(cached->title, sizeof(cached->title), "%s", item->title);
+    snprintf(cached->author, sizeof(cached->author), "%s", item->author);
     cached->size = st.st_size;
     cached->modified = st.st_mtime;
     cached->pixels = pixels;
@@ -264,7 +262,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, 0xf0, fb);
     ui_nav_status(fb);
     ui_text_vc(fb, 36, 113, 49, "首页", EPD_DRAW_ALIGN_LEFT, false);
-    ui_hairline(fb, 161, 36, 612, 0xa0);
+    epd_fill_rect((EpdRect){36, 161, 612, 2}, 0x68, fb);
     ui_text_vc(fb, 36, 197, 29, "继续阅读", EPD_DRAW_ALIGN_LEFT, false);
     ui_text_vc(fb, 648, 197, 19, "查看详情 ›", EPD_DRAW_ALIGN_RIGHT, false);
     home_book_t *featured = s_current.path[0] ? &s_current : &s_recent[0];
@@ -292,7 +290,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text_vc(fb, 342, 378, 23, "打开一本书后，会在这里继续阅读", EPD_DRAW_ALIGN_CENTER, false);
     }
 
-    ui_hairline(fb, 619, 36, 612, 0xa0);
+    epd_fill_rect((EpdRect){36, 619, 612, 2}, 0x68, fb);
     ui_text_vc(fb, 36, 643, 29, "近7天阅读", EPD_DRAW_ALIGN_LEFT, false);
     uint64_t sum = 0;
     uint32_t maximum = 0;
@@ -307,7 +305,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         snprintf(value, sizeof(value), "累计 %llu 分钟", (unsigned long long)(sum / 60));
     ui_text_vc(fb, 648, 643, 20, value, EPD_DRAW_ALIGN_RIGHT, false);
     ui_fill_round_rect(fb, (EpdRect){36, 698, 612, 334}, 25, UI_GRAY_WHITE);
-    ui_draw_round_rect(fb, (EpdRect){36, 698, 612, 334}, 25, 0x88);
+    ui_draw_round_rect(fb, (EpdRect){36, 698, 612, 334}, 25, 0x70);
+    ui_draw_round_rect(fb, (EpdRect){37, 699, 610, 332}, 24, 0x70);
     ui_text_vc(fb, 62, 743, 22, "每天阅读时长", EPD_DRAW_ALIGN_LEFT, false);
     uint64_t average_minutes = (sum + 210) / 420;
     if (average_minutes >= 60)
@@ -327,7 +326,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (int tick = 0; tick < 3; ++tick) {
             snprintf(value, sizeof(value), "%uh", top_hours * (3 - tick) / 3);
             ui_text_vc(fb, 61, grid_y[tick], 18, value, EPD_DRAW_ALIGN_LEFT, false);
-            ui_hairline(fb, grid_y[tick], 102, 520, 0xb0);
+            ui_hairline(fb, grid_y[tick], 102, 520, 0x90);
         }
         ui_hairline(fb, 947, 102, 520, 0x90);
         static const char *const weekdays[] = {"日", "一", "二", "三", "四", "五", "六"};
@@ -353,13 +352,17 @@ static bool present(app_ctx_t *ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_NONE) return true;
     render(ctx, ctx->fb);
     if (redraw == APP_REDRAW_AREA) guard_draw_result(ctx->hl, update_display_area_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, s_area));
-    else if (redraw == APP_REDRAW_FULL) guard_draw_result(ctx->hl, update_display_full(ctx->hl));
+    else if (redraw == APP_REDRAW_FULL || s_home_force_full_once) {
+        s_home_force_full_once = false;
+        guard_draw_result(ctx->hl, update_display_full(ctx->hl));
+    }
     else guard_draw_result(ctx->hl, update_display_fast_page(ctx->hl));
     return true;
 }
 
 static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
+    s_home_force_full_once = app_settings_home_full_refresh();
     s_reading_days_valid = book_ticket_recent_days(s_reading_days);
     read_pico_sd_info_t sd = {0};
     esp_err_t sd_err = read_pico_sd_get_info(&sd);

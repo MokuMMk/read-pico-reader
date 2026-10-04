@@ -20,7 +20,7 @@ typedef struct book_epub book_epub_t;
 esp_err_t book_epub_open(const char *path, book_epub_t **out);
 /// 关闭 ZIP 并释放目录，可传 NULL。/ Close ZIP and free the index; NULL is allowed.
 void book_epub_close(book_epub_t *book);
-/// 返回 spine 章节数，上限 1024。/ Return the spine chapter count, at most 1024.
+/// 返回 spine 章节数，上限 8192。/ Return the spine chapter count, at most 8192.
 size_t book_epub_chapter_count(const book_epub_t *book);
 /// 优先列可识别的正文编号章节；识别不完整时使用书内导航，并略过书前资料；不改变 spine 进度。
 /// Prefer numbered body chapters; use authored navigation and omit front matter when detection is incomplete; keep spine progress.

@@ -7,12 +7,14 @@
  */
 #include "ui_nav.h"
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 #include "app_registry.h"
 #include "read_pico_pmu.h"
 #include "read_pico_pmu_protocol.h"
 #include "read_pico_transfer.h"
 #include "ui_kit.h"
+#include "settings.h"
 #include "assets/wifi_glyph.h"
 
 static const char *const labels[] = {"首页", "书架", "文件管理", "设置"};
@@ -112,6 +114,14 @@ void ui_nav_status(uint8_t *fb) {
     // 固定状态栏字号，让系统字体缩放时文字仍与图标共用中心线。
     // Keep status type fixed so text and glyphs share one centerline at every system font scale.
     ui_text_fixed(fb, 36, 28, 24, clock, EPD_DRAW_ALIGN_LEFT, false);
+    char signature[96];
+    snprintf(signature, sizeof(signature), "%s", app_settings_status_signature());
+    while (signature[0] && ui_text_fixed_width_px(21, signature) > 280) {
+        size_t n = strlen(signature) - 1;
+        while (n && ((unsigned char)signature[n] & 0xc0) == 0x80) --n;
+        signature[n] = 0;
+    }
+    if (signature[0]) ui_text_fixed(fb, UI_LOCK_WIDTH / 2, 29, 21, signature, EPD_DRAW_ALIGN_CENTER, false);
     read_pico_transfer_status_t network = {0};
     read_pico_transfer_get_status(&network);
     if (network.network_ready && network.mode == READ_PICO_TRANSFER_MODE_STA) {

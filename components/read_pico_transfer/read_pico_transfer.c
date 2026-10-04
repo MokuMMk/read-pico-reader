@@ -359,6 +359,9 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static read_pico_transfer_status_t s_status;
 static read_pico_transfer_cfg_t s_cfg;
 static char s_root[160];
+static read_pico_transfer_cfg_t s_sleep_cfg;
+static char s_sleep_root[160];
+static bool s_sleep_paused;
 static httpd_handle_t s_http;
 static esp_netif_t *s_netif;
 static esp_event_handler_instance_t s_events, s_ip_events;
@@ -1571,6 +1574,29 @@ bool read_pico_transfer_try_stop_if_idle(void) {
     portEXIT_CRITICAL(&s_lock);
     if (accepted) read_pico_transfer_stop();
     return accepted;
+}
+
+bool read_pico_transfer_pause_for_sleep(void) {
+    read_pico_transfer_status_t status;
+    read_pico_transfer_get_status(&status);
+    if (status.state == READ_PICO_TRANSFER_STOPPED) return true;
+    if (status.state == READ_PICO_TRANSFER_UPLOADING) return false;
+    read_pico_transfer_cfg_t saved = s_cfg;
+    if (saved.root_dir) {
+        strlcpy(s_sleep_root, saved.root_dir, sizeof(s_sleep_root));
+        saved.root_dir = s_sleep_root;
+    }
+    if (!read_pico_transfer_try_stop_if_idle()) return false;
+    s_sleep_cfg = saved;
+    s_sleep_paused = true;
+    return true;
+}
+
+void read_pico_transfer_resume_after_sleep(void) {
+    if (!s_sleep_paused) return;
+    s_sleep_paused = false;
+    esp_err_t err = read_pico_transfer_start(&s_sleep_cfg);
+    if (err != ESP_OK) ESP_LOGW("transfer", "resume after sleep: %s", esp_err_to_name(err));
 }
 
 void read_pico_transfer_stop(void) {

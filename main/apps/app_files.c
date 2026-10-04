@@ -30,6 +30,12 @@
 #include "ui_gesture.h"
 #include "ui_kit.h"
 #include "ui_nav.h"
+#include "read_pico_pmu.h"
+#include "read_pico_pmu_protocol.h"
+#include "pmu_selftest.h"
+#include "esp_system.h"
+#include "esp_log.h"
+#include "soc/rtc_cntl_reg.h"
 
 #define FILE_MAX 96
 #define FILE_ROWS 9
@@ -42,8 +48,10 @@ static bool s_scan_pending;
 static char s_message[96];
 static char s_dir[288] = "/sdcard";
 static read_pico_sd_info_t s_sd;
-typedef enum { FILE_VIEW_LIST, FILE_VIEW_ACTIONS, FILE_VIEW_RENAME, FILE_VIEW_MOVE } file_view_t;
+typedef enum { FILE_VIEW_LIST, FILE_VIEW_ACTIONS, FILE_VIEW_RENAME, FILE_VIEW_MOVE,
+               FILE_VIEW_BOOT } file_view_t;
 static file_view_t s_view;
+static bool s_boot_pending;
 static file_item_t s_selected;
 static bool s_delete_confirm;
 static int s_move_origin_folder, s_move_origin_page;
@@ -365,6 +373,20 @@ static void file_detail(char *dst, size_t cap, const file_item_t *item) {
     else snprintf(dst, cap, "%lld B", (long long)item->size);
 }
 
+// 文件列表的分隔线保持两像素，墨水屏上比浅色发丝线更容易辨认。
+// Two-pixel file dividers stay legible on the panel without changing the layout.
+static void file_rule(uint8_t *fb, int x, int y, int width) {
+    epd_fill_rect((EpdRect){x, y, width, 2}, 0x68, fb);
+}
+
+// 大卡片用双层描边，避免单像素浅灰线在低对比度屏上消失。
+// Double-stroke large cards so their outlines survive low-contrast E-ink rendering.
+static void file_card_border(uint8_t *fb, EpdRect rect, int radius) {
+    ui_draw_round_rect(fb, rect, radius, 0x70);
+    ui_draw_round_rect(fb, (EpdRect){rect.x + 1, rect.y + 1,
+                                     rect.width - 2, rect.height - 2}, radius - 1, 0x70);
+}
+
 static void fit_name(char *name, int px, int width) {
     while (*name && ttf_text_width_px(ui_text_effective_px(px), name) > width) {
         size_t n = strlen(name) - 1;
@@ -434,7 +456,7 @@ static void render_actions(uint8_t *fb) {
     // S03：保留当前目录作背景，只叠加文件操作底部面板。/ S03: keep the directory visible and overlay a file-action sheet.
     EpdRect sheet = {20, 430, 644, 626};
     ui_fill_round_rect(fb, sheet, 28, UI_GRAY_WHITE);
-    ui_draw_round_rect(fb, sheet, 28, 0x90);
+    file_card_border(fb, sheet, 28);
     ui_fill_round_rect(fb, (EpdRect){604, 454, 38, 38}, 19, 0xe0);
     ui_text_vc(fb, 623, 473, 24, "×", EPD_DRAW_ALIGN_CENTER, false);
     char name[128]; copy_utf8(name, sizeof(name), s_selected.name); fit_name(name, 28, 540);
@@ -442,9 +464,9 @@ static void render_actions(uint8_t *fb) {
     ui_text(fb, 102, 462, 28, name, EPD_DRAW_ALIGN_LEFT, false);
     char detail[48]; file_detail(detail, sizeof(detail), &s_selected);
     ui_text(fb, 102, 507, 20, detail, EPD_DRAW_ALIGN_LEFT, false);
-    char path[128]; copy_utf8(path, sizeof(path), s_selected.path); fit_name(path, 18, 585);
-    ui_text(fb, 50, 552, 17, path, EPD_DRAW_ALIGN_LEFT, false);
-    ui_hairline(fb, 590, 42, 600, 0xc0);
+    char path[128]; copy_utf8(path, sizeof(path), s_selected.path); fit_name(path, 19, 585);
+    ui_text(fb, 50, 552, 19, path, EPD_DRAW_ALIGN_LEFT, false);
+    file_rule(fb, 42, 590, 600);
     if (s_message[0]) ui_text(fb, 50, 608, 20, s_message, EPD_DRAW_ALIGN_LEFT, false);
     if (s_delete_confirm) {
         ui_text_vc(fb, 342, 712, s_selected.is_dir ? 23 : 28,
@@ -457,11 +479,11 @@ static void render_actions(uint8_t *fb) {
         for (int i = 0; i < 4; ++i) {
             EpdRect button = {40 + (i % 2) * 312, 648 + (i / 2) * 122, 292, 100};
             ui_fill_round_rect(fb, button, 20, 0xe8);
-            ui_draw_round_rect(fb, button, 20, 0x88);
+            ui_draw_round_rect(fb, button, 20, 0x60);
             ui_text_vc(fb, button.x + button.width / 2, button.y + 50, 25,
                        labels[i], EPD_DRAW_ALIGN_CENTER, false);
         }
-        ui_text_vc(fb, 342, 900, 18, "长按文件或文件夹打开操作", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 342, 900, 20, "长按文件或文件夹打开操作", EPD_DRAW_ALIGN_CENTER, false);
         ui_fill_round_rect(fb, (EpdRect){40, 930, 604, 76}, 26, 0xe0);
         ui_text_vc(fb, 342, 968, 23, "取消", EPD_DRAW_ALIGN_CENTER, false);
     }
@@ -471,7 +493,7 @@ static void render_rename(uint8_t *fb) {
     ui_nav_back(fb, 36, 79);
     ui_text_vc(fb, 342, 107, 34, "重命名", EPD_DRAW_ALIGN_CENTER, false);
     ui_text_vc(fb, 646, 107, 25, "完成", EPD_DRAW_ALIGN_RIGHT, false);
-    ui_hairline(fb, 157, 36, 612, UI_GRAY_LIGHT);
+    file_rule(fb, 36, 157, 612);
     ui_text(fb, 36, 202, 22, "文件名", EPD_DRAW_ALIGN_LEFT, false);
     EpdRect field = {36, 242, 612, 82};
     ui_draw_round_rect(fb, field, 8, UI_GRAY_BLACK);
@@ -483,7 +505,7 @@ static void render_rename(uint8_t *fb) {
     for (int i = 0; i < 5; ++i) {
         EpdRect r = {36 + i * 112, 424, 106, 57};
         if (i == 0 && s_editor_candidate_count) ui_fill_round_rect(fb, r, 4, UI_GRAY_LIGHT);
-        else ui_draw_round_rect(fb, r, 4, UI_GRAY_LIGHT);
+        else ui_draw_round_rect(fb, r, 4, 0x70);
         if (i < (int)s_editor_candidate_count) {
             uint32_t cp = s_editor_candidates[i];
             char glyph[4] = {(char)(0xe0 | (cp >> 12)), (char)(0x80 | ((cp >> 6) & 63)),
@@ -497,7 +519,7 @@ static void render_rename(uint8_t *fb) {
         int len = strlen(keys[row]), left = row == 0 ? 36 : row == 1 ? 67 : 123;
         for (int col = 0; col < len; ++col) {
             EpdRect r = {left + col * 62, 517 + row * 74, 58, 61};
-            ui_draw_round_rect(fb, r, 5, UI_GRAY_LIGHT);
+            ui_draw_round_rect(fb, r, 5, 0x70);
             char label[2] = {keys[row][col], 0};
             ui_text_vc(fb, r.x + 29, r.y + 30, 25, label, EPD_DRAW_ALIGN_CENTER, false);
         }
@@ -520,6 +542,19 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     ui_clear_page(fb);
     ui_nav_status(fb);
+    if (s_view == FILE_VIEW_BOOT) {
+        ui_nav_back(fb, 36, 79);
+        ui_text_vc(fb, 342, 107, 34, "固件升级", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text(fb, 42, 245, 23, "连接电脑后，在 Chrome 或 Edge 打开刷机页。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_fill_round_rect(fb, (EpdRect){36, 310, 612, 210}, 22, UI_GRAY_WHITE);
+        ui_text(fb, 60, 348, 29, "进入 BOOT 模式", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 410, 21, "进入后屏幕会停留在当前画面。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 451, 21, "刷写完成后设备将重新启动。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_draw_button(fb, (EpdRect){36, 588, 612, 82},
+                       s_boot_pending ? "正在进入 BOOT 模式" : "进入 BOOT 模式", false);
+        ui_nav_draw(fb, 2);
+        return;
+    }
     if (s_view == FILE_VIEW_RENAME) {
         render_rename(fb);
         ui_nav_draw(fb, 2);
@@ -530,12 +565,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text_vc(fb, 342, 107, 34, s_view == FILE_VIEW_MOVE ? "选择目标文件夹" : names[s_folder], EPD_DRAW_ALIGN_CENTER, false);
         char path[144];
         snprintf(path, sizeof(path), "TF卡%s", folder_root(s_folder) + 7);
-        ui_text(fb, 36, 172, 18, path, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 36, 172, 20, path, EPD_DRAW_ALIGN_LEFT, false);
         int folders = 0, files = 0;
         for (int i = 0; i < s_count; ++i) s_files[i].is_dir ? ++folders : ++files;
         char summary[48]; snprintf(summary, sizeof(summary), "%d个文件夹 · %d个文件", folders, files);
-        ui_text(fb, 648, 172, 18, summary, EPD_DRAW_ALIGN_RIGHT, false);
-        ui_hairline(fb, 202, 36, 612, UI_GRAY_LIGHT);
+        ui_text(fb, 648, 172, 20, summary, EPD_DRAW_ALIGN_RIGHT, false);
+        file_rule(fb, 36, 202, 612);
         if (s_message[0]) ui_text(fb, 36, 238, 27, s_message, EPD_DRAW_ALIGN_LEFT, false);
         else if (!s_count) ui_text(fb, 36, 238, 27, "此目录还没有文件", EPD_DRAW_ALIGN_LEFT, false);
         for (int row = 0; row < visible_rows(); ++row) {
@@ -551,12 +586,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             file_icon(fb, 48, y + 20, s_files[index].is_dir);
             ui_text(fb, 101, y + 11, 23, name, EPD_DRAW_ALIGN_LEFT, false);
             char detail[32]; file_detail(detail, sizeof(detail), &s_files[index]);
-            ui_text(fb, 101, y + 49, 17, detail, EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 101, y + 49, 19, detail, EPD_DRAW_ALIGN_LEFT, false);
             const char *tag = !strcmp(s_files[index].path, app_settings_books_dir()) ? "书籍目录" :
                               !strcmp(s_files[index].path, app_settings_fonts_dir()) ? "字体目录" : NULL;
-            if (tag) ui_text(fb, 588, y + 35, 16, tag, EPD_DRAW_ALIGN_RIGHT, false);
+            if (tag) ui_text(fb, 588, y + 35, 18, tag, EPD_DRAW_ALIGN_RIGHT, false);
             ui_text(fb, 640, y + 30, 22, "›", EPD_DRAW_ALIGN_RIGHT, false);
-            ui_hairline(fb, y + 85, 101, 547, 0xd0);
+            file_rule(fb, 101, y + 85, 547);
         }
         if (s_folder == 3) {
             ui_draw_round_rect(fb, (EpdRect){36, 875, 293, 76}, 8, UI_GRAY_BLACK);
@@ -569,7 +604,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 648, 1057, 22, page, EPD_DRAW_ALIGN_RIGHT, false);
     } else {
         ui_text(fb, 36, 91, 52, "文件", EPD_DRAW_ALIGN_LEFT, false);
-        ui_fill_round_rect(fb, (EpdRect){36, 171, 612, 112}, 24, UI_GRAY_WHITE);
+        ui_fill_round_rect(fb, (EpdRect){530, 91, 118, 59}, 27, UI_GRAY_WHITE);
+        ui_draw_round_rect(fb, (EpdRect){530, 91, 118, 59}, 27, 0x68);
+        ui_text_vc(fb, 589, 120, 21, "BOOT", EPD_DRAW_ALIGN_CENTER, false);
+        EpdRect storage = {36, 171, 612, 112};
+        ui_fill_round_rect(fb, storage, 24, UI_GRAY_WHITE);
+        file_card_border(fb, storage, 24);
         ui_text(fb, 58, 188, 27, "存储卡", EPD_DRAW_ALIGN_LEFT, false);
         char total[32], usage[80];
         if (s_sd.mounted) {
@@ -584,7 +624,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 624, 191, 21, total, EPD_DRAW_ALIGN_RIGHT, false);
         ui_text(fb, 58, 231, 19, usage, EPD_DRAW_ALIGN_LEFT, false);
         EpdRect capacity = {58, 263, 566, 6};
-        ui_fill_round_rect(fb, capacity, 3, 0xc8);
+        ui_fill_round_rect(fb, capacity, 3, 0xa0);
         if (s_sd.mounted && s_sd.capacity_bytes) {
             capacity.width = (int)((s_sd.capacity_bytes - s_sd.free_bytes) * 566 / s_sd.capacity_bytes);
             if (capacity.width > 0) ui_fill_round_rect(fb, capacity, 3, 0x68);
@@ -595,15 +635,16 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (int i = 0; i < 3; ++i) {
             EpdRect card = home_transfer_rect(i);
             ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE);
-            ui_draw_round_rect(fb, card, 20, 0xb0);
+            ui_draw_round_rect(fb, card, 20, 0x60);
             ui_text_vc(fb, card.x + card.width / 2, card.y + 35, 23, methods[i],
                        EPD_DRAW_ALIGN_CENTER, false);
-            ui_text_vc(fb, card.x + card.width / 2, card.y + 75, 17, details[i],
+            ui_text_vc(fb, card.x + card.width / 2, card.y + 75, 19, details[i],
                        EPD_DRAW_ALIGN_CENTER, false);
         }
         char summary[48]; snprintf(summary, sizeof(summary), "根目录 · %d 项", s_count);
         ui_text(fb, 36, 482, 21, summary, EPD_DRAW_ALIGN_LEFT, false);
         ui_fill_round_rect(fb, (EpdRect){537, 458, 111, 50}, 23, UI_GRAY_WHITE);
+        ui_draw_round_rect(fb, (EpdRect){537, 458, 111, 50}, 23, 0x70);
         ui_text_vc(fb, 592, 483, 19, "名称 ↑", EPD_DRAW_ALIGN_CENTER, false);
         int first = s_page * root_rows();
         int rows = s_count - first;
@@ -611,13 +652,13 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         if (rows < 0) rows = 0;
         EpdRect list = {36, 520, 612, root_rows() * 91};
         ui_fill_round_rect(fb, list, 24, UI_GRAY_WHITE);
-        ui_draw_round_rect(fb, list, 24, 0xc0);
+        file_card_border(fb, list, 24);
         if (!s_count) ui_text_vc(fb, 342, 565, 22, s_message[0] ? s_message : "根目录为空", EPD_DRAW_ALIGN_CENTER, false);
         for (int row = 0; row < root_rows(); ++row) {
             int index = first + row;
             if (index >= s_count) break;
             int y = 520 + row * 91;
-            if (row) ui_hairline(fb, y, 96, 532, 0xc8);
+            if (row) file_rule(fb, 96, y, 532);
             char name[128]; copy_utf8(name, sizeof(name), s_files[index].name); fit_name(name, 23, 430);
             file_icon(fb, 52, y + 24, s_files[index].is_dir);
             if (s_files[index].is_dir)
@@ -627,14 +668,14 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             char detail[32]; file_detail(detail, sizeof(detail), &s_files[index]);
             if (s_files[index].is_dir) ui_text_vc(fb, 628, y + 46, 24, "›", EPD_DRAW_ALIGN_RIGHT, false);
             else {
-                ui_text(fb, 101, y + 55, 17, detail, EPD_DRAW_ALIGN_LEFT, false);
+                ui_text(fb, 101, y + 55, 19, detail, EPD_DRAW_ALIGN_LEFT, false);
                 ui_text_vc(fb, 624, y + 44, 22, "›", EPD_DRAW_ALIGN_RIGHT, false);
             }
         }
         if (s_count > root_rows()) {
             char page[24]; snprintf(page, sizeof(page), "%d / %d", s_page + 1,
                                      (s_count + root_rows() - 1) / root_rows());
-            ui_text_vc(fb, 342, 1030, 18, page, EPD_DRAW_ALIGN_CENTER, false);
+            ui_text_vc(fb, 342, 1030, 20, page, EPD_DRAW_ALIGN_CENTER, false);
         }
     }
     ui_nav_draw(fb, 2);
@@ -644,6 +685,7 @@ static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
     s_folder = s_requested_folder; s_requested_folder = -1;
     s_view = FILE_VIEW_LIST;
+    s_boot_pending = false;
     s_delete_confirm = false;
     snprintf(s_dir, sizeof(s_dir), "/sdcard");
     s_page = 0; s_scan_pending = true;
@@ -664,6 +706,16 @@ static void on_media_ready(app_ctx_t *ctx) {
 }
 static app_redraw_t on_tick(app_ctx_t *ctx) {
     (void)ctx;
+    if (s_boot_pending) {
+        s_boot_pending = false;
+        pmu_selftest_prepare_powerdown();
+        uint8_t req[2] = {0, 0};
+        esp_err_t err = read_pico_pmu_cmd(PMU_CMD_HOST_REQUEST_RESET, req, sizeof(req));
+        if (err != ESP_OK) ESP_LOGW("files", "BOOT PMU notice: %s", esp_err_to_name(err));
+        REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+        esp_restart();
+        return APP_REDRAW_NONE;
+    }
     if (!s_scan_pending) return APP_REDRAW_NONE;
     if (read_pico_sd_get_info(&s_sd) == ESP_ERR_NOT_FINISHED) return APP_REDRAW_NONE;
     s_scan_pending = false;
@@ -833,6 +885,14 @@ static app_redraw_t rename_gesture(const ui_gesture_event_t *ev) {
 }
 
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (s_view == FILE_VIEW_BOOT) {
+        if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+        if (ev->y0 < 180) { s_view = FILE_VIEW_LIST; return APP_REDRAW_PAGE; }
+        if (ev->y0 >= 588 && ev->y0 < 670) { s_boot_pending = true; return APP_REDRAW_PAGE; }
+        int tab = ui_nav_hit(ev->x0, ev->y0);
+        if (tab >= 0) ui_nav_request(ctx, tab);
+        return APP_REDRAW_NONE;
+    }
     if (s_view == FILE_VIEW_ACTIONS) return action_gesture(ctx, ev);
     if (s_view == FILE_VIEW_RENAME) return rename_gesture(ev);
     if (s_view == FILE_VIEW_MOVE) {
@@ -919,6 +979,10 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         return APP_REDRAW_NONE;
     }
+    if (!long_press && ev->y0 >= 91 && ev->y0 < 150 && ev->x0 >= 530) {
+        s_view = FILE_VIEW_BOOT;
+        return APP_REDRAW_PAGE;
+    }
     for (int i = 0; !long_press && i < 3; ++i) if (ui_rect_hit(home_transfer_rect(i), ev->x0, ev->y0)) {
         if (i == 0) app_transfer_request_wifi_upload();
         else if (i == 1) app_transfer_request_hotspot_start();
@@ -951,6 +1015,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
 }
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
+    if (s_view == FILE_VIEW_BOOT) { s_view = FILE_VIEW_LIST; return APP_REDRAW_PAGE; }
     if (s_view == FILE_VIEW_MOVE) { leave_move(false); return APP_REDRAW_PAGE; }
     if (key == 1) { ui_nav_request(ctx, 0); return APP_REDRAW_NONE; }
     if (s_view == FILE_VIEW_RENAME) { s_view = FILE_VIEW_ACTIONS; return APP_REDRAW_PAGE; }

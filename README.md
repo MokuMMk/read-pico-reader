@@ -10,7 +10,7 @@ The current interface has Home, Bookshelf, Files, and Settings. It reads EPUB an
 
 Visit the [HTTPS web flasher](https://wegooo-cell.github.io/read-pico-reader/). Use a desktop Chrome or Edge browser with a USB data cable. Select the Read Pico serial device and follow the prompts. **Check the board model before flashing.** Ordinary installation preserves the device's settings and reading records, as well as TF-card contents. It does not include books or sample reading history.
 
-If automatic entry to download mode fails on a device already running this firmware, open **Settings → Pico device card → Upgrade → Enter BOOT mode** on the device, wait for the computer to detect its serial port again, then retry the web flasher.
+If automatic entry to download mode fails on a device already running this firmware, open **File Manager → BOOT** on the device, wait for the computer to detect its serial port again, then retry the web flasher.
 
 The release manifest is [`flash/manifest.json`](flash/manifest.json); it flashes only the bootloader, partition table, and application. The site is published from an explicit allowlist in [`.github/workflows/pages.yml`](.github/workflows/pages.yml), so local books, backups, and extra font packages are not uploaded.
 
@@ -28,6 +28,8 @@ The board-specific flash and PSRAM timing is in `sdkconfig.defaults`. `sdkconfig
 ## Books and fonts
 
 On first mount, the firmware creates `books`, `fonts`, and `pictures` folders on the TF card if absent. No books are preloaded. The firmware embeds a subset of **Noto Sans SC Medium** for the system UI and distributes no additional font package. Users may place their own compatible fonts in `fonts` for reading. The embedded subset remains under the [SIL Open Font License](main/assets/OFL-Noto.txt).
+
+TXT books and EPUB books without a valid embedded cover receive a deterministic grayscale cover shared by the shelf, home, and ticket lock screen. A valid EPUB cover takes priority. Generated covers are cached under `.readpico/covers` on the TF card and rebuilt when the file or title changes.
 
 In Reading settings → Typography, first-line indent can be set to 0, 1, 2, or 3 characters (2 by default). Body text is centered by whole-character columns to balance the side margins, and common Chinese punctuation is kept away from prohibited line starts and ends.
 

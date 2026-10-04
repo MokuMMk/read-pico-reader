@@ -82,6 +82,21 @@ def main():
             'OPS/pkg/book.opf', f['OPS/pkg/book.opf'].replace('properties="cover nav"', 'properties="nav"')))
         case('good_navfallback', lambda f: f.__setitem__('OPS/toc/book.ncx', '<ncx><broken></ncx>'))
         case('good_navfallback_partial', lambda f: f.__setitem__('OPS/toc/book.ncx', f['OPS/toc/book.ncx'] + '<broken>'))
+        def partial_ncx(files, nav_entries=(1, 2, 3, 4)):
+            files['OPS/toc/book.ncx'] = ('<ncx><navMap>' + ''.join(
+                f'<navPoint><navLabel><text>NCX {i}</text></navLabel>'
+                f'<content src="../text/part%20{i}%26x.xhtml"/></navPoint>'
+                for i in (1, 3)) + '</navMap></ncx>')
+            links = ''.join(
+                f'<li><a href="../text/part%20{i}%26x.xhtml">NAV {i}</a></li>'
+                for i in nav_entries)
+            files['OPS/toc/nav.xhtml'] = (
+                '<html><body><nav epub:type="toc"><ol>' + links +
+                '</ol></nav></body></html>')
+        case('good_ncx_partial_nav_full', partial_ncx)
+        case('good_ncx_nav_complement', lambda f: partial_ncx(f, (2, 4)))
+        case('good_ncx_nav_corrupt', lambda f: (
+            partial_ncx(f), f.__setitem__('OPS/toc/nav.xhtml', '<html><nav>broken')))
         case('good_navrole', lambda f: (f.pop('OPS/toc/book.ncx'), f.__setitem__('OPS/toc/nav.xhtml', f['OPS/toc/nav.xhtml'].replace('epub:type="toc"', 'role="doc-toc"'))))
         case('good_navtype', lambda f: (f.pop('OPS/toc/book.ncx'), f.__setitem__('OPS/toc/nav.xhtml', f['OPS/toc/nav.xhtml'].replace('epub:type="toc"', 'type="toc"'))))
         case('good_navunmarked', lambda f: (f.pop('OPS/toc/book.ncx'), f.__setitem__('OPS/toc/nav.xhtml', f['OPS/toc/nav.xhtml'].replace('<nav epub:type="landmarks"><a href="../text/part%201%26x.xhtml">WRONG</a></nav>', '').replace('epub:type="toc"', ''))))
@@ -131,6 +146,20 @@ def main():
                 '<li><a href="../text/combined.xhtml#two">第二章 继续</a></li>'
                 '</ol></nav></body></html>')
         case('good_multianchor_nav', multianchor_nav)
+        def dual_samefile_partial_ncx(files):
+            multianchor(files)
+            files['OPS/pkg/book.opf'] = files['OPS/pkg/book.opf'].replace(
+                '<item id="toc" href="../toc/book.ncx" media-type="application/x-dtbncx+xml"/>',
+                '<item id="toc" href="../toc/book.ncx" media-type="application/x-dtbncx+xml"/>'
+                '<item id="nav" href="../toc/nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>')
+            files['OPS/toc/book.ncx'] = ('<ncx><navMap><navPoint><navLabel>'
+                '<text>第一章 起点</text></navLabel><content src="../text/combined.xhtml#one"/>'
+                '</navPoint></navMap></ncx>')
+            files['OPS/toc/nav.xhtml'] = ('<html><body><nav epub:type="toc"><ol>'
+                '<li><a href="../text/combined.xhtml#one">第一章 起点</a></li>'
+                '<li><a href="../text/combined.xhtml#two">第二章 继续</a></li>'
+                '</ol></nav></body></html>')
+        case('good_dual_samefile_partial_ncx', dual_samefile_partial_ncx)
         def body_priority(files, authored=True):
             frontmatter(files, not authored)
             files['OPS/text/part 1&x.xhtml'] = '<html><body><h1>第一章 起点</h1><p>正文一</p></body></html>'

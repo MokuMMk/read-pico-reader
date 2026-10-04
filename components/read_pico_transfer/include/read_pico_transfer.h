@@ -73,6 +73,9 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg);
 void read_pico_transfer_stop(void);
 /// 原子拒绝文件操作期间的停止；成功则已停服，由同一控制任务调用。/ Atomically refuse stopping during file operations; true means stopped. Owner task only.
 bool read_pico_transfer_try_stop_if_idle(void);
+/// 锁屏浅睡前停用射频；唤醒后按原会话配置恢复。上传中返回 false。
+bool read_pico_transfer_pause_for_sleep(void);
+void read_pico_transfer_resume_after_sleep(void);
 /// 跨任务复制一致状态快照。/ Copy a consistent snapshot across tasks.
 void read_pico_transfer_get_status(read_pico_transfer_status_t *out);
 /// 控制任务每500ms驱动有界连接重试与15秒超时。/ Owner task polls every 500 ms for bounded retries and a 15 s timeout.

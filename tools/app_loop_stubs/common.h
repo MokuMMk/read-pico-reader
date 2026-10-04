@@ -50,6 +50,7 @@ void app_restart_host(void);
 void epd_poweroff(void);
 const char* app_settings_font_path(void);
 bool app_settings_reader_power_turn(void);
+bool app_settings_staged_shutdown(void);
 bool ttf_font_path_is_builtin(const char*);
 bool ttf_font_ready(void);
 bool ttf_font_is_builtin(void);

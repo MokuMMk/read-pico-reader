@@ -68,6 +68,7 @@ void app_restart_host(void) {longjmp(done,1);}
 void epd_poweroff(void) {}
 const char* app_settings_font_path(void) {return "builtin";}
 bool app_settings_reader_power_turn(void) {return false;}
+bool app_settings_staged_shutdown(void) {return false;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
 bool ttf_font_ready(void) {return true;}
 bool ttf_font_is_builtin(void) {return !sd_font;}

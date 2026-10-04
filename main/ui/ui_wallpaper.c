@@ -19,7 +19,18 @@
 #include "ui_image_dither.h"
 #include "ui_kit.h"
 
-bool ui_wallpaper_draw(uint8_t *fb, const char *path, EpdRect area) {
+static bool inside_rounded(EpdRect area, int radius, int x, int y) {
+    if (radius <= 0) return true;
+    int local_x = x - area.x, local_y = y - area.y;
+    int center_x = local_x < radius ? radius - 1 :
+                   local_x >= area.width - radius ? area.width - radius : local_x;
+    int center_y = local_y < radius ? radius - 1 :
+                   local_y >= area.height - radius ? area.height - radius : local_y;
+    int dx = local_x - center_x, dy = local_y - center_y;
+    return dx * dx + dy * dy <= radius * radius;
+}
+
+static bool draw_image(uint8_t *fb, const char *path, EpdRect area, bool crop, int radius) {
     if (!fb || !path || strncmp(path, "/sdcard/", 8) ||
         area.width <= 0 || area.height <= 0 ||
         area.x < 0 || area.y < 0 ||
@@ -38,12 +49,17 @@ bool ui_wallpaper_draw(uint8_t *fb, const char *path, EpdRect area) {
     unsigned source_w = 0, source_h = 0;
     if (ok) ok = book_image_dimensions(encoded, (size_t)st.st_size, png, &source_w, &source_h);
     unsigned width = (unsigned)area.width, height = (unsigned)area.height;
-    if (ok && (uint64_t)source_w * height > (uint64_t)source_h * width)
+    bool source_wider = ok && (uint64_t)source_w * height > (uint64_t)source_h * width;
+    if (crop) {
+        if (source_wider) width = (unsigned)(((uint64_t)height * source_w + source_h - 1) / source_h);
+        else if (ok) height = (unsigned)(((uint64_t)width * source_h + source_w - 1) / source_w);
+    } else if (source_wider)
         height = (unsigned)((uint64_t)width * source_h / source_w);
     else if (ok)
         width = (unsigned)((uint64_t)height * source_w / source_h);
     if (!width) width = 1;
     if (!height) height = 1;
+    if ((uint64_t)width * height > 1024u * 1024u) ok = false;
     uint8_t *gray = ok ? heap_caps_malloc((size_t)width * height, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;
     if (!gray) ok = false;
     if (ok) ok = book_image_grayscale(encoded, (size_t)st.st_size, png, width, height, gray);
@@ -51,11 +67,24 @@ bool ui_wallpaper_draw(uint8_t *fb, const char *path, EpdRect area) {
     if (!ok) { free(gray); return false; }
     int left = area.x + (area.width - (int)width) / 2;
     int top = area.y + (area.height - (int)height) / 2;
-    for (unsigned y = 0; y < height; ++y)
-        for (unsigned x = 0; x < width; ++x)
-            epd_draw_pixel(left + (int)x, top + (int)y,
-                ui_image_dither_gray(ui_contrast_gray(gray[y * width + x]),
-                                     left + (int)x, top + (int)y), fb);
+    for (int y = area.y; y < area.y + area.height; ++y)
+        for (int x = area.x; x < area.x + area.width; ++x) {
+            int source_x = x - left, source_y = y - top;
+            if (source_x < 0 || source_y < 0 || source_x >= (int)width || source_y >= (int)height ||
+                !inside_rounded(area, radius, x, y)) continue;
+            epd_draw_pixel(x, y,
+                ui_image_dither_gray(ui_contrast_gray(gray[(size_t)source_y * width + source_x]),
+                                     x, y), fb);
+        }
     free(gray);
     return true;
+}
+
+bool ui_wallpaper_draw(uint8_t *fb, const char *path, EpdRect area) {
+    return draw_image(fb, path, area, false, 0);
+}
+
+bool ui_wallpaper_draw_rounded(uint8_t *fb, const char *path, EpdRect area, int radius) {
+    if (radius < 0 || radius > area.width / 2 || radius > area.height / 2) return false;
+    return draw_image(fb, path, area, true, radius);
 }

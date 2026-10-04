@@ -359,7 +359,22 @@ void app_loop_run(const app_loop_config_t* config) {
                     if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
                     else app_present(&ctx, current, APP_REDRAW_PAGE);
                 } else if (action == UI_POWER_ACTION_SHUTDOWN) {
-                    run_power_action(&ctx, current, false);
+                    if (!app_settings_staged_shutdown()) {
+                        run_power_action(&ctx, current, false);
+                    } else {
+                        power_dialog_open = false;
+                        ui_gesture_reset(&power_gesture);
+                        if (current->on_before_lock) current->on_before_lock(&ctx);
+                        extern const app_desc_t app_book;
+                        enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
+                                             current == &app_book && app_book_reader_body_visible());
+                        ctx.now_ms = esp_timer_get_time() / 1000;
+                        poll_media(&ctx, current, &media_mounted, &media_invalidated);
+                        last_media_poll_ms = ctx.now_ms;
+                        ctx.pressed = false;
+                        ctx.released = false;
+                        app_present(&ctx, current, APP_REDRAW_PAGE);
+                    }
                 } else if (action == UI_POWER_ACTION_RESTART) {
                     run_power_action(&ctx, current, true);
                 }

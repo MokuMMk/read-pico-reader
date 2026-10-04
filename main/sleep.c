@@ -32,6 +32,7 @@
 #include "pmu_selftest.h"
 #include "read_pico_board.h"
 #include "read_pico_pmu.h"
+#include "read_pico_transfer.h"
 #include "sc7a20h_lab.h"
 #include "settings.h"
 #include "ui_kit.h"
@@ -39,6 +40,8 @@
 #include "ui_wallpaper.h"
 
 static const char* TAG = "read_pico";
+
+#define APP_LOCK_LIGHT_SLEEP_MS (10U * 60U * 1000U)
 
 extern const uint8_t lock_4bpp_bin_start[] asm("_binary_lock_4bpp_bin_start");
 
@@ -119,9 +122,11 @@ static bool pickup_wait_quiet(sc7a20h_handle_t acc, int quiet_ms, int timeout_ms
     return false;
 }
 
-app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
+app_wake_source_t app_light_sleep_wait_timed(sc7a20h_handle_t acc, uint32_t timeout_ms) {
     bool pickup = acc != NULL && app_settings_pickup_wake();
     bool acc_armed = false;
+    const int64_t deadline_us = timeout_ms
+        ? esp_timer_get_time() + (int64_t)timeout_ms * 1000 : 0;
     lock_arm_ioe_wakeup();
     if (pickup) {
         sc7a20h_motion_cfg_t motion = SC7A20H_MOTION_DEFAULT();
@@ -162,6 +167,8 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
 
     app_wake_source_t wake = APP_WAKE_NONE;
     bool slept = false;
+    esp_err_t last_sleep_error = ESP_OK;
+    int64_t last_sleep_error_log_ms = 0;
     for (;;) {
         read_pico_clear_ioe_int();
         if (!slept && gpio_get_level((gpio_num_t)READ_PICO_IOE_INT_GPIO) == 0) {
@@ -193,8 +200,22 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
             pickup_wait_quiet(acc, 400, 1500);
             continue;
         }
+        if (deadline_us) {
+            int64_t remaining_us = deadline_us - esp_timer_get_time();
+            if (remaining_us <= 0) {
+                wake = APP_WAKE_TIMEOUT;
+                ESP_LOGI(TAG, "lock light sleep timeout after %u ms", (unsigned)timeout_ms);
+                break;
+            }
+            esp_err_t timer_error = esp_sleep_enable_timer_wakeup((uint64_t)remaining_us);
+            if (timer_error != ESP_OK) {
+                ESP_LOGW(TAG, "lock sleep timer rejected: %s", esp_err_to_name(timer_error));
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+        }
         int64_t t0 = esp_timer_get_time();
-        esp_light_sleep_start();
+        esp_err_t sleep_error = esp_light_sleep_start();
         slept = true;
         int64_t dt_ms = (esp_timer_get_time() - t0) / 1000;
         read_pico_clear_ioe_int();
@@ -217,8 +238,23 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
             pickup_ack(acc);
             pickup_wait_quiet(acc, 400, 1500);
         }
+        if (sleep_error != ESP_OK) {
+            int64_t now_ms = esp_timer_get_time() / 1000;
+            if (sleep_error != last_sleep_error || now_ms - last_sleep_error_log_ms >= 30000) {
+                ESP_LOGW(TAG, "lock light sleep rejected: %s, IOE_INT=%d",
+                         esp_err_to_name(sleep_error),
+                         gpio_get_level((gpio_num_t)READ_PICO_IOE_INT_GPIO));
+                last_sleep_error_log_ms = now_ms;
+            }
+            last_sleep_error = sleep_error;
+            // A rejected sleep must not spin at full CPU speed behind the static e-paper image.
+            vTaskDelay(pdMS_TO_TICKS(100));
+        } else {
+            last_sleep_error = ESP_OK;
+        }
     }
 
+    if (deadline_us) esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
     gpio_wakeup_disable((gpio_num_t)READ_PICO_IOE_INT_GPIO);
     if (acc_armed) {
         gpio_wakeup_disable(sc7a20h_int1_gpio(acc));
@@ -227,8 +263,12 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
         sc7a20h_power_down(acc);
         sc7a20h_int1_begin(acc);
     }
-    app_settings_set_last_wake((uint8_t)wake);
+    app_settings_set_last_wake((uint8_t)(wake == APP_WAKE_TIMEOUT ? APP_WAKE_NONE : wake));
     return wake;
+}
+
+app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
+    return app_light_sleep_wait_timed(acc, 0);
 }
 
 void app_enter_host_sleep(app_sleep_mode_t mode) {
@@ -237,7 +277,17 @@ void app_enter_host_sleep(app_sleep_mode_t mode) {
     if (mode == APP_SLEEP_OFF) {
         ESP_LOGI(TAG, "power off %s", esp_err_to_name(read_pico_pmu_power_off()));
     } else {
-        ESP_LOGI(TAG, "SOFT_SLEEP %s", esp_err_to_name(read_pico_pmu_report_sleep()));
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            esp_err_t err = read_pico_pmu_report_sleep();
+            ESP_LOGI(TAG, "SOFT_SLEEP attempt %d: %s", attempt + 1, esp_err_to_name(err));
+            if (err == ESP_OK) break;
+            vTaskDelay(pdMS_TO_TICKS(200));
+            if (attempt == 2) {
+                // A failed PMU handoff must not leave an unresponsive e-paper lock forever.
+                ESP_LOGE(TAG, "SOFT_SLEEP handoff failed; restart host");
+                esp_restart();
+            }
+        }
     }
     while (true) vTaskDelay(pdMS_TO_TICKS(1000));
 }
@@ -273,6 +323,13 @@ void enter_lock_and_sleep(
     EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc,
     bool reader_background
 ) {
+    // Refuse to interrupt an active upload. The caller repaints its page when
+    // this function returns, and the user can lock again after the transfer.
+    bool radio_paused = read_pico_transfer_pause_for_sleep();
+    if (!radio_paused) {
+        ESP_LOGW(TAG, "lock postponed while transfer is busy");
+        return;
+    }
     uint8_t* framebuffer = epd_hl_get_framebuffer(hl);
     epd_poweron();
     epd_clear();
@@ -293,7 +350,13 @@ void enter_lock_and_sleep(
     // A short press only locks and light-sleeps; deep shutdown belongs to the long-press menu.
     ESP_LOGI(TAG, "lock LIGHT");
     epd_poweroff();
-    app_light_sleep_wait(acc);
+    app_wake_source_t wake = app_light_sleep_wait_timed(acc, APP_LOCK_LIGHT_SLEEP_MS);
+    if (wake == APP_WAKE_TIMEOUT) {
+        // PMU SOFT_SLEEP drops the ESP rail while keeping its RTC alive. A short
+        // power-key press boots the host; the e-paper keeps this lock image.
+        app_enter_host_sleep(APP_SLEEP_DEEP);
+    }
+    read_pico_transfer_resume_after_sleep();
 
     // 参考帧和屏幕都归零，回到主循环后由当前页自己画一遍，不必知道是哪一页。
     // Zero the reference frame and the panel; the current page redraws after the loop resumes, without knowing which page it is.

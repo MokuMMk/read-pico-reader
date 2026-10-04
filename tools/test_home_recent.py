@@ -37,7 +37,7 @@ typedef struct { bool present, mounted; } read_pico_sd_info_t;
 typedef struct { int unused; } app_ctx_t;
 typedef int esp_err_t;
 static home_book_t s_current, s_recent[6];
-static bool s_books_cache_valid,s_cached_sd_present,s_cached_sd_mounted,s_scan_pending;
+static bool s_books_cache_valid,s_cached_sd_present,s_cached_sd_mounted,s_scan_pending,s_home_force_full_once;
 static unsigned s_cached_store_revision;
 static char s_cached_books_dir[128],s_cached_last_path[BOOK_STORE_PATH_MAX];
 static uint32_t s_reading_days[30];
@@ -48,6 +48,7 @@ static bool book_ticket_recent_days(uint32_t *out){(void)out;return true;}
 static esp_err_t read_pico_sd_get_info(read_pico_sd_info_t *out){*out=(read_pico_sd_info_t){.present=true,.mounted=true};return 0;}
 static unsigned book_store_revision(void){return 7;}
 static const char *app_settings_books_dir(void){return "/sdcard/books";}
+static bool app_settings_home_full_refresh(void){return false;}
 static bool book_progress_last_path(char *out,size_t cap){snprintf(out,cap,"%s",latest);return latest[0]!=0;}
 static void scan_books(void){++scans;snprintf(s_current.path,sizeof(s_current.path),"%s",latest);}
 static void refresh_progress(void){++refreshes;}

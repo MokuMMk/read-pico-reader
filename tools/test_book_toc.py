@@ -13,6 +13,8 @@ STUBS = {
 typedef struct {int x,y,width,height;} EpdRect;
 enum EpdFontFlags {EPD_DRAW_ALIGN_LEFT=0, EPD_DRAW_ALIGN_CENTER=1, EPD_DRAW_ALIGN_RIGHT=2};
 void epd_fill_rect(EpdRect rect, uint8_t color, uint8_t *fb);
+void epd_fill_circle(int x,int y,int radius,uint8_t color,uint8_t *fb);
+void epd_draw_circle(int x,int y,int radius,uint8_t color,uint8_t *fb);
 """,
     "book_source.h": """#pragma once
 #include <stddef.h>
@@ -29,6 +31,7 @@ size_t book_navigation_chapter(size_t position);
 #define UI_GRAY_WHITE 255
 void ui_clear_page(uint8_t *fb);
 void ui_fill_round_rect(uint8_t *fb, EpdRect r, int radius, uint8_t gray);
+void ui_draw_round_rect(uint8_t *fb, EpdRect r, int radius, uint8_t gray);
 void ui_text_fixed(uint8_t *fb,int x,int y,int px,const char *text,enum EpdFontFlags align,bool inverse);
 int ui_text_fixed_width_px(int px,const char *text);
 bool ui_rect_hit(EpdRect r,int x,int y);
@@ -48,14 +51,21 @@ HARNESS = r'''
 #include "book_toc.c"
 static int cards;
 static int labels;
+static int large_titles,skip_labels,jump_summary;
 static size_t nav_shift,seen_sources[8];
 static int seen_count;
 void epd_fill_rect(EpdRect rect,uint8_t color,uint8_t *fb){(void)rect;(void)color;(void)fb;}
+void epd_fill_circle(int x,int y,int radius,uint8_t color,uint8_t *fb){(void)x;(void)y;(void)radius;(void)color;(void)fb;}
+void epd_draw_circle(int x,int y,int radius,uint8_t color,uint8_t *fb){(void)x;(void)y;(void)radius;(void)color;(void)fb;}
 void ui_clear_page(uint8_t *fb){(void)fb;}
 void ui_fill_round_rect(uint8_t *fb,EpdRect r,int radius,uint8_t gray){(void)fb;(void)r;(void)radius;(void)gray;cards++;}
+void ui_draw_round_rect(uint8_t *fb,EpdRect r,int radius,uint8_t gray){(void)fb;(void)r;(void)radius;(void)gray;}
 void ui_text_fixed(uint8_t *fb,int x,int y,int px,const char *text,enum EpdFontFlags align,bool inverse){
     (void)fb;(void)x;(void)y;(void)px;(void)align;(void)inverse;
     assert(!strchr(text,'\n') && !strchr(text,'\r') && !strchr(text,'\t'));
+    if(px==30) large_titles++;
+    if(strstr(text,"10页")) skip_labels++;
+    if(strstr(text,"第 99～105 节")) jump_summary++;
     labels++;
 }
 int ui_text_fixed_width_px(int px,const char *text){(void)px;return (int)strlen(text)*9;}
@@ -77,14 +87,28 @@ int main(void){
     assert(book_toc_hit(100,270,0,8)==0);
     assert(book_toc_hit(100,270,1,8)==7);
     assert(book_toc_hit(100,TOC_ROW_TOP+TOC_ROW_STEP,1,8)==-1);
-    assert(book_toc_hit(600,1060,0,8)==BOOK_TOC_NEXT);
+    assert(book_toc_hit(600,1060,0,8)==BOOK_TOC_SKIP_NEXT);
+    assert(book_toc_hit(98,1060,0,80)==BOOK_TOC_SKIP_PREV);
+    assert(book_toc_hit(190,1060,0,80)==BOOK_TOC_PREV);
+    assert(book_toc_hit(480,1060,0,80)==BOOK_TOC_NEXT);
+    assert(book_toc_hit(320,1130,0,80)==BOOK_TOC_JUMP);
+    assert(book_toc_jump_hit(120,880)==BOOK_TOC_JUMP_CANCEL);
+    assert(book_toc_jump_hit(480,880)==BOOK_TOC_JUMP_CONFIRM);
+    assert(book_toc_jump_hit(342,640)==BOOK_TOC_JUMP_TRACK);
+    assert(book_toc_jump_percent(92)==0 && book_toc_jump_percent(592)==100);
+    assert(book_toc_page_from_percent(0,24)==0);
+    assert(book_toc_page_from_percent(4,24)==0);
+    assert(book_toc_page_from_percent(60,24)==14);
+    assert(book_toc_page_from_percent(100,24)==23);
     char title[160]; one_line(title,sizeof(title),"  第一章\n 重叠\t标题  ");
     assert(strcmp(title,"第一章 重叠 标题")==0);
     char long_title[160]; memset(long_title,'A',sizeof(long_title)-1);long_title[159]=0;
-    fit_line(long_title,27,100);assert(strstr(long_title,"…")!=NULL);
+    fit_line(long_title,30,100);assert(strstr(long_title,"…")!=NULL);
     uint8_t fb=0;
     book_toc_render(&fb,"书名\n下一行",8,1,0,"");
-    assert(cards==7 && labels>=17);
+    assert(cards==13 && labels>=17 && large_titles==7 && skip_labels==2);
+    book_toc_render_jump(&fb,168,60);
+    assert(jump_summary==1);
     nav_shift=1;seen_count=0;book_toc_render(&fb,"目录",4,1,0,"");
     assert(seen_count==4&&seen_sources[0]==1&&seen_sources[3]==4);
     puts("book_toc: pages, taps, overflow and single-line rendering passed");

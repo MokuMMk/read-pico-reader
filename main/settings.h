@@ -26,6 +26,19 @@ void app_settings_init(void);
 app_sleep_mode_t app_settings_sleep_mode(void);
 void app_settings_set_sleep_mode(app_sleep_mode_t mode);
 const char* app_sleep_mode_name(app_sleep_mode_t mode);
+/// 电源菜单“关机”：false 为彻底断电，true 为先浅睡 10 分钟再由 PMU 软睡断电。
+/// Power-menu shutdown: false powers fully off; true light-sleeps for 10 minutes, then PMU soft-sleeps.
+bool app_settings_staged_shutdown(void);
+void app_settings_set_staged_shutdown(bool staged);
+/// 首页进入时强制全刷；默认关闭。/ Full refresh when entering Home; off by default.
+bool app_settings_home_full_refresh(void);
+void app_settings_set_home_full_refresh(bool enabled);
+const char *app_settings_device_name(void);
+void app_settings_set_device_name(const char *name);
+const char *app_settings_avatar_path(void);
+void app_settings_set_avatar_path(const char *path);
+const char *app_settings_status_signature(void);
+void app_settings_set_status_signature(const char *signature);
 /// 空路径表示固件内建字体；非空为 SD 上的 TTF。/ Empty path is the built-in font; non-empty is a TTF on the SD card.
 const char* app_settings_font_path(void);
 void app_settings_set_font_path(const char* path);
@@ -59,7 +72,8 @@ void app_settings_set_book_px(uint8_t px);
 bool app_settings_book_shake(void);
 /// 保存实验性晃动翻页开关。/ Persist the experimental shake page-turn switch.
 void app_settings_set_book_shake(bool on);
-/// 阅读时每 5、10 或 15 页整屏全刷一次。/ Full-screen reader cleanup every 5, 10 or 15 page turns.
+/// 阅读时每 5/10/15/30 页全刷；0 关闭周期全刷，手动全刷仍可用。
+/// Full-screen cleanup every 5/10/15/30 turns; 0 disables periodic cleanup only.
 uint8_t app_settings_reader_full_pages(void);
 void app_settings_set_reader_full_pages(uint8_t pages);
 /// 阅读翻页效果：0 默认，1 水波纹；初始为默认。/ Reader turn effect: 0 default, 1 water ripple; initially default.
@@ -80,6 +94,9 @@ void app_settings_set_book_indent(uint8_t em);
 /// 正文阅读线：0 无，1 虚线，2 点线。/ Body reading guides: none, dashed or dotted.
 uint8_t app_settings_book_reading_line(void);
 void app_settings_set_book_reading_line(uint8_t style);
+/// 阅读线相对默认位置 -8..+8 像素，2 像素一步，默认 0。/ Guide offset in 2 px steps.
+int8_t app_settings_book_reading_line_offset(void);
+void app_settings_set_book_reading_line_offset(int8_t offset_px);
 /// 阅读行高百分比，110..150。/ Reader line-height percentage: 110..150.
 uint8_t app_settings_book_line_spacing(void);
 void app_settings_set_book_line_spacing(uint8_t percent);

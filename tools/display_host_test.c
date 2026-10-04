@@ -95,11 +95,14 @@ int main(void) {
     assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS);
     assert(last_mode == MODE_GC16);
 
-    // 普通系统页走 8 灰阶差分 GL16，达到阈值时同步清残影，不追加延迟刷新。
-    // Ordinary system pages use 8-gray differential GL16 and clean synchronously at the threshold.
+    // 普通系统页用完整灰阶表，每三次整理一遍全像素，达到阈值时才 GC16。
+    // Ordinary pages use the full gray ladder, settle every third page, and run GC16 only at the threshold.
     for (int i = 0; i < APP_UI_FAST_GC16_EVERY - 1; ++i) {
+        int prior_full = full_draws;
         assert(update_display_fast_page(&hl) == EPD_DRAW_SUCCESS);
         assert(last_mode == MODE_GL16 && last_scan == READ_PICO_EPD_SCAN_FULL);
+        assert(waveform_at_draw == &E0470_WAVEFORM);
+        assert(full_draws - prior_full == ((i + 1) % APP_UI_FAST_GL16_SETTLE_EVERY == 0));
     }
     assert(update_display_fast_page(&hl) == EPD_DRAW_SUCCESS);
     assert(last_mode == MODE_GC16 && last_scan == READ_PICO_EPD_SCAN_FULL && full_draws > 0);

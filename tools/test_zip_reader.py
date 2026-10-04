@@ -59,6 +59,16 @@ def main():
         cd = good.index(b"PK\x01\x02")
         eocd = good.rindex(b"PK\x05\x06")
 
+        # Some EPUB producers set general-purpose bit 4 even on valid DEFLATE and stored entries.
+        # 有些 EPUB 同时为合法的压缩和直存条目标记 bit 4，仍需逐条解压并核对 CRC。
+        for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            flagged = bytearray(archive(payload, method))
+            central = flagged.index(b"PK\x01\x02")
+            for offset in (6, central + 8):
+                flags = struct.unpack_from("<H", flagged, offset)[0]
+                struct.pack_into("<H", flagged, offset, flags | 0x10)
+            run("read", flagged, expected=payload)
+
         def changed(offset, fmt, value):
             data = bytearray(good)
             struct.pack_into(fmt, data, offset, value)
