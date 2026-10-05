@@ -37,11 +37,13 @@ On first mount, the firmware creates `books`, `fonts`, and `pictures` folders on
 
 The “Covers and spines” bookshelf mode is labeled **experimental, not a formal release**. Other shelf styles remain available.
 
+TXT/EPUB books opened from any TF-card directory appear on the shelf after progress is saved, including on cached returns without a rescan. Bookshelf management → Remove from shelf hides selected books while keeping their files, progress, and favorites. Reading a removed book puts it back. Removal state persists and is included in configuration backups.
+
 TXT books and EPUB books without a valid embedded cover receive a deterministic grayscale cover shared by the shelf, home, and ticket lock screen. A valid EPUB cover takes priority. Generated covers are cached under `.readpico/covers` on the TF card and rebuilt when the file or title changes.
 
 In Reading settings → Typography, first-line indent can be set to 0, 1, 2, or 3 characters (2 by default). Body text is centered by whole-character columns to balance the side margins, and common Chinese punctuation is kept away from prohibited line starts and ends.
 
-To back up personal settings, open **Settings → Save & restore → Save to TF card**. The device writes `Pico-settings.backup` to the TF-card root. Put that file back at the root and choose **Restore from TF card** to recover fonts, typography, display and lock settings, profile and status signature, saved Wi-Fi name and password, book progress, reading time, bookmarks, favorites, and custom book names. Book, font, avatar, and wallpaper files remain on the TF card. The backup contains the Wi-Fi password in plaintext, so keep the TF card private. Missing external fonts and images fall back to built-in options. Older backups remain readable and leave the current network configuration unchanged.
+To back up personal settings, open **Settings → Save & restore → Save to TF card**. The device writes `Pico-settings.backup` to the TF-card root. Put that file back at the root and choose **Restore from TF card** to recover fonts, typography, display and lock settings, profile and status signature, saved Wi-Fi name and password, book progress, reading time, bookmarks, favorites, custom book names, and shelf removals. Book, font, avatar, and wallpaper files remain on the TF card. The backup contains the Wi-Fi password in plaintext, so keep the TF card private. Missing external fonts and images fall back to built-in options. Older backups remain readable and leave the current network configuration unchanged.
 
 EPUB metadata is allocated for the actual book size. ZIP entries and chapters each have an 8,192-item limit; covers, images, and navigation also consume ZIP entries. A book may exceed 32 MB overall, while each XHTML resource remains limited to 4 MB and each decompressed image to 8 MB; available device memory and standard ZIP limits also apply.
 

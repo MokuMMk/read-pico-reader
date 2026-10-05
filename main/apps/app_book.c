@@ -14,7 +14,8 @@
  * 用户修订：单本管理为书架弹窗；管理页用于批量操作。分页和排序保留勾选，筛选/应用搜索及重扫清除勾选。
  * 失败进度仅按变更路径失效；删除后的清理重试保留到本次开机结束，不随切页释放。
  * 卡失效时先保存进度并关闭阅读资源，再由主循环回退字体；禁止自动续读失效挂载。
- * 用户最新修订：常规书架每页九本、书脊样式十三本，仅显示导入书籍；底栏保留首页/书架/文件/设置，设置直接进入设置页。
+ * 用户最新修订：常规书架每页九本、书脊样式十三本，收录导入及读过的书；移出仅隐藏，再读重新上架。
+ * 底栏保留首页/书架/文件/设置，设置直接进入设置页。
  * 用户修订：长按图书可用本机拼音输入编辑书名；阅读时长与翻页真实记录，供票根锁屏使用。
  * 用户最新修订：书名编辑可点选插入位置并用左右键微调，支持在文字中间插入和删除。
  * 用户修订：首页、书架、文件、设置四栏导航；切换界面采用 GL16，章节首页单独排标题。
@@ -34,7 +35,8 @@
  * User revision: single-book actions use a shelf dialog; full management is for batches. Paging/sorting preserve selection; filtering/applied search and rescanning clear it.
  * Invalidate failed progress only for changed paths; retain deletion cleanup retries across page exits for this boot.
  * Lost media saves progress and closes reader resources before global font fallback; never auto-resume an invalid mount.
- * Latest user revision: regular shelf pages hold nine imported books and spine pages hold thirteen; the fourth tab opens Settings directly.
+ * Latest user revision: regular shelf pages hold nine imported or read books and spine pages hold thirteen; removal hides until reread.
+ * The fourth tab opens Settings directly.
  * User revision: book details lead to an on-device Pinyin title editor; measured reading time and turns feed the ticket lock face.
  * Latest user revision: the title editor can place and move an insertion caret for edits in the middle of text.
  * User revision: home, shelf, files and settings have four-tab navigation; view changes use GL16 and chapter starts have a title lead.
@@ -162,7 +164,16 @@ static bool s_delete_confirm, s_file_removed;
 static char s_shelf_warning[128], s_manage_message[128];
 static char s_query[65], s_search_draft[65], s_batch_message[128];
 static book_view_t s_search_parent;
-static bool s_batch_confirm, s_batch_delete;
+// 批量操作需要二次确认的三类：删文件、清进度、从书架移除。前两类动数据，后一类只动书架。
+// Three batch actions need confirmation: delete files, clear progress, remove from the shelf.
+// The first two touch stored data; the last one only touches shelf membership.
+typedef enum {
+    BATCH_DELETE,
+    BATCH_CLEAR,
+    BATCH_UNSHELF,
+} batch_kind_t;
+static bool s_batch_confirm;
+static batch_kind_t s_batch_kind;
 typedef struct pending_progress {
     char path[BOOK_STORE_PATH_MAX];
     book_progress_t value;
@@ -689,9 +700,11 @@ static EpdRect manage_rect(int index, int count) {
     EpdRect panel = manage_panel();
     return ui_row_rect(index, count, panel.y + panel.height - 94, 76);
 }
+// 六个批量按钮排成两行各三格：上排选择与重扫，下排三个需要二次确认的操作。
+// Six batch controls in two rows of three: selection and rescan on top, the three actions that
+// ask for confirmation below.
 static EpdRect batch_rect(int id) {
-    if (id < 3) return ui_row_rect(id, 3, 918, 58);
-    return ui_row_rect(id - 3, 2, 988, 58);
+    return ui_row_rect(id % 3, 3, id < 3 ? 918 : 988, 58);
 }
 static EpdRect manage_back_rect(void) { return (EpdRect){36, 92, 44, 44}; }
 static EpdRect bulk_filter_rect(int id) { return ui_row_rect(id, 3, 216, 70); }
@@ -1141,9 +1154,14 @@ static void draw_batch_confirmation(uint8_t* fb) {
     ui_fill_round_rect(fb, panel, 25, UI_GRAY_WHITE);
     ui_draw_round_rect(fb, panel, 25, 0x48);
     char title[96];
-    snprintf(title, sizeof(title), "%s %u 本图书？", s_batch_delete ? "删除" : "清除进度：", (unsigned)selected_count());
+    const char* verb = s_batch_kind == BATCH_DELETE ? "删除" :
+                       s_batch_kind == BATCH_CLEAR ? "清除进度：" : "从书架移除";
+    const char* note = s_batch_kind == BATCH_DELETE ? "删除文件不可撤销，失败项可重试" :
+                       s_batch_kind == BATCH_CLEAR ? "仅清阅读进度，所有文件保留" :
+                       "只移出书架，文件与阅读进度都保留";
+    snprintf(title, sizeof(title), "%s %u 本图书？", verb, (unsigned)selected_count());
     ui_text_vc(fb, 342, 477, 28, title, EPD_DRAW_ALIGN_CENTER, false);
-    ui_text_vc(fb, 342, 541, 19, s_batch_delete ? "删除文件不可撤销，失败项可重试" : "仅清阅读进度，所有文件保留", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_vc(fb, 342, 541, 19, note, EPD_DRAW_ALIGN_CENTER, false);
     draw_control(fb, ui_row_rect(0, 2, 620, UI_BTN_H), "取消", 600);
     draw_control(fb, ui_row_rect(1, 2, 620, UI_BTN_H), "确认", 601);
 }
@@ -1182,8 +1200,12 @@ static void draw_bulk(uint8_t* fb, int leaf) {
         epd_draw_circle(r.x + r.width - 37, r.y + 42, 12, 0x58, fb);
         if (selected) epd_fill_circle(r.x + r.width - 37, r.y + 42, 7, 0x38, fb);
     }
-    static const char *labels[] = {"本页全选", "清除勾选", "重新扫描", "删除所选", "清阅读进度"};
-    for (int i = 0; i < 5; ++i) {
+    // 三列格宽只有 193 像素，标签控制在四字以内，放大系统字号也不会顶出按钮。
+    // A three-column cell is 193 px wide, so labels stay within four characters and still fit
+    // once the system font scale is turned up.
+    static const char *labels[] = {"本页全选", "清除勾选", "重新扫描",
+                                   "删除所选", "清进度", "移出书架"};
+    for (int i = 0; i < 6; ++i) {
         EpdRect r = batch_rect(i);
         ui_fill_round_rect(fb, r, 18, UI_GRAY_WHITE);
         ui_draw_round_rect(fb, r, 18, 0xa0);
@@ -1276,6 +1298,53 @@ static bool favorite_save(const char *path, bool value) {
     char key[11]; favorite_key(path, key);
     esp_err_t err = value ? nvs_set_u8(h, key, 1) : nvs_erase_key(h, key);
     if (err == ESP_ERR_NVS_NOT_FOUND && !value) err = ESP_OK;
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err == ESP_OK;
+}
+
+// 从书架移除只隐藏条目，不动文件也不清进度；再次打开这本书会重新上书架。
+// Removing from the shelf hides the entry only: no file or progress is touched, and opening the
+// book again puts it back. 值为完整路径，命中的同键记录属于别的书时拒绝覆盖。
+// The value is the full path, so a colliding key owned by a different book is never overwritten.
+#define SHELF_HIDDEN_NS "rp_shelf"
+static void shelf_hidden_key(const char *path, char key[11]) {
+    uint32_t hash = UINT32_C(2166136261);
+    for (const unsigned char *p = (const unsigned char *)path; *p; ++p)
+        hash = (hash ^ *p) * UINT32_C(16777619);
+    snprintf(key, 11, "h_%08lx", (unsigned long)hash);
+}
+static bool shelf_hidden_read_handle(nvs_handle_t h, const char *path) {
+    char stored[BOOK_STORE_PATH_MAX];
+    char key[11];
+    shelf_hidden_key(path, key);
+    size_t len = sizeof(stored);
+    return nvs_get_str(h, key, stored, &len) == ESP_OK && strcmp(stored, path) == 0;
+}
+static bool shelf_hidden_load(const char *path) {
+    nvs_handle_t h;
+    if (nvs_open(SHELF_HIDDEN_NS, NVS_READONLY, &h) != ESP_OK) return false;
+    bool hidden = shelf_hidden_read_handle(h, path);
+    nvs_close(h);
+    return hidden;
+}
+static bool shelf_hidden_save(const char *path, bool hidden) {
+    nvs_handle_t h;
+    if (nvs_open(SHELF_HIDDEN_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+    char key[11];
+    shelf_hidden_key(path, key);
+    char stored[BOOK_STORE_PATH_MAX];
+    size_t len = sizeof(stored);
+    esp_err_t existing = nvs_get_str(h, key, stored, &len);
+    esp_err_t err = existing == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : existing;
+    if (existing == ESP_OK && strcmp(stored, path) != 0) err = ESP_ERR_INVALID_STATE;
+    // 恢复上架也校验路径，避免擦掉碰撞键属于另一书的隐藏记录。
+    // Check ownership when unhiding too, so a collision cannot erase a different book removal.
+    if (err == ESP_OK && hidden) err = nvs_set_str(h, key, path);
+    else if (err == ESP_OK) {
+        err = nvs_erase_key(h, key);
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    }
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err == ESP_OK;
@@ -2074,8 +2143,9 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             draw_control(fb, ui_bar_rect(2, 3), "下一页", 102);
         }
         if (s_view == BULK) {
-            const char* labels[] = {"本页全选", "清除勾选", "重新扫描", "删除所选", "清进度"};
-            for (int i = 0; i < 5; ++i) draw_control(fb, batch_rect(i), labels[i], 610 + i);
+            const char* labels[] = {"本页全选", "清除勾选", "重新扫描",
+                                    "删除所选", "清进度", "移出书架"};
+            for (int i = 0; i < 6; ++i) draw_control(fb, batch_rect(i), labels[i], 610 + i);
             draw_batch_confirmation(fb);
         }
         if (s_view != SHELF) ui_draw_menu_handle(fb, false);
@@ -2468,6 +2538,10 @@ static bool open_book(app_ctx_t* ctx, const char* path) {
     s_turns = s_unsaved = 0;
     pending_mark_latest(s_path);
     save_progress();
+    // 打开即重新上书架：移出书架只隐藏条目，重新读这本书就是它该在架上的信号。
+    // Opening puts the book back on the shelf: removal only hides the entry, and reading it
+    // again is the signal that it belongs there.
+    if (shelf_hidden_load(s_path)) (void)shelf_hidden_save(s_path, false);
     ESP_LOGI(TAG, "opened kind=%d chapters=%u pages=%u px=%d", book_kind(), (unsigned)book_chapter_count(), (unsigned)book_layout_page_count(), s_px);
     return true;
 }
@@ -2548,7 +2622,8 @@ typedef struct {
     char path[BOOK_STORE_PATH_MAX];
 } shelf_scan_frame_t;
 static void scan_shelf_dir(const char *root, bool is_flash, nvs_handle_t favorites,
-                           bool *truncated, bool *unreadable, bool *skipped) {
+                           nvs_handle_t hidden, bool *truncated, bool *unreadable,
+                           bool *skipped) {
     if (*truncated) return;
     shelf_scan_frame_t *frames = heap_caps_calloc(BOOK_SCAN_DEPTH_LIMIT + 1, sizeof(*frames),
                                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -2585,6 +2660,10 @@ static void scan_shelf_dir(const char *root, bool is_flash, nvs_handle_t favorit
         if (!S_ISREG(st.st_mode)) continue;
         const char *ext = strrchr(ent->d_name, '.');
         if (!ext || (strcasecmp(ext, ".txt") && strcasecmp(ext, ".epub"))) continue;
+        // 显式移出书架的书不再列入；文件仍在存储卡上，随时可以重新读回书架。
+        // Books the user removed stay off the shelf; the file stays on the card and reading it
+        // again puts it back.
+        if (hidden && shelf_hidden_read_handle(hidden, path)) continue;
         if (strlen(ent->d_name) >= sizeof(((shelf_entry_t *)0)->name) ||
             st.st_size < 0 || (uint64_t)st.st_size > UINT32_MAX) { *skipped = true; continue; }
         if (!shelf_reserve()) { *truncated = true; break; }
@@ -2618,6 +2697,77 @@ static void scan_shelf_dir(const char *root, bool is_flash, nvs_handle_t favorit
     free(frames);
 }
 
+// 阅读过的书即使不在书根目录内也要上书架：文件管理可以直接打开存储卡任意位置的 TXT/EPUB，
+// 这些书以前读完就消失了。文件已删除或内容已被替换的记录不上架，与进度不可恢复的口径一致。
+// A book that was read belongs on the shelf even outside the book roots, because the file
+// manager can open a TXT or EPUB anywhere on the card. Records whose file is gone, or whose
+// contents were replaced, stay off the shelf, matching the rule that changed sizes never resume.
+typedef struct {
+    nvs_handle_t favorites;
+    nvs_handle_t hidden;
+    bool truncated;
+} shelf_backfill_t;
+
+static bool shelf_backfill_visit(const char* path, const book_progress_t* progress, void* ctx) {
+    shelf_backfill_t* scan = ctx;
+    if (scan->truncated) return false;
+    for (int i = 0; i < s_count; ++i)
+        if (!strcmp(s_shelf[i].path, path)) return true;   // 书根目录已经收录
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        (uint64_t)st.st_size > UINT32_MAX || (uint32_t)st.st_size != progress->file_size)
+        return true;
+    if (scan->hidden && shelf_hidden_read_handle(scan->hidden, path)) return true;
+    const char* base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (strlen(base) >= sizeof(((shelf_entry_t*)0)->name)) return true;
+    if (!shelf_reserve()) { scan->truncated = true; return false; }
+    shelf_entry_t candidate = {0};
+    shelf_entry_t* item = &candidate;
+    copy_text(item->path, sizeof(item->path), path);
+    if (!book_title_from_path(item->path, item->name, sizeof(item->name)))
+        clean_filename(item->name, sizeof(item->name), base);
+    if (!item->name[0]) return true;
+    const char* ext = strrchr(base, '.');
+    if (ext && !strcasecmp(ext, ".epub")) {
+        char title[sizeof(item->name)] = {0};
+        char author[sizeof(item->author)] = {0};
+        if (book_epub_metadata_cached(item->path, title, sizeof(title), author, sizeof(author)) == ESP_OK)
+            copy_text(item->author, sizeof(item->author), author);
+    }
+    item->size = (uint32_t)st.st_size;
+    // 内置书根固定在 /flash 下，与 book_store.c 和 open_book 的前缀判断一致。
+    // The internal root lives under /flash, matching the prefix test in book_store.c and open_book.
+    item->is_flash = !strncmp(path, "/flash/", 7);
+    item->has_progress = true;
+    item->pct = progress->pct;
+    item->chapter = progress->chapter;
+    item->recent = progress->last_open_s;
+    item->search_match = read_pico_search_match(item->name, s_query);
+    item->favorite = scan->favorites && favorite_read_handle(scan->favorites, item->path);
+    s_shelf[s_count++] = candidate;
+    return true;
+}
+
+// 把书根目录之外读过的书补进书架，返回是否新增了条目。
+// 阅读只写进度、不动存储版本，所以缓存复用的路径也必须调用它，否则刚读完的书要等手动重扫。
+// Backfill books read outside the roots and report whether anything was added. Reading only
+// writes progress and never bumps the store revision, so the cached path has to call this too
+// or a freshly read book stays invisible until a manual rescan.
+static bool shelf_backfill_read_books(bool* truncated) {
+    nvs_handle_t favorites = 0;
+    nvs_handle_t hidden = 0;
+    (void)nvs_open("rp_favs", NVS_READONLY, &favorites);
+    (void)nvs_open(SHELF_HIDDEN_NS, NVS_READONLY, &hidden);
+    const int before = s_count;
+    shelf_backfill_t backfill = {.favorites = favorites, .hidden = hidden};
+    (void)book_progress_list(shelf_backfill_visit, &backfill);
+    if (favorites) nvs_close(favorites);
+    if (hidden) nvs_close(hidden);
+    if (truncated && backfill.truncated) *truncated = true;
+    return s_count != before;
+}
+
 static void scan_shelf(app_ctx_t* ctx) {
     s_count = 0;
     s_visible_count = 0;
@@ -2630,7 +2780,9 @@ static void scan_shelf(app_ctx_t* ctx) {
     esp_err_t root_err = book_store_roots(roots, &n);
     bool truncated = false, unreadable = root_err != ESP_OK || book_store_roots_degraded(), skipped = false;
     nvs_handle_t favorites = 0;
+    nvs_handle_t hidden = 0;
     (void)nvs_open("rp_favs", NVS_READONLY, &favorites);
+    (void)nvs_open(SHELF_HIDDEN_NS, NVS_READONLY, &hidden);
     s_storage[0] = 0;
     for (int i = 0; i < n; ++i) {
         if (i == 0 || roots[i].is_flash || roots[i - 1].is_flash) {
@@ -2639,10 +2791,9 @@ static void scan_shelf(app_ctx_t* ctx) {
                      roots[i].is_flash ? "内置余" : "TF余", book_store_free_bytes(&roots[i]) / 1048576.0);
             strncat(s_storage, capacity, sizeof(s_storage) - strlen(s_storage) - 1);
         }
-        scan_shelf_dir(roots[i].path, roots[i].is_flash, favorites,
+        scan_shelf_dir(roots[i].path, roots[i].is_flash, favorites, hidden,
                        &truncated, &unreadable, &skipped);
     }
-    if (favorites) nvs_close(favorites);
     // 同路径重新出现也先完成旧清理，避免新阅读进度被后续重试擦掉。
     // Finish old cleanup even if the path reappears, before new reading can create progress.
     for (delete_retry_t* p = s_delete_retries; p; p = p->next) {
@@ -2656,6 +2807,11 @@ static void scan_shelf(app_ctx_t* ctx) {
         s_shelf[i].selected = false;
         s_shelf[i].search_match = read_pico_search_match(p->entry.name, s_query);
     }
+    if (favorites) nvs_close(favorites);
+    if (hidden) nvs_close(hidden);
+    // 补齐书根目录之外读过的书；显式移出书架的除外。
+    // Backfill books read outside the roots, minus the ones removed from the shelf.
+    (void)shelf_backfill_read_books(&truncated);
     sort_shelf(ctx);
     s_latest_path[0] = 0;
     char last_path[BOOK_STORE_PATH_MAX];
@@ -2684,20 +2840,30 @@ static void scan_shelf(app_ctx_t* ctx) {
 }
 
 static void refresh_cached_progress(app_ctx_t* ctx) {
+    // 目录没变也要补一次：阅读只写进度，不改存储版本，否则刚读完的书不会出现。
+    // Backfill even when the listing is unchanged: reading writes progress and never bumps the
+    // store revision, so a freshly read book would otherwise stay invisible until a manual rescan.
+    const bool added = shelf_backfill_read_books(NULL);
+    bool found = false;
     char latest[BOOK_STORE_PATH_MAX];
-    if (!book_progress_last_path(latest, sizeof(latest))) return;
-    for (int i = 0; i < s_count; ++i) {
-        shelf_entry_t *item = &s_shelf[i];
-        if (strcmp(item->path, latest) || item->removed) continue;
-        book_progress_t progress;
-        item->has_progress = book_progress_load(item->path, item->size, &progress);
-        item->pct = item->has_progress ? progress.pct : 0;
-        item->chapter = item->has_progress ? progress.chapter : 0;
-        item->recent = item->has_progress ? progress.last_open_s : 0;
-        copy_text(s_latest_path, sizeof(s_latest_path), latest);
-        if (s_recent_sort) sort_shelf(ctx);
-        return;
+    if (book_progress_last_path(latest, sizeof(latest))) {
+        for (int i = 0; i < s_count; ++i) {
+            shelf_entry_t *item = &s_shelf[i];
+            if (strcmp(item->path, latest) || item->removed) continue;
+            book_progress_t progress;
+            item->has_progress = book_progress_load(item->path, item->size, &progress);
+            item->pct = item->has_progress ? progress.pct : 0;
+            item->chapter = item->has_progress ? progress.chapter : 0;
+            item->recent = item->has_progress ? progress.last_open_s : 0;
+            copy_text(s_latest_path, sizeof(s_latest_path), latest);
+            found = true;
+            break;
+        }
     }
+    // 新增条目必须重排才能重算可见列表；只刷新进度时沿用原有顺序。
+    // Added entries need a re-sort to recompute the visible list; a progress refresh alone
+    // keeps the current order.
+    if (added || (s_recent_sort && found)) sort_shelf(ctx);
 }
 static void return_to_cached_shelf(app_ctx_t* ctx) {
     if (s_shelf_cache_valid && s_store_revision == book_store_revision()) refresh_cached_progress(ctx);
@@ -3496,28 +3662,39 @@ static app_redraw_t editor_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
 static void batch_apply(app_ctx_t* ctx) {
     unsigned done = 0, failed = 0;
     int write = 0;
+    const bool unshelf = s_batch_kind == BATCH_UNSHELF;
     for (int i = 0; i < s_count; ++i) {
         shelf_entry_t item = s_shelf[i];
         bool discard = false;
         if (item.selected) {
-            if (!strcmp(s_path, item.path)) free_book();
-            esp_err_t err;
-            if (s_batch_delete && !item.removed) {
-                delete_retry_t* retry = delete_retry_reserve(&item);
-                if (!retry) { ++failed; s_shelf[write++] = item; continue; }
-                bool removed = false;
-                err = book_store_delete(item.path, &removed);
-                if (removed) {
-                    retry->entry.removed = true;
-                    item.removed = true; pending_discard(item.path);
-                    book_store_notify_changed(); s_store_revision = book_store_revision();
-                } else delete_retry_discard(item.path);
-            } else { pending_discard(item.path); err = book_progress_forget(item.path); }
+            esp_err_t err = ESP_OK;
+            if (unshelf) {
+                // 只隐藏条目：文件与阅读进度都留在原处，再次打开这本书会重新上书架。
+                // Hide the entry only: file and progress stay, and reopening the book puts it back.
+                if (shelf_hidden_save(item.path, true)) discard = true;
+                else err = ESP_FAIL;
+            } else {
+                if (!strcmp(s_path, item.path)) free_book();
+                if (s_batch_kind == BATCH_DELETE && !item.removed) {
+                    delete_retry_t* retry = delete_retry_reserve(&item);
+                    if (!retry) { ++failed; s_shelf[write++] = item; continue; }
+                    bool removed = false;
+                    err = book_store_delete(item.path, &removed);
+                    if (removed) {
+                        retry->entry.removed = true;
+                        item.removed = true; pending_discard(item.path);
+                        book_store_notify_changed(); s_store_revision = book_store_revision();
+                    } else delete_retry_discard(item.path);
+                } else { pending_discard(item.path); err = book_progress_forget(item.path); }
+            }
             if (err == ESP_OK) {
                 delete_retry_discard(item.path);
-                ++done; item.selected = false; item.has_progress = false; item.pct = 0;
-                item.chapter = 0; item.recent = 0;
-                discard = item.removed;
+                ++done; item.selected = false;
+                if (!unshelf) {
+                    item.has_progress = false; item.pct = 0;
+                    item.chapter = 0; item.recent = 0;
+                }
+                discard = discard || item.removed;
             } else ++failed;
         }
         if (!discard) s_shelf[write++] = item;
@@ -3528,7 +3705,12 @@ static void batch_apply(app_ctx_t* ctx) {
     sort_shelf(ctx);
     ctx->leaf = leaf < leaves() ? leaf : leaves() - 1;
     s_batch_confirm = false;
-    snprintf(s_batch_message, sizeof(s_batch_message), "成功 %u 本，失败 %u 本%s", done, failed, failed ? "；所选可重试" : "");
+    if (unshelf)
+        snprintf(s_batch_message, sizeof(s_batch_message), "已移出书架 %u 本，失败 %u 本%s",
+                 done, failed, failed ? "；所选可重试" : "");
+    else
+        snprintf(s_batch_message, sizeof(s_batch_message), "成功 %u 本，失败 %u 本%s",
+                 done, failed, failed ? "；所选可重试" : "");
 }
 static app_redraw_t batch_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     if (s_batch_confirm) {
@@ -3536,12 +3718,15 @@ static app_redraw_t batch_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
         else if (ui_rect_hit(ui_row_rect(1, 2, 620, UI_BTN_H), x, y)) batch_apply(ctx);
         return APP_REDRAW_PAGE;
     }
-    for (int i = 0; i < 5; ++i) if (ui_rect_hit(batch_rect(i), x, y)) {
+    for (int i = 0; i < 6; ++i) if (ui_rect_hit(batch_rect(i), x, y)) {
         s_batch_message[0] = 0;
         if (!i) select_page(ctx->leaf);
         else if (i == 1) clear_selection();
         else if (i == 2) { clear_selection(); s_batch_message[0] = 0; scan_shelf(ctx); }
-        else if (selected_count()) { s_batch_delete = i == 3; s_batch_confirm = true; }
+        else if (selected_count()) {
+            s_batch_kind = i == 3 ? BATCH_DELETE : i == 4 ? BATCH_CLEAR : BATCH_UNSHELF;
+            s_batch_confirm = true;
+        }
         else copy_text(s_batch_message, sizeof(s_batch_message), "请先选择图书");
         return APP_REDRAW_PAGE;
     }
@@ -3850,7 +4035,7 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
         for (int i = 0; i < 2; ++i) { *rect = ui_row_rect(i, 2, 620, UI_BTN_H); if (ui_rect_hit(*rect, x, y)) return 600 + i; }
         return -1;
     }
-    if (s_view == BULK) for (int i = 0; i < 5; ++i) { *rect = batch_rect(i); if (ui_rect_hit(*rect, x, y)) return 610 + i; }
+    if (s_view == BULK) for (int i = 0; i < 6; ++i) { *rect = batch_rect(i); if (ui_rect_hit(*rect, x, y)) return 610 + i; }
     if (s_view == MANAGE) {
         if (!s_clear_confirm && !s_file_removed) { *rect = (EpdRect){UI_MARGIN, manage_panel().y + manage_panel().height - 190, ui_content_width(), 68}; if (ui_rect_hit(*rect, x, y)) return 404; }
         int count = s_clear_confirm || s_file_removed ? 2 : 3;

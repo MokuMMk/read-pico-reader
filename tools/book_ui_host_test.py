@@ -45,6 +45,9 @@ unit = r'''
 #include <unistd.h>
 #include <stdatomic.h>
 #define ESP_OK 0
+#define ESP_FAIL -1
+#define ESP_ERR_NVS_NOT_FOUND -2
+#define ESP_ERR_INVALID_STATE -3
 #define ESP_ERR_NOT_FINISHED 7
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
@@ -68,7 +71,9 @@ typedef struct {uint32_t magic,file_size;uint16_t count,reserved;char path[288];
 #define UI_BTN_H 84
 static EpdRect ui_row_rect(int i,int count,int y,int height){EpdRect r=ui_bar_rect(i,count);r.y=y;r.height=height;return r;}
 static char s_query[65],s_search_draft[65],s_batch_message[128];
-static bool s_batch_confirm,s_batch_delete;
+typedef enum {BATCH_DELETE,BATCH_CLEAR,BATCH_UNSHELF} batch_kind_t;
+static bool s_batch_confirm;
+static batch_kind_t s_batch_kind;
 static bool read_pico_search_match(const char* name,const char* query){return !*query||strstr(name,query)!=NULL;}
 static int book_chapter_count(void){return 1;}
 static size_t book_navigation_count(void){return (size_t)book_chapter_count();}
@@ -81,9 +86,36 @@ static int app_settings_shelf_style(void){return test_shelf_style;}
 static bool app_settings_shelf_recent_sort(void){return s_recent_sort;}
 typedef int nvs_handle_t;
 #define NVS_READONLY 0
-static int nvs_open(const char* ns,int mode,nvs_handle_t* out){(void)ns;(void)mode;*out=1;return ESP_OK;}
+#define NVS_READWRITE 1
+#define SHELF_HIDDEN_NS "rp_shelf"
+typedef struct {char key[11],path[BOOK_STORE_PATH_MAX];} test_hidden_t;
+static test_hidden_t test_hidden[16];
+static int test_hidden_count,test_hidden_error;
+static char test_favorite_key[11];
+static int nvs_open(const char* ns,int mode,nvs_handle_t* out){(void)mode;*out=!strcmp(ns,SHELF_HIDDEN_NS)?2:1;return ESP_OK;}
 static void nvs_close(nvs_handle_t h){(void)h;}
-static int nvs_get_u8(nvs_handle_t h,const char* key,uint8_t* out){(void)h;(void)key;(void)out;return -1;}
+static int nvs_get_u8(nvs_handle_t h,const char* key,uint8_t* out){if(h==1&&!strcmp(key,test_favorite_key)){*out=1;return ESP_OK;}return ESP_ERR_NVS_NOT_FOUND;}
+static int nvs_get_str(nvs_handle_t h,const char* key,char* out,size_t* len){
+    assert(h==2);
+    for(int i=0;i<test_hidden_count;i++)if(!strcmp(key,test_hidden[i].key)){
+        assert(*len>strlen(test_hidden[i].path));strcpy(out,test_hidden[i].path);*len=strlen(out)+1;return ESP_OK;
+    }
+    return ESP_ERR_NVS_NOT_FOUND;
+}
+static int nvs_set_str(nvs_handle_t h,const char* key,const char* path){
+    assert(h==2);if(test_hidden_error)return test_hidden_error;
+    int i;for(i=0;i<test_hidden_count;i++)if(!strcmp(key,test_hidden[i].key))break;
+    if(i==test_hidden_count){assert(i<16);++test_hidden_count;}
+    strcpy(test_hidden[i].key,key);strcpy(test_hidden[i].path,path);return ESP_OK;
+}
+static int nvs_erase_key(nvs_handle_t h,const char* key){
+    assert(h==2);if(test_hidden_error)return test_hidden_error;
+    for(int i=0;i<test_hidden_count;i++)if(!strcmp(key,test_hidden[i].key)){
+        test_hidden[i]=test_hidden[--test_hidden_count];return ESP_OK;
+    }
+    return ESP_ERR_NVS_NOT_FOUND;
+}
+static int nvs_commit(nvs_handle_t h){assert(h==2);return ESP_OK;}
 static shelf_entry_t* s_shelf;
 static size_t s_shelf_capacity;
 static int s_count,s_visible_count;
@@ -92,6 +124,16 @@ static bool s_pending_invalidated,test_oom,test_degraded;
 static unsigned s_store_revision;
 typedef struct {char path[288];bool is_flash;} book_store_root_t;
 typedef struct {uint32_t file_size;uint16_t chapter;uint32_t byte_off;uint8_t px,pct;uint32_t last_open_s;} book_progress_t;
+typedef bool (*book_progress_visit_fn)(const char*,const book_progress_t*,void*);
+typedef struct {char path[BOOK_STORE_PATH_MAX];book_progress_t value;} test_progress_t;
+static test_progress_t test_progress[8];
+static int test_progress_count;
+static char test_recent_path[BOOK_STORE_PATH_MAX];
+typedef struct {nvs_handle_t favorites,hidden;bool truncated;} shelf_backfill_t;
+static esp_err_t book_progress_list(book_progress_visit_fn visit,void* ctx){
+    for(int i=0;i<test_progress_count;i++)if(!visit(test_progress[i].path,&test_progress[i].value,ctx))break;
+    return ESP_OK;
+}
 typedef struct book_progress_watch {char path[288];atomic_bool invalidated;struct book_progress_watch* next;} book_progress_watch_t;
 static book_progress_watch_t* test_watches;
 static book_progress_watch_t* book_progress_watch_create(const char* path){book_progress_watch_t* w=calloc(1,sizeof(*w));assert(w);strcpy(w->path,path);atomic_init(&w->invalidated,false);w->next=test_watches;test_watches=w;return w;}
@@ -106,9 +148,12 @@ static void* heap_caps_calloc(size_t count,size_t n,int caps){(void)caps;return 
 static bool book_store_roots_degraded(void){return test_degraded;}
 static uint64_t book_store_free_bytes(const book_store_root_t* root){(void)root;return 1000000;}
 static int book_store_roots(book_store_root_t out[BOOK_STORE_ROOT_MAX],int* n){*n=test_root_count;memcpy(out,test_roots,sizeof(test_roots));return 0;}
-static bool book_progress_load(const char* p,uint32_t n,book_progress_t* out){(void)p;(void)n;*out=(book_progress_t){0};return false;}
-static bool book_progress_last_path(char* out,size_t cap){(void)out;(void)cap;return false;}
-static int book_epub_metadata(const char* path,char* title,size_t tcap,char* author,size_t acap){(void)path;(void)title;(void)tcap;(void)author;(void)acap;return -1;}
+static bool book_progress_load(const char* p,uint32_t n,book_progress_t* out){
+    for(int i=0;i<test_progress_count;i++)if(!strcmp(p,test_progress[i].path)&&n==test_progress[i].value.file_size){*out=test_progress[i].value;return true;}
+    *out=(book_progress_t){0};return false;
+}
+static bool book_progress_last_path(char* out,size_t cap){if(!test_recent_path[0])return false;snprintf(out,cap,"%s",test_recent_path);return true;}
+static int book_epub_metadata(const char* path,char* title,size_t tcap,char* author,size_t acap){(void)path;snprintf(title,tcap,"原书名");snprintf(author,acap,"作者");return ESP_OK;}
 static int book_epub_metadata_cached(const char* path,char* title,size_t tcap,char* author,size_t acap){return book_epub_metadata(path,title,tcap,author,acap);}
 static bool book_title_get(const char* path,char* out,size_t cap){(void)path;(void)out;(void)cap;return false;}
 static void book_title_clean_import(char* title){(void)title;}
@@ -205,7 +250,7 @@ static int book_progress_forget(const char* path){for(book_progress_watch_t* w=t
 static void book_store_notify_changed(void){test_notify_count++;}
 static unsigned book_store_revision(void){return (unsigned)test_notify_count;}
 static void free_book(void){s_text=NULL;s_path[0]=0;}
-static void refresh_cached_progress(app_ctx_t* ctx){(void)ctx;}
+static void refresh_cached_progress(app_ctx_t* ctx);
 static void return_to_cached_shelf(app_ctx_t* ctx){(void)ctx;}
 static bool open_book(app_ctx_t* ctx,const char* path){(void)ctx;assert(path[0]);test_open_calls++;s_view=READING;return true;}
 static char test_wrapped[512];
@@ -225,7 +270,7 @@ static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;tex
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
 unit += function("book_layout_balanced_rect", layout_source) + "\n"
-for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_rows", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "scan_shelf",
+for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_hidden_key", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_rows", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
              "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 unit += r'''
@@ -313,6 +358,58 @@ int main(void) {
     assert(unlink(deep_book)==0&&unlink(ignored_book)==0);
     for(int level=13;level>=1;level--)assert(rmdir(deep[level])==0);
     scan_shelf(&ctx);assert(s_count==65);
+    // 缓存路径也补入卡上其他目录的已读书，跳过重复、缺失和大小已变的记录。
+    // Cached refresh backfills outside-root reads and skips duplicate, missing and resized files.
+    char outside_dir[96],outside[BOOK_STORE_PATH_MAX],changed[BOOK_STORE_PATH_MAX];
+    snprintf(outside_dir,sizeof(outside_dir),"/tmp/book-ui-outside-%d",(int)getpid());
+    assert(mkdir(outside_dir,0700)==0);
+    snprintf(outside,sizeof(outside),"%s/读过.epub",outside_dir);
+    snprintf(changed,sizeof(changed),"%s/changed.txt",outside_dir);
+    FILE* outside_file=fopen(outside,"w");assert(outside_file);fputs("x",outside_file);fclose(outside_file);
+    outside_file=fopen(changed,"w");assert(outside_file);fputs("xx",outside_file);fclose(outside_file);
+    test_progress_count=4;
+    strcpy(test_progress[0].path,outside);
+    test_progress[0].value=(book_progress_t){.file_size=1,.chapter=3,.byte_off=17,.px=48,.pct=42,.last_open_s=19};
+    snprintf(test_progress[1].path,BOOK_STORE_PATH_MAX,"%s/missing.txt",outside_dir);
+    strcpy(test_progress[2].path,changed);
+    snprintf(test_progress[3].path,BOOK_STORE_PATH_MAX,"%s/book005.txt",test_roots[0].path);
+    for(int i=1;i<4;i++)test_progress[i].value=(book_progress_t){.file_size=1,.px=48,.pct=7};
+    favorite_key(outside,test_favorite_key);
+    strcpy(test_recent_path,outside);
+    refresh_cached_progress(&ctx);assert(s_count==66&&s_visible_count==66);
+    assert(!strcmp(s_shelf[0].path,outside)&&!strcmp(s_shelf[0].name,"读过")&&
+           !strcmp(s_shelf[0].author,"作者")&&s_shelf[0].favorite&&s_shelf[0].has_progress&&
+           s_shelf[0].pct==42&&s_shelf[0].chapter==3&&s_shelf[0].recent==19);
+    refresh_cached_progress(&ctx);assert(s_count==66);
+    // 六个按钮可命中；取消不写入，失败可重试，移出不删除文件或修改进度。
+    // All six buttons respond; cancellation is safe and failed removal retries without data loss.
+    s_view=BULK;clear_selection();toggle_selection(0);
+    EpdRect unshelf= batch_rect(5);int removal_delete_calls=test_delete_calls;
+    batch_action(&ctx,unshelf.x+1,unshelf.y+1);
+    assert(s_batch_confirm&&s_batch_kind==BATCH_UNSHELF&&!shelf_hidden_load(outside));
+    EpdRect dismiss=ui_row_rect(0,2,620,UI_BTN_H);
+    batch_action(&ctx,dismiss.x+1,dismiss.y+1);
+    assert(!s_batch_confirm&&!shelf_hidden_load(outside)&&selected_count()==1);
+    test_hidden_error=ESP_FAIL;batch_apply(&ctx);
+    assert(s_count==66&&selected_count()==1&&!shelf_hidden_load(outside));
+    test_hidden_error=ESP_OK;batch_apply(&ctx);
+    assert(s_count==65&&!selected_count()&&shelf_hidden_load(outside)&&test_delete_calls==removal_delete_calls);
+    struct stat outside_stat;assert(stat(outside,&outside_stat)==0&&outside_stat.st_size==1);
+    book_progress_t retained;
+    assert(book_progress_load(outside,1,&retained)&&retained.pct==42&&retained.byte_off==17);
+    scan_shelf(&ctx);refresh_cached_progress(&ctx);assert(s_count==65&&shelf_hidden_load(outside));
+    assert(shelf_hidden_save(outside,false));refresh_cached_progress(&ctx);
+    assert(s_count==66&&!shelf_hidden_load(outside));
+    assert(shelf_hidden_save(test_progress[3].path,true));scan_shelf(&ctx);assert(s_count==65);
+    assert(shelf_hidden_save(test_progress[3].path,false));
+    char hidden_key[11];shelf_hidden_key(outside,hidden_key);
+    assert(nvs_set_str(2,hidden_key,changed)==ESP_OK);
+    assert(!shelf_hidden_save(outside,true)&&!shelf_hidden_load(outside));
+    assert(!shelf_hidden_save(outside,false));
+    assert(nvs_erase_key(2,hidden_key)==ESP_OK);
+    test_progress_count=0;test_recent_path[0]=test_favorite_key[0]=0;
+    assert(unlink(outside)==0&&unlink(changed)==0&&rmdir(outside_dir)==0);
+    scan_shelf(&ctx);assert(s_count==65);
     ctx.leaf=3;s_view=MANAGE;s_clear_confirm=false;s_file_removed=false;
     EpdRect back=manage_rect(0,3);manage_action(&ctx,back.x+1,back.y+1);
     assert(s_view==SHELF&&ctx.leaf==3);
@@ -361,7 +458,7 @@ int main(void) {
     search_begin();memset(s_search_draft,'x',64);s_search_draft[64]=0;search_action(&ctx,0);assert(strlen(s_search_draft)==64);search_action(&ctx,41);assert(strlen(s_search_draft)==63);search_action(&ctx,42);assert(!s_search_draft[0]);search_action(&ctx,43);
     strcpy(s_query,"");refresh_search_matches();sort_shelf(&ctx);clear_selection();s_view=BULK;toggle_selection(0);toggle_selection(1);
     s_batch_confirm=true;calls=test_delete_calls;EpdRect bc=ui_row_rect(0,2,620,UI_BTN_H);batch_action(&ctx,bc.x+1,bc.y+1);assert(!s_batch_confirm&&test_delete_calls==calls);
-    s_batch_delete=true;test_removed=true;test_delete_error=-1;batch_apply(&ctx);assert(selected_count()==2);
+    s_batch_kind=BATCH_DELETE;test_removed=true;test_delete_error=-1;batch_apply(&ctx);assert(selected_count()==2);
     calls=test_delete_calls;test_forget_error=0;batch_apply(&ctx);assert(!selected_count()&&test_delete_calls==calls&&s_count==63);
     scan_shelf(&ctx);clear_selection();toggle_selection(0);toggle_selection(1);test_mixed=true;
     batch_apply(&ctx);assert(s_count==64&&selected_count()==1&&s_shelf[0].removed);
@@ -389,7 +486,7 @@ int main(void) {
     s_view=MANAGE;calls=test_delete_calls;test_forget_error=0;manage_apply(&ctx);
     assert(s_view==SHELF&&test_delete_calls==calls);
     // 批量失败记录同样跨页存活，重试仅清元数据。/ Batch cleanup retries also survive exits without repeating unlink.
-    scan_shelf(&ctx);clear_selection();toggle_selection(0);toggle_selection(1);s_batch_delete=true;
+    scan_shelf(&ctx);clear_selection();toggle_selection(0);toggle_selection(1);s_batch_kind=BATCH_DELETE;
     batch_apply(&ctx);assert(selected_count()==2&&s_delete_retries);
     for(int i=0;i<s_count;i++)if(s_shelf[i].removed)assert(unlink(s_shelf[i].path)==0);
     book_on_exit(&ctx);on_enter(&ctx);scan_shelf(&ctx);

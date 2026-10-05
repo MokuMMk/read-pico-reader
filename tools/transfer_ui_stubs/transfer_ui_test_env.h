@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "read_pico_transfer_network.h"
+#include "../../main/assets/ui_icons.h"
 typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_FAIL -1
@@ -61,6 +62,7 @@ static inline void ui_clear_page(uint8_t* f) {(void)f;}
 static inline void ui_clear_rect_fast(uint8_t* f,EpdRect r) {(void)f;(void)r;}
 static inline void ui_draw_header(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_button(uint8_t* f,...) {(void)f;}
+static inline void ui_draw_icon(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_pressed_round_rect(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_round_rect(uint8_t* f,...) {(void)f;}
 static inline void ui_fill_round_rect(uint8_t* f,...) {(void)f;}
