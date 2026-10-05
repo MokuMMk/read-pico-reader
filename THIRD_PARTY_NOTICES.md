@@ -11,8 +11,8 @@ remain in the source. This project is not an official MindReset release.
 | Material / 组件 | License / 许可 | Notice / 声明 |
 | --- | --- | --- |
 | MindReset Read Pico firmware and board components | Apache-2.0 | [LICENSE](LICENSE); source file headers |
-| [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader) icon artwork used as a design source | MIT | [CrossPoint notice](flash/licenses/CROSSPOINT-MIT.txt) |
-| [Lucide](https://lucide.dev/license) icons included in the CrossPoint icon source | ISC | [Lucide notice](flash/licenses/LUCIDE-ISC.txt) |
+| [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader) — earlier icon artwork, no longer bundled | MIT | [CrossPoint notice](flash/licenses/CROSSPOINT-MIT.txt) |
+| [Lucide](https://lucide.dev/icons/) — the whole UI icon set, vendored as SVG sources in `tools/icons/lucide/` and compiled into `main/assets/ui_icons.h` by `tools/gen_ui_icons.py` | ISC | [Lucide notice](flash/licenses/LUCIDE-ISC.txt) |
 | [epdiy](https://github.com/vroland/epdiy), including the locally modified driver | LGPL-3.0-or-later | [Modification notes](components/epdiy/LICENSE), [LGPLv3](licenses/LGPL-3.0.txt), [GPLv3](licenses/GPL-3.0.txt) |
 | [pypinyin](https://github.com/mozillazg/python-pinyin) dictionary data used by offline book search | MIT | [pypinyin notice](components/read_pico_search/LICENSE.pypinyin) |
 | Embedded Noto Sans SC Medium font subset | SIL OFL-1.1 | [Font license](main/assets/OFL-Noto.txt) |

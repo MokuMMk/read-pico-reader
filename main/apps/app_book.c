@@ -92,7 +92,13 @@
 #include "ui_menu.h"
 #include "ui_nav.h"
 #include "app_transfer_mode.h"
-#include "assets/reader_refresh_icon.h"
+
+// 阅读工具栏图标盒边长；行内图标在 1096..1216 的工具条里以 1138 为中心。
+// Reader toolbar icon box; the row centres on y=1138 inside the 1096..1216 bar.
+#define READER_TOOL_ICON_PX 40
+// 二级面板返回键里的箭头边长；圆底半径 24，原来的箭头是 20 像素高。
+// Chevron box inside a secondary panel's back control; the old arrow was 20 px tall.
+#define READER_SHEET_BACK_PX 34
 
 #define BOOK_ROWS 13
 #define BOOK_GRID_ROWS 9
@@ -1404,52 +1410,18 @@ static bool bookmark_toggle(void) {
 }
 
 static void draw_reader_tool_icon(uint8_t* fb, int cx, int cy, int kind, bool selected) {
-    uint8_t ink = 0x38;
-    if (kind == 0) {
-        const int ys[] = {-11, 0, 11}, widths[] = {21, 27, 18};
-        for (int i = 0; i < 3; ++i) {
-            epd_fill_circle(cx - 16, cy + ys[i], 2, ink, fb);
-            epd_fill_rect((EpdRect){cx - 9, cy + ys[i] - 1, widths[i], 3}, ink, fb);
-        }
-    } else if (kind == 1) {
-        // 选中态填满整枚书签，未选中态保留空心轮廓。
-        // Fill the entire saved bookmark; leave the unsaved glyph as an outline.
-        if (selected) {
-            epd_fill_rect((EpdRect){cx - 15, cy - 17, 31, 24}, ink, fb);
-            for (int row = 0; row < 12; ++row) {
-                int half = 13 - row * 13 / 11;
-                epd_fill_rect((EpdRect){cx - half, cy + 7 + row, half * 2 + 1, 1}, ink, fb);
-            }
-            return;
-        }
-        epd_fill_rect((EpdRect){cx - 15, cy - 17, 31, 2}, ink, fb);
-        epd_fill_rect((EpdRect){cx - 15, cy - 17, 2, 24}, ink, fb);
-        epd_fill_rect((EpdRect){cx + 13, cy - 17, 2, 24}, ink, fb);
-        epd_draw_line(cx - 14, cy + 6, cx, cy + 18, ink, fb);
-        epd_draw_line(cx - 13, cy + 6, cx, cy + 17, ink, fb);
-        epd_draw_line(cx, cy + 18, cx + 14, cy + 6, ink, fb);
-        epd_draw_line(cx, cy + 17, cx + 13, cy + 6, ink, fb);
-    } else if (kind == 2) {
-        const int xs[] = {cx - 12, cx, cx + 12}, tops[] = {cy + 4, cy - 4, cy - 14};
-        for (int i = 0; i < 3; ++i) {
-            epd_fill_rect((EpdRect){xs[i] - 1, tops[i], 3, cy + 18 - tops[i]}, ink, fb);
-            epd_fill_circle(xs[i], tops[i], 2, ink, fb);
-            epd_fill_circle(xs[i], cy + 17, 2, ink, fb);
-        }
-    } else if (kind == 3) {
-        // Keep the supplied refresh shape; use the same 0x38 ink and center as its neighbors.
-        const int size = READER_REFRESH_ICON_SIZE;
-        for (int y = 0; y < size; ++y) {
-            for (int x = 0; x < size; ++x) {
-                int index = y * size + x;
-                uint8_t packed = reader_refresh_icon_alpha[index / 2];
-                int alpha = index & 1 ? packed & 15 : packed >> 4;
-                if (!alpha) continue;
-                uint8_t gray = (uint8_t)((255 * (15 - alpha) + ink * alpha + 7) / 15);
-                epd_draw_pixel(cx - size / 2 + x, cy - size / 2 + y, gray, fb);
-            }
-        }
-    } else ui_text_vc(fb, cx, cy, 33, "A", EPD_DRAW_ALIGN_CENTER, false);
+    // 阅读工具栏图标全部来自 Lucide；已保存的书签用带勾的一档区分未保存。
+    // Reader toolbar icons all come from Lucide; a saved bookmark uses the check variant.
+    static const ui_icon_t tools[] = {
+        UI_ICON_LIST,          // 0 目录
+        UI_ICON_BOOKMARK,      // 1 书签
+        UI_ICON_CHART_COLUMN,  // 2 阅读统计
+        UI_ICON_REFRESH_CW,    // 3 刷新设置
+        UI_ICON_TYPE,          // 4 字体设置
+    };
+    if (kind < 0 || kind >= (int)(sizeof(tools) / sizeof(tools[0]))) return;
+    const ui_icon_t icon = (kind == 1 && selected) ? UI_ICON_BOOKMARK_CHECK : tools[kind];
+    ui_draw_icon(fb, cx, cy, READER_TOOL_ICON_PX, icon, 0x38);
 }
 
 static void draw_sheet(uint8_t* fb, int top, const char* title) {
@@ -1459,6 +1431,13 @@ static void draw_sheet(uint8_t* fb, int top, const char* title) {
     ui_draw_round_rect(fb, sheet, 28, 0x58);
     ui_fill_round_rect(fb, (EpdRect){292, top + 14, 100, 7}, 3, 0x48);
     ui_text_vc(fb, 342, top + 57, 30, title, EPD_DRAW_ALIGN_CENTER, false);
+}
+
+// 二级面板左上角的返回键：圆底加 Lucide chevron-left，各面板共用。
+// Secondary-panel back control: a circle with the Lucide chevron-left, shared by the panels.
+static void draw_sheet_back(uint8_t* fb, int top) {
+    epd_draw_circle(64, top + 57, 24, 0x78, fb);
+    ui_draw_icon(fb, 64, top + 57, READER_SHEET_BACK_PX, UI_ICON_CHEVRON_LEFT, 0x38);
 }
 
 static void draw_pill_slider(uint8_t* fb, EpdRect r, const char* left, const char* right,
@@ -1561,9 +1540,7 @@ static EpdRect rule_style_rect(int index) {
 static void draw_rule_settings(uint8_t *fb) {
     const int top = 640;
     draw_sheet(fb, top, "阅读线");
-    epd_draw_circle(64, top + 57, 24, 0x78, fb);
-    epd_draw_line(68, top + 47, 58, top + 57, 0x38, fb);
-    epd_draw_line(58, top + 57, 68, top + 67, 0x38, fb);
+    draw_sheet_back(fb, top);
     ui_text(fb, 42, 741, 21, "选择样式", EPD_DRAW_ALIGN_LEFT, false);
     static const char *const names[] = {"无", "虚线", "点线"};
     int selected = app_settings_book_reading_line();
@@ -1599,9 +1576,7 @@ static void draw_rule_settings(uint8_t *fb) {
 static void draw_layout_settings(uint8_t* fb) {
     const int top = 575;
     draw_sheet(fb, top, "排版设置");
-    epd_draw_circle(64, top + 57, 24, 0x78, fb);
-    epd_draw_line(68, top + 47, 58, top + 57, 0x38, fb);
-    epd_draw_line(58, top + 57, 68, top + 67, 0x38, fb);
+    draw_sheet_back(fb, top);
     int shown_margin = s_reader_slider >= 0 ? s_reader_preview_margin : s_margin;
     int shown_line = s_reader_slider >= 0 ? s_reader_preview_line : app_settings_book_line_spacing();
     int shown_para = s_reader_slider >= 0 ? s_reader_preview_para : app_settings_book_paragraph_spacing();

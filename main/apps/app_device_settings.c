@@ -30,7 +30,6 @@
 #include "ui_wallpaper.h"
 #include "read_pico_search.h"
 #include "book_store.h"
-#include "../assets/app_icons.h"
 
 static char s_notice[96];
 typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
@@ -50,6 +49,10 @@ static const char *const TAG = "device_settings";
 #define SETTINGS_DISPLAY_Y 427
 #define SETTINGS_DEVICE_Y 876
 #define SETTINGS_ROW_H 68
+// 设置行图标：32 像素盒，在行高 68 里垂直居中；墨色统一，避免一行一个灰度。
+// Setting row icons: a 32 px box centred in the 68 px row with one shared ink level.
+#define SETTINGS_ICON_PX 32
+#define SETTINGS_ICON_INK 0x58
 #define SETTINGS_SCROLL_MAX 160
 static char s_editor[96], s_editor_pinyin[24], s_editor_notice[80];
 static bool s_editor_chinese;
@@ -245,56 +248,24 @@ static void back_header(uint8_t *fb, const char *title) {
 }
 
 static void setting_icon(uint8_t *fb, int index, int cx, int cy) {
-    if (index == 0) {
-        ui_nav_wifi_icon(fb, cx, cy, 32, 0x6a);
-        return;
-    }
-    if (index == 7) {
-        epd_draw_circle(cx, cy, 13, 0x50, fb);
-        epd_fill_rect((EpdRect){cx - 13, cy, 26, 13}, 0x50, fb);
-        epd_draw_line(cx - 18, cy, cx - 15, cy, 0x50, fb);
-        epd_draw_line(cx + 15, cy, cx + 18, cy, 0x50, fb);
-        epd_draw_line(cx, cy - 18, cx, cy - 15, 0x50, fb);
-        epd_draw_line(cx, cy + 15, cx, cy + 18, 0x50, fb);
-        return;
-    }
-    if (index == 8) {
-        // TF 卡配置：两张重叠的页面。/ Two overlapping sheets for TF configuration.
-        ui_draw_round_rect(fb, (EpdRect){cx - 12, cy - 15, 26, 30}, 3, 0x58);
-        epd_draw_line(cx - 17, cy - 9, cx - 17, cy + 17, 0x58, fb);
-        epd_draw_line(cx - 17, cy + 17, cx + 8, cy + 17, 0x58, fb);
-        epd_draw_line(cx - 6, cy - 5, cx + 8, cy - 5, 0x58, fb);
-        epd_draw_line(cx - 6, cy + 3, cx + 8, cy + 3, 0x58, fb);
-        return;
-    }
-    if (index == 9) {
-        epd_draw_circle(cx, cy + 3, 13, 0x58, fb);
-        epd_draw_circle(cx, cy + 3, 12, 0x58, fb);
-        epd_fill_rect((EpdRect){cx - 5, cy - 15, 10, 15}, UI_GRAY_WHITE, fb);
-        epd_fill_rect((EpdRect){cx - 2, cy - 17, 4, 17}, 0x58, fb);
-        return;
-    }
-    if (index == 10) {
-        epd_draw_line(cx - 15, cy - 12, cx + 15, cy - 12, 0x58, fb);
-        epd_draw_line(cx - 15, cy - 3, cx + 15, cy - 3, 0x58, fb);
-        epd_draw_line(cx - 7, cy + 8, cx + 7, cy + 8, 0x58, fb);
-        return;
-    }
-    if (index == 11) {
-        epd_draw_circle(cx, cy, 14, 0x58, fb);
-        epd_draw_line(cx - 1, cy - 8, cx - 1, cy + 1, 0x58, fb);
-        epd_draw_line(cx - 1, cy + 1, cx + 7, cy + 4, 0x58, fb);
-        return;
-    }
-    const uint8_t *image = pico_setting_icons[index];
-    for (int y = 0; y < PICO_SETTING_ICON_SIZE; ++y)
-        for (int x = 0; x < PICO_SETTING_ICON_SIZE; ++x) {
-            int pixel = y * PICO_SETTING_ICON_SIZE + x;
-            uint8_t byte = image[pixel / 2];
-            unsigned gray = pixel & 1 ? byte & 15 : byte >> 4;
-            if (gray < 15)
-                epd_draw_pixel(cx - 16 + x, cy - 16 + y, ui_contrast_gray((uint8_t)(gray << 4)), fb);
-        }
+    // 每个设置项对应一个 Lucide 图标；索引顺序由各分组传入的 icons[] 数组决定。
+    // One Lucide icon per setting row; the index order comes from each group's icons[] array.
+    static const ui_icon_t icons[] = {
+        UI_ICON_WIFI,              // 0 无线连接
+        UI_ICON_BLUETOOTH,         // 1 蓝牙
+        UI_ICON_TYPE,              // 2 系统字体、阅读操作
+        UI_ICON_A_LARGE_SMALL,     // 3 系统字号
+        UI_ICON_LIBRARY_BIG,       // 4 书架样式
+        UI_ICON_TICKET,            // 5 锁屏样式
+        UI_ICON_CLOCK,             // 6 日期与时间
+        UI_ICON_CONTRAST,          // 7 系统对比度
+        UI_ICON_COPY,              // 8 保存与恢复
+        UI_ICON_POWER,             // 9 关机睡眠
+        UI_ICON_TEXT_ALIGN_START,  // 10 状态栏签名
+        UI_ICON_REFRESH_CW,        // 11 首页强刷
+    };
+    if (index < 0 || index >= (int)(sizeof(icons) / sizeof(icons[0]))) return;
+    ui_draw_icon(fb, cx, cy, SETTINGS_ICON_PX, icons[index], SETTINGS_ICON_INK);
 }
 
 static void fit_value(char *value, int width) {
