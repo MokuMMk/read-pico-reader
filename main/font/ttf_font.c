@@ -546,10 +546,20 @@ static bool catalog_has_name(
     return false;
 }
 
-static ttf_font_item_t s_catalog[TTF_FONT_MAX];
+// 字体目录放 PSRAM，理由同文件列表。
+// The font catalogue lives in PSRAM for the same reason as the file list.
+static ttf_font_item_t *s_catalog;
+
+static bool catalog_alloc(void) {
+    if (!s_catalog)
+        s_catalog = heap_caps_calloc(TTF_FONT_MAX, sizeof(ttf_font_item_t),
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return s_catalog != NULL;
+}
 static int s_catalog_n;
 
 int ttf_font_scan(void) {
+    if (!catalog_alloc()) return 0;
     s_catalog_n = 0;
     for (size_t d = 0; d < sizeof(k_font_dirs) / sizeof(k_font_dirs[0]); d++) {
         const char* font_dir = k_font_dirs[d] ? k_font_dirs[d] : app_settings_fonts_dir();
