@@ -258,36 +258,37 @@ static void draw_cover(uint8_t *fb, const home_book_t *item, EpdRect box) {
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     ui_clear_page(fb);
-    // 首页按编辑器底色和坐标绘制，续读区不再使用白色卡片。/ Match the editor's page tone and positions without a reading card.
+    // 题头与横线对齐书架，续读区域使用已确认预览的下移坐标。
+    // Align the title and rule with the shelf and place the resume section at the approved lower coordinates.
     epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, 0xf0, fb);
     ui_nav_status(fb);
-    ui_text_vc(fb, 36, 113, 49, "首页", EPD_DRAW_ALIGN_LEFT, false);
-    epd_fill_rect((EpdRect){36, 161, 612, 2}, 0x68, fb);
-    ui_text_vc(fb, 36, 197, 29, "继续阅读", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_vc(fb, 648, 197, 19, "查看详情 ›", EPD_DRAW_ALIGN_RIGHT, false);
+    ui_text(fb, 36, 90, 52, "首页", EPD_DRAW_ALIGN_LEFT, false);
+    epd_fill_rect((EpdRect){36, 195, 612, 2}, 0x68, fb);
+    ui_text_vc(fb, 36, 237, 29, "继续阅读", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_vc(fb, 648, 237, 19, "查看详情 ›", EPD_DRAW_ALIGN_RIGHT, false);
     home_book_t *featured = s_current.path[0] ? &s_current : &s_recent[0];
     if (featured->path[0]) {
-        draw_cover(fb, featured, (EpdRect){36, 252, 172, 250});
+        draw_cover(fb, featured, (EpdRect){36, 292, 172, 250});
         char title[128]; snprintf(title, sizeof(title), "%s", featured->title);
         int title_px = home_title_px(title, 374);
         fit(title, title_px, 374);
-        ui_text_vc(fb, 248, 282, title_px, title, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_vc(fb, 248, 322, title_px, title, EPD_DRAW_ALIGN_LEFT, false);
         if (featured->author[0]) {
             char author[sizeof(featured->author)];
             snprintf(author, sizeof(author), "%s", featured->author);
             fit(author, 22, 374);
-            ui_text_vc(fb, 248, 338, 22, author, EPD_DRAW_ALIGN_LEFT, false);
+            ui_text_vc(fb, 248, 378, 22, author, EPD_DRAW_ALIGN_LEFT, false);
         }
         char detail[80];
         snprintf(detail, sizeof(detail), "已读 %u%%", featured->has_progress ? featured->progress.pct : 0);
-        ui_text_vc(fb, 248, 409, 22, detail, EPD_DRAW_ALIGN_LEFT, false);
-        EpdRect track = {248, 430, 374, 9};
+        ui_text_vc(fb, 248, 449, 22, detail, EPD_DRAW_ALIGN_LEFT, false);
+        EpdRect track = {248, 470, 374, 9};
         ui_fill_round_rect(fb, track, 5, 0xb0);
         track.width = track.width * (featured->has_progress ? featured->progress.pct : 0) / 100;
         if (track.width > 0) ui_fill_round_rect(fb, track, 5, 0x38);
-        ui_text_vc(fb, 248, 478, 24, "继续阅读 ›", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_vc(fb, 248, 518, 24, "继续阅读 ›", EPD_DRAW_ALIGN_LEFT, false);
     } else {
-        ui_text_vc(fb, 342, 378, 23, "打开一本书后，会在这里继续阅读", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 342, 418, 23, "打开一本书后，会在这里继续阅读", EPD_DRAW_ALIGN_CENTER, false);
     }
 
     epd_fill_rect((EpdRect){36, 619, 612, 2}, 0x68, fb);
@@ -430,7 +431,7 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
     // 只更新续读卡片，不再逐本刷新首页。/ Update only the current-read card, never flash covers one by one.
     if (cover_changed) {
         render(ctx, ctx->fb);
-        s_area = (EpdRect){36, 228, 612, 352};
+        s_area = (EpdRect){36, 268, 612, 351};
         return APP_REDRAW_AREA;
     }
     return APP_REDRAW_NONE;
@@ -440,7 +441,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
     int tab = ui_nav_hit(ev->x0, ev->y0);
     if (tab >= 0) { ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
-    if (ev->y0 >= 176 && ev->y0 < 580) {
+    if (ev->y0 >= 216 && ev->y0 < 619) {
         home_book_t *featured = s_current.path[0] ? &s_current : &s_recent[0];
         if (featured->path[0]) app_book_request_open_from_home(featured->path);
         ui_nav_request(ctx, 1);
