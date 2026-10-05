@@ -36,6 +36,7 @@
 #include "pmu_selftest.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "soc/rtc_cntl_reg.h"
 
 #define FILE_MAX 96
@@ -204,14 +205,17 @@ static void notify_moved_tree(const char *old_path, const char *new_path, unsign
     if (!S_ISDIR(st.st_mode)) return;
     DIR *dir = opendir(new_path);
     if (!dir) return;
+    char *paths = heap_caps_malloc(576, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!paths) { closedir(dir); return; }
+    char *old_child = paths, *new_child = paths + 288;
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char old_child[288], new_child[288];
-        if (snprintf(old_child, sizeof(old_child), "%s/%s", old_path, entry->d_name) >= sizeof(old_child) ||
-            snprintf(new_child, sizeof(new_child), "%s/%s", new_path, entry->d_name) >= sizeof(new_child)) continue;
+        if (snprintf(old_child, 288, "%s/%s", old_path, entry->d_name) >= 288 ||
+            snprintf(new_child, 288, "%s/%s", new_path, entry->d_name) >= 288) continue;
         notify_moved_tree(old_child, new_child, depth + 1);
     }
+    free(paths);
     closedir(dir);
 }
 

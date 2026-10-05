@@ -190,4 +190,22 @@ static esp_err_t read_stream(FILE *file, bool restore) {
 }
 
 bool book_history_backup_validate(FILE *file) { return read_stream(file, false) == ESP_OK; }
-esp_err_t book_history_backup_restore(FILE *file) { return read_stream(file, true); }
+esp_err_t book_history_backup_restore(FILE *file) {
+    if (!file) return ESP_ERR_INVALID_ARG;
+    long start = ftell(file);
+    if (start < 0 || !book_history_backup_validate(file) || fseek(file, start, SEEK_SET))
+        return ESP_ERR_INVALID_RESPONSE;
+    // Recovery replaces the old reading library. Merging leaves stale "last"
+    // and per-book records behind, so the restored shelf can appear unchanged.
+    // 恢复应替换旧阅读资料；合并会留下备份外的旧书进度与最近阅读排序。
+    for (unsigned ns = 0; ns < sizeof(namespaces) / sizeof(namespaces[0]); ++ns) {
+        nvs_handle_t h;
+        esp_err_t err = nvs_open(namespaces[ns], NVS_READWRITE, &h);
+        if (err != ESP_OK) return err;
+        err = nvs_erase_all(h);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+        if (err != ESP_OK) return err;
+    }
+    return read_stream(file, true);
+}

@@ -6,10 +6,12 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #endif
@@ -17,6 +19,14 @@
 #define TREE_DEPTH_MAX 8u
 #define TREE_NODES_MAX 1000u
 #define TREE_PATH_MAX 288u
+
+static void *tree_buffer(size_t size) {
+#ifdef ESP_PLATFORM
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+    return malloc(size);
+#endif
+}
 
 bool file_tree_same_or_below(const char *path, const char *directory) {
     if (!path || !directory || !*directory) return false;
@@ -42,15 +52,17 @@ static esp_err_t inspect_at(const char *path, unsigned depth, file_tree_info_t *
     if (!S_ISDIR(st.st_mode)) return ESP_ERR_NOT_SUPPORTED;
     DIR *dir = opendir(path);
     if (!dir) return ESP_FAIL;
+    char *child = tree_buffer(TREE_PATH_MAX);
+    if (!child) { closedir(dir); return ESP_ERR_NO_MEM; }
     esp_err_t err = ESP_OK;
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char child[TREE_PATH_MAX];
         if (!child_path(path, entry->d_name, child)) { err = ESP_ERR_INVALID_SIZE; break; }
         err = inspect_at(child, depth + 1, info);
         if (err != ESP_OK) break;
     }
+    free(child);
     if (closedir(dir)) err = ESP_FAIL;
     return err;
 }
@@ -74,15 +86,17 @@ static esp_err_t delete_at(const char *path, unsigned depth,
     if (!S_ISDIR(st.st_mode)) return ESP_ERR_NOT_SUPPORTED;
     DIR *dir = opendir(path);
     if (!dir) return ESP_FAIL;
+    char *child = tree_buffer(TREE_PATH_MAX);
+    if (!child) { closedir(dir); return ESP_ERR_NO_MEM; }
     esp_err_t err = ESP_OK;
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char child[TREE_PATH_MAX];
         if (!child_path(path, entry->d_name, child)) { err = ESP_ERR_INVALID_SIZE; break; }
         err = delete_at(child, depth + 1, callback, ctx);
         if (err != ESP_OK) break;
     }
+    free(child);
     if (closedir(dir)) err = ESP_FAIL;
     if (err == ESP_OK && rmdir(path)) err = ESP_FAIL;
     if (err == ESP_OK && callback) callback(path, true, ctx);
@@ -96,22 +110,24 @@ esp_err_t file_tree_delete(const char *path, file_tree_deleted_cb_t callback, vo
 }
 
 static esp_err_t copy_file(const char *source, const char *target) {
+    unsigned char *buffer = tree_buffer(4096);
+    if (!buffer) return ESP_ERR_NO_MEM;
     FILE *in = fopen(source, "rb");
-    if (!in) return ESP_FAIL;
+    if (!in) { free(buffer); return ESP_FAIL; }
     FILE *out = fopen(target, "wb");
-    if (!out) { fclose(in); return ESP_FAIL; }
-    unsigned char buffer[4096];
+    if (!out) { fclose(in); free(buffer); return ESP_FAIL; }
     esp_err_t err = ESP_OK;
     for (;;) {
-        size_t n = fread(buffer, 1, sizeof(buffer), in);
+        size_t n = fread(buffer, 1, 4096, in);
         if (n && fwrite(buffer, 1, n, out) != n) { err = ESP_FAIL; break; }
-        if (n < sizeof(buffer)) { if (ferror(in)) err = ESP_FAIL; break; }
+        if (n < 4096) { if (ferror(in)) err = ESP_FAIL; break; }
 #ifdef ESP_PLATFORM
         vTaskDelay(1);
 #endif
     }
     if (fclose(in)) err = ESP_FAIL;
     if (fclose(out)) err = ESP_FAIL;
+    free(buffer);
     if (err != ESP_OK) (void)unlink(target);
     return err;
 }
@@ -125,17 +141,20 @@ static esp_err_t copy_at(const char *source, const char *target, unsigned depth)
     if (mkdir(target, 0775)) return ESP_FAIL;
     DIR *dir = opendir(source);
     if (!dir) { (void)rmdir(target); return ESP_FAIL; }
+    char *paths = tree_buffer(TREE_PATH_MAX * 2);
+    if (!paths) { closedir(dir); (void)rmdir(target); return ESP_ERR_NO_MEM; }
+    char *from = paths, *to = paths + TREE_PATH_MAX;
     esp_err_t err = ESP_OK;
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char from[TREE_PATH_MAX], to[TREE_PATH_MAX];
         if (!child_path(source, entry->d_name, from) || !child_path(target, entry->d_name, to)) {
             err = ESP_ERR_INVALID_SIZE; break;
         }
         err = copy_at(from, to, depth + 1);
         if (err != ESP_OK) break;
     }
+    free(paths);
     if (closedir(dir)) err = ESP_FAIL;
     if (err != ESP_OK) (void)delete_at(target, depth, NULL, NULL);
     return err;

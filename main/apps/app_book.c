@@ -1641,44 +1641,44 @@ static void draw_layout_settings(uint8_t* fb) {
 static void draw_refresh_settings(uint8_t* fb) {
     const int top = 560;
     draw_sheet(fb, top, "刷新设置");
-    ui_text(fb, 42, 646, 22, "手动全刷", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 42, 646, 27, "手动全刷", EPD_DRAW_ALIGN_LEFT, false);
     EpdRect manual = {36, 680, 612, 112};
     ui_fill_round_rect(fb, manual, 22, 0xf0);
-    ui_draw_round_rect(fb, manual, 22, 0x98);
-    ui_text(fb, 58, 696, 26, "立即刷新整块屏幕", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, 58, 748, 18, "包含状态栏、书名与底部进度", EPD_DRAW_ALIGN_LEFT, false);
+    ui_draw_round_rect(fb, manual, 22, 0x68);
+    ui_text(fb, 58, 696, 29, "立即刷新整块屏幕", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 58, 748, 22, "包含状态栏、书名与底部进度", EPD_DRAW_ALIGN_LEFT, false);
     EpdRect action = {510, 704, 117, 63};
     ui_fill_round_rect(fb, action, 21, UI_GRAY_BLACK);
-    ui_text_vc(fb, 568, 735, 22, "全刷", EPD_DRAW_ALIGN_CENTER, true);
+    ui_text_vc(fb, 568, 735, 25, "全刷", EPD_DRAW_ALIGN_CENTER, true);
 
-    ui_text(fb, 42, 816, 22, "自动全刷 · 阅读翻页", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 42, 816, 27, "自动全刷 · 阅读翻页", EPD_DRAW_ALIGN_LEFT, false);
     const int options[] = {5, 10, 15, 30, 0};
     for (int i = 0; i < 5; ++i) {
         EpdRect rect = {36 + i * 124, 850, 116, 78};
         bool selected = app_settings_reader_full_pages() == options[i];
         ui_fill_round_rect(fb, rect, 20, selected ? 0xd8 : UI_GRAY_WHITE);
-        ui_draw_round_rect(fb, rect, 20, selected ? 0x48 : 0x98);
+        ui_draw_round_rect(fb, rect, 20, selected ? 0x48 : 0x68);
         char label[16];
         if (options[i]) snprintf(label, sizeof(label), "%d 页", options[i]);
         else snprintf(label, sizeof(label), "不强制");
-        ui_text_vc(fb, rect.x + rect.width / 2, 889, options[i] ? 22 : 19, label,
+        ui_text_vc(fb, rect.x + rect.width / 2, 889, options[i] ? 26 : 22, label,
                    EPD_DRAW_ALIGN_CENTER, false);
         if (selected) epd_fill_circle(rect.x + rect.width - 16, 865, 5, UI_GRAY_BLACK, fb);
     }
-    ui_text(fb, 42, 955, 22, "翻页效果", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 42, 955, 27, "翻页效果", EPD_DRAW_ALIGN_LEFT, false);
     static const char* effects[] = {"默认效果", "水波纹效果"};
     for (int i = 0; i < 2; ++i) {
         EpdRect rect = {36 + i * 312, 993, 300, 78};
         bool selected = app_settings_reader_turn_effect() == i;
         ui_fill_round_rect(fb, rect, 20, selected ? 0xd8 : UI_GRAY_WHITE);
-        ui_draw_round_rect(fb, rect, 20, selected ? 0x48 : 0x98);
-        ui_text_vc(fb, rect.x + rect.width / 2, 1032, 25, effects[i], EPD_DRAW_ALIGN_CENTER, false);
+        ui_draw_round_rect(fb, rect, 20, selected ? 0x48 : 0x68);
+        ui_text_vc(fb, rect.x + rect.width / 2, 1032, 28, effects[i], EPD_DRAW_ALIGN_CENTER, false);
         if (selected) epd_fill_circle(rect.x + rect.width - 25, 1016, 7, UI_GRAY_BLACK, fb);
     }
-    ui_text(fb, 42, 1101, 17, "不强制仅关闭定期全刷；手动全刷仍可用。", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 42, 1101, 22, "不强制仅关闭定期全刷，仍可手动全刷。", EPD_DRAW_ALIGN_LEFT, false);
     EpdRect done = {36, 1141, 612, 58};
     ui_fill_round_rect(fb, done, 20, UI_GRAY_BLACK);
-    ui_text_vc(fb, 342, 1170, 22, "完成", EPD_DRAW_ALIGN_CENTER, true);
+    ui_text_vc(fb, 342, 1170, 26, "完成", EPD_DRAW_ALIGN_CENTER, true);
 }
 
 static void draw_font_picker(uint8_t* fb) {
@@ -1702,9 +1702,15 @@ static void draw_font_picker(uint8_t* fb) {
         bool selected = !strcmp(active, item->path);
         ui_fill_round_rect(fb, card, 18, selected ? 0xc2 : 0xe4);
         ui_draw_round_rect(fb, card, 18, selected ? 0x48 : 0x98);
-        const char* label = font_friendly_name(item);
-        if (ttf_font_open(item->path) == ESP_OK) draw_font_name_with_current_face(fb, card.x + 90, card.y + 63, label);
-        else ui_text_vc(fb, card.x + 90, card.y + 63, 25, label, EPD_DRAW_ALIGN_CENTER, false);
+        char label[TTF_FONT_NAME_MAX];
+        copy_text(label, sizeof(label), font_friendly_name(item));
+        if (ttf_font_open(item->path) == ESP_OK) {
+            fit_text(label, 25, card.width - 32);
+            draw_font_name_with_current_face(fb, card.x + 90, card.y + 63, label);
+        } else {
+            fit_fixed_text(label, ui_text_effective_px(25), card.width - 32);
+            ui_text_vc(fb, card.x + 90, card.y + 63, 25, label, EPD_DRAW_ALIGN_CENTER, false);
+        }
         if (selected) epd_fill_circle(card.x + 158, card.y + 22, 7, UI_GRAY_BLACK, fb);
     }
     if (active_builtin) (void)ttf_font_open_builtin();
@@ -2559,27 +2565,46 @@ static void delete_retry_discard(const char* path) {
         p = &(*p)->next;
     }
 }
-// 递归扫描所选 books 目录，深度和路径都设上限，避免坏目录拖垮书架。
-// Walk nested books folders with bounded depth/path lengths so malformed media cannot stall the shelf.
-static void scan_shelf_dir(const char *root, bool is_flash, int depth, nvs_handle_t favorites,
+// 显式目录栈放在 PSRAM；主任务只有 8 KB 栈，递归进多级 books 会在封面出现前溢出。
+// Keep directory frames in PSRAM: recursive books scanning can overflow the 8 KB main-task stack before covers appear.
+#define BOOK_SCAN_DEPTH_LIMIT 12
+typedef struct {
+    DIR *dir;
+    char path[BOOK_STORE_PATH_MAX];
+} shelf_scan_frame_t;
+static void scan_shelf_dir(const char *root, bool is_flash, nvs_handle_t favorites,
                            bool *truncated, bool *unreadable, bool *skipped) {
-    if (*truncated || depth > 12) { *skipped = true; return; }
-    DIR *dir = opendir(root);
-    if (!dir) { *unreadable = true; return; }
-    struct dirent *ent;
-    for (;;) {
+    if (*truncated) return;
+    shelf_scan_frame_t *frames = heap_caps_calloc(BOOK_SCAN_DEPTH_LIMIT + 1, sizeof(*frames),
+                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!frames) { *truncated = true; return; }
+    frames[0].dir = opendir(root);
+    if (!frames[0].dir) { *unreadable = true; free(frames); return; }
+    snprintf(frames[0].path, sizeof(frames[0].path), "%s", root);
+    int depth = 0;
+    while (depth >= 0 && !*truncated) {
         errno = 0;
-        ent = readdir(dir);
-        if (!ent) { if (errno) *unreadable = true; break; }
+        struct dirent *ent = readdir(frames[depth].dir);
+        if (!ent) {
+            if (errno) *unreadable = true;
+            closedir(frames[depth].dir);
+            frames[depth].dir = NULL;
+            --depth;
+            continue;
+        }
         if (ent->d_name[0] == '.') continue;
         char path[BOOK_STORE_PATH_MAX];
-        int len = snprintf(path, sizeof(path), "%s/%s", root, ent->d_name);
+        int len = snprintf(path, sizeof(path), "%s/%s", frames[depth].path, ent->d_name);
         if (len < 0 || (size_t)len >= sizeof(path)) { *skipped = true; continue; }
         struct stat st;
         if (stat(path, &st) != 0) { *unreadable = true; continue; }
         if (S_ISDIR(st.st_mode)) {
-            scan_shelf_dir(path, is_flash, depth + 1, favorites, truncated, unreadable, skipped);
-            if (*truncated) break;
+            if (depth == BOOK_SCAN_DEPTH_LIMIT) { *skipped = true; continue; }
+            DIR *child = opendir(path);
+            if (!child) { *unreadable = true; continue; }
+            ++depth;
+            frames[depth].dir = child;
+            memcpy(frames[depth].path, path, (size_t)len + 1);
             continue;
         }
         if (!S_ISREG(st.st_mode)) continue;
@@ -2596,7 +2621,10 @@ static void scan_shelf_dir(const char *root, bool is_flash, int depth, nvs_handl
         if (!strcasecmp(ext, ".epub")) {
             char title[sizeof(item->name)] = {0};
             char author[sizeof(item->author)] = {0};
-            if (book_epub_metadata(item->path, title, sizeof(title), author, sizeof(author)) == ESP_OK)
+            // Listing must stay cheap and bounded: never parse every EPUB before
+            // the shelf is first painted. Opening a book populates this cache.
+            // 首屏列书只读已有元数据缓存，不在封面出现前逐本解析 EPUB。
+            if (book_epub_metadata_cached(item->path, title, sizeof(title), author, sizeof(author)) == ESP_OK)
                 copy_text(item->author, sizeof(item->author), author);
         }
         item->search_match = read_pico_search_match(item->name, s_query);
@@ -2610,7 +2638,9 @@ static void scan_shelf_dir(const char *root, bool is_flash, int depth, nvs_handl
         item->favorite = favorites && favorite_read_handle(favorites, item->path);
         s_shelf[s_count++] = candidate;
     }
-    closedir(dir);
+    for (int i = 0; i <= depth; ++i)
+        if (frames[i].dir) closedir(frames[i].dir);
+    free(frames);
 }
 
 static void scan_shelf(app_ctx_t* ctx) {
@@ -2634,7 +2664,7 @@ static void scan_shelf(app_ctx_t* ctx) {
                      roots[i].is_flash ? "内置余" : "TF余", book_store_free_bytes(&roots[i]) / 1048576.0);
             strncat(s_storage, capacity, sizeof(s_storage) - strlen(s_storage) - 1);
         }
-        scan_shelf_dir(roots[i].path, roots[i].is_flash, 0, favorites,
+        scan_shelf_dir(roots[i].path, roots[i].is_flash, favorites,
                        &truncated, &unreadable, &skipped);
     }
     if (favorites) nvs_close(favorites);

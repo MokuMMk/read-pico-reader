@@ -14,7 +14,7 @@
 
 刷机页现有图文新手指南：**连接 Pico → 选择串口 → 确认安装并等待完成**。页面下方也介绍了首页、书架、文件管理和设置，以及常见问题。
 
-刷机清单为 [`flash/manifest.json`](flash/manifest.json)，写入引导程序、分区表、应用程序和 OTA 数据分区；不会覆盖现有 NVS 设置与内置书籍分区。网页由 [Pages 工作流](.github/workflows/pages.yml) 按明确的文件清单部署，不上传本机书籍、备份或额外字体包。[查看本次详细更新日志](docs/RELEASE_NOTES_0.3.3-rc68.md)。
+刷机清单为 [`flash/manifest.json`](flash/manifest.json)，写入引导程序、分区表、应用程序和 OTA 数据分区；不会覆盖现有 NVS 设置与内置书籍分区。网页由 [Pages 工作流](.github/workflows/pages.yml) 按明确的文件清单部署，不上传本机书籍、备份或额外字体包。[查看本次详细更新日志](docs/RELEASE_NOTES_0.3.3-rc69.md)。
 
 ## TF 卡本地升级
 

@@ -477,6 +477,17 @@ esp_err_t read_pico_transfer_import_wifi_backup(const read_pico_transfer_wifi_ba
         memcpy(next.password, backup->password, sizeof(next.password));
     }
     esp_err_t err = store_credentials(backup->configured ? &next : NULL);
+    if (err == ESP_OK) {
+        transfer_credentials_t check = {0};
+        err = load_credentials(&check);
+        if (err == ESP_OK &&
+            (check.version != next.version ||
+             (backup->configured &&
+              (memcmp(check.ssid, next.ssid, sizeof(next.ssid)) ||
+               memcmp(check.password, next.password, sizeof(next.password))))))
+            err = ESP_FAIL;
+        clear_secret(&check, sizeof(check));
+    }
     if (err == ESP_OK && !s_wifi) publish_credentials(backup->configured ? &next : NULL);
     clear_secret(&next, sizeof(next));
     release_config();

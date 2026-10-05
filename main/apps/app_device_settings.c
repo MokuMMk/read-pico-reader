@@ -529,8 +529,14 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             bool active = item ? !strcmp(selected, item->path) : !selected[0];
             settings_card(fb, box, 18, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
             ui_draw_round_rect(fb, box, 18, active ? 0x90 : 0xd0);
-            ui_text_vc(fb, 60, box.y + 39, 26,
-                       item ? system_font_label(item->path) : "思源黑体（内建）", EPD_DRAW_ALIGN_LEFT, false);
+            char label[TTF_FONT_NAME_MAX];
+            snprintf(label, sizeof(label), "%s", item ? system_font_label(item->path) : "思源黑体（内建）");
+            while (label[0] && ttf_text_width_px(ui_text_effective_px(26), label) > box.width - 102) {
+                size_t len = strlen(label) - 1;
+                while (len && ((unsigned char)label[len] & 0xc0) == 0x80) --len;
+                label[len] = 0;
+            }
+            ui_text_vc(fb, 60, box.y + 39, 26, label, EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(609, box.y + 39, 6, UI_GRAY_BLACK, fb);
         }
         char pages[32]; snprintf(pages, sizeof(pages), "%d / %d", s_font_page + 1, (count + 8) / 8);
@@ -1138,8 +1144,13 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                 // Rebuild home and shelf caches after restoring reading records.
                 book_store_notify_changed();
             }
+            char saved_ssid[33] = {0};
+            bool wifi_saved = false;
+            if (err == ESP_OK)
+                (void)read_pico_transfer_get_saved_wifi(saved_ssid, &wifi_saved);
             snprintf(s_notice, sizeof(s_notice), "%s",
-                     err == ESP_OK ? "配置与阅读记录已恢复" :
+                     err == ESP_OK ? (wifi_saved ? "配置与阅读记录已恢复；WiFi 请重新连接" :
+                                                   "配置与阅读记录已恢复") :
                      err == ESP_ERR_INVALID_STATE ? "未识别到 TF 卡，请插卡后重试" :
                      err == ESP_ERR_NOT_FOUND ? "未找到 Pico-settings.backup" :
                      err == ESP_ERR_INVALID_RESPONSE ? "配置文件损坏或版本不兼容" :

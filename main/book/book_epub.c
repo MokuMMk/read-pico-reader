@@ -1312,7 +1312,8 @@ esp_err_t book_epub_image(book_epub_t *book, size_t chapter, const char *src,
 uint32_t book_epub_total_bytes(const book_epub_t *book) { return book ? book->total : 0; }
 uint32_t book_epub_chapter_byte_offset(const book_epub_t *book, size_t i) { return book && i < book->count ? book->chapters[i].offset : 0; }
 
-esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, char *author, size_t author_cap) {
+esp_err_t book_epub_metadata_cached(const char *path, char *title, size_t title_cap,
+                                    char *author, size_t author_cap) {
     if (!path || !title || !title_cap || !author || !author_cap) return ESP_ERR_INVALID_ARG;
     title[0] = author[0] = 0;
     char cache_path[112]; book_index_cache_header_t cache_key;
@@ -1334,6 +1335,15 @@ esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, ch
             }
         }
     }
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, char *author, size_t author_cap) {
+    if (!path || !title || !title_cap || !author || !author_cap) return ESP_ERR_INVALID_ARG;
+    if (book_epub_metadata_cached(path, title, title_cap, author, author_cap) == ESP_OK) return ESP_OK;
+    char cache_path[112]; book_index_cache_header_t cache_key;
+    bool cacheable = book_index_cache_prepare(path, "epmeta", EPUB_META_CACHE_VERSION,
+                                              cache_path, sizeof(cache_path), &cache_key);
     book_epub_t *book = psram(sizeof(*book));
     if (!book) return ESP_ERR_NO_MEM;
     memset(book, 0, sizeof(*book));

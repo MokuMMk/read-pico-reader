@@ -12,7 +12,7 @@ Visit the [HTTPS web flasher](https://wegooo-cell.github.io/read-pico-reader/). 
 
 If automatic entry to download mode fails on a device already running this firmware, open **File Manager → BOOT** on the device, wait for the computer to detect its serial port again, then retry the web flasher.
 
-The release manifest is [`flash/manifest.json`](flash/manifest.json); it flashes the bootloader, partition table, application, and the OTA data partition. Existing NVS settings and the internal book partition are preserved. The site is published from an explicit allowlist in [`.github/workflows/pages.yml`](.github/workflows/pages.yml), so local books, backups, and extra font packages are not uploaded. See the [detailed rc68 release notes](docs/RELEASE_NOTES_0.3.3-rc68.md).
+The release manifest is [`flash/manifest.json`](flash/manifest.json); it flashes the bootloader, partition table, application, and the OTA data partition. Existing NVS settings and the internal book partition are preserved. The site is published from an explicit allowlist in [`.github/workflows/pages.yml`](.github/workflows/pages.yml), so local books, backups, and extra font packages are not uploaded. See the [detailed rc69 release notes](docs/RELEASE_NOTES_0.3.3-rc69.md).
 
 ## Local TF-card updates
 

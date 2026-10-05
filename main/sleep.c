@@ -42,6 +42,9 @@
 static const char* TAG = "read_pico";
 
 #define APP_LOCK_LIGHT_SLEEP_MS (10U * 60U * 1000U)
+#define APP_LOCK_KEY_POLL_US (2LL * 1000 * 1000)
+#define APP_LOCK_STUCK_IRQ_US (3LL * 1000 * 1000)
+#define APP_LOCK_SLEEP_ERROR_LIMIT 5
 
 extern const uint8_t lock_4bpp_bin_start[] asm("_binary_lock_4bpp_bin_start");
 
@@ -166,57 +169,70 @@ app_wake_source_t app_light_sleep_wait_timed(sc7a20h_handle_t acc, uint32_t time
     }
 
     app_wake_source_t wake = APP_WAKE_NONE;
-    bool slept = false;
+    int64_t ioe_low_since_us = 0;
+    unsigned sleep_errors = 0;
     esp_err_t last_sleep_error = ESP_OK;
     int64_t last_sleep_error_log_ms = 0;
     for (;;) {
+        int64_t now_us = esp_timer_get_time();
+        // Check the deadline before every interrupt recovery path. A stuck-low
+        // IO expander must never bypass the ten-minute PMU handoff forever.
+        // 每次处理中断前先检查期限，避免 IO 扩展器低电平让票根永远停住。
+        if (deadline_us && now_us >= deadline_us) {
+            wake = APP_WAKE_TIMEOUT;
+            ESP_LOGI(TAG, "lock light sleep timeout after %u ms", (unsigned)timeout_ms);
+            break;
+        }
+        // The PMU event is authoritative even if the IOE edge was missed.
+        // Timer wakeups below provide a bounded fallback poll for that case.
+        // 即使漏掉 IOE 中断，也由定时唤醒轮询 PMU 按键事件。
+        if (read_pico_pmu_take_key_wakeup()) {
+            wake = APP_WAKE_KEY;
+            break;
+        }
         read_pico_clear_ioe_int();
-        if (!slept && gpio_get_level((gpio_num_t)READ_PICO_IOE_INT_GPIO) == 0) {
-            read_pico_pmu_drain_events();
-            read_pico_clear_ioe_int();
-            vTaskDelay(pdMS_TO_TICKS(20));
-            continue;
-        }
-        if (!slept && pickup && sc7a20h_int1_level(acc) > 0) {
-            pickup_ack(acc);
-            vTaskDelay(pdMS_TO_TICKS(20));
-            continue;
-        }
-        if (slept && gpio_get_level((gpio_num_t)READ_PICO_IOE_INT_GPIO) == 0) {
-            if (read_pico_pmu_take_key_wakeup()) {
+        if (gpio_get_level((gpio_num_t)READ_PICO_IOE_INT_GPIO) == 0) {
+            if (!ioe_low_since_us) ioe_low_since_us = now_us;
+            if (now_us - ioe_low_since_us >= APP_LOCK_STUCK_IRQ_US) {
+                // Return to the active page instead of leaving an inert lock
+                // image when a non-key IOE interrupt cannot be cleared.
+                // 非按键中断一直清不掉时，退回可操作页面，避免像死机一样停在锁屏。
+                ESP_LOGW(TAG, "lock IOE_INT stuck low; recover active page");
                 wake = APP_WAKE_KEY;
                 break;
             }
-            read_pico_clear_ioe_int();
+            vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
-        if (slept && pickup && sc7a20h_int1_level(acc) > 0 && pickup_ia(acc)) {
+        ioe_low_since_us = 0;
+        if (pickup && sc7a20h_int1_level(acc) > 0 && pickup_ia(acc)) {
             wake = APP_WAKE_PICKUP;
             ESP_LOGI(TAG, "pickup wake");
             break;
         }
-        if (slept && pickup && sc7a20h_int1_level(acc) > 0) {
+        if (pickup && sc7a20h_int1_level(acc) > 0) {
             pickup_ack(acc);
             pickup_wait_quiet(acc, 400, 1500);
             continue;
         }
+        int64_t sleep_us = APP_LOCK_KEY_POLL_US;
         if (deadline_us) {
             int64_t remaining_us = deadline_us - esp_timer_get_time();
-            if (remaining_us <= 0) {
-                wake = APP_WAKE_TIMEOUT;
-                ESP_LOGI(TAG, "lock light sleep timeout after %u ms", (unsigned)timeout_ms);
+            if (remaining_us < sleep_us) sleep_us = remaining_us;
+        }
+        if (sleep_us <= 0) continue;
+        esp_err_t timer_error = esp_sleep_enable_timer_wakeup((uint64_t)sleep_us);
+        if (timer_error != ESP_OK) {
+            ESP_LOGW(TAG, "lock sleep timer rejected: %s", esp_err_to_name(timer_error));
+            if (++sleep_errors >= APP_LOCK_SLEEP_ERROR_LIMIT) {
+                wake = APP_WAKE_KEY;
                 break;
             }
-            esp_err_t timer_error = esp_sleep_enable_timer_wakeup((uint64_t)remaining_us);
-            if (timer_error != ESP_OK) {
-                ESP_LOGW(TAG, "lock sleep timer rejected: %s", esp_err_to_name(timer_error));
-                vTaskDelay(pdMS_TO_TICKS(100));
-                continue;
-            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
         }
         int64_t t0 = esp_timer_get_time();
         esp_err_t sleep_error = esp_light_sleep_start();
-        slept = true;
         int64_t dt_ms = (esp_timer_get_time() - t0) / 1000;
         read_pico_clear_ioe_int();
         if (read_pico_pmu_take_key_wakeup()) {
@@ -247,14 +263,20 @@ app_wake_source_t app_light_sleep_wait_timed(sc7a20h_handle_t acc, uint32_t time
                 last_sleep_error_log_ms = now_ms;
             }
             last_sleep_error = sleep_error;
+            if (++sleep_errors >= APP_LOCK_SLEEP_ERROR_LIMIT) {
+                ESP_LOGE(TAG, "lock light sleep repeatedly rejected; recover active page");
+                wake = APP_WAKE_KEY;
+                break;
+            }
             // A rejected sleep must not spin at full CPU speed behind the static e-paper image.
             vTaskDelay(pdMS_TO_TICKS(100));
         } else {
             last_sleep_error = ESP_OK;
+            sleep_errors = 0;
         }
     }
 
-    if (deadline_us) esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
     gpio_wakeup_disable((gpio_num_t)READ_PICO_IOE_INT_GPIO);
     if (acc_armed) {
         gpio_wakeup_disable(sc7a20h_int1_gpio(acc));

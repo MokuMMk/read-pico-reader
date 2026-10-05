@@ -116,7 +116,10 @@ static void text_fit(char *text, int px, int width) {
 static uint8_t *cover_load(const char *path, const char *title, const char *author) {
     uint8_t *gray = heap_caps_malloc(BOOK_COVER_W * BOOK_COVER_H,
                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (gray && !book_cover_load_gray(path, title, author, gray, true, NULL)) {
+    // The lock screen must not decode a potentially large EPUB while the
+    // power key is being handled; use the shelf's cover cache when available.
+    // 处理电源键时只读书架封面缓存，不在锁屏路径解码大 EPUB。
+    if (gray && !book_cover_load_gray(path, title, author, gray, false, NULL)) {
         free(gray);
         gray = NULL;
     }
@@ -206,7 +209,7 @@ bool book_ticket_draw(uint8_t *fb, bool reader_background) {
     const char *ext = strrchr(path, '.');
     if (ext && !strcasecmp(ext, ".epub")) {
         char meta_title[256] = {0};
-        (void)book_epub_metadata(path, meta_title, sizeof(meta_title), author, sizeof(author));
+        (void)book_epub_metadata_cached(path, meta_title, sizeof(meta_title), author, sizeof(author));
     }
     ticket_stats_t stats; stats_load(&stats);
     uint32_t day = local_day();

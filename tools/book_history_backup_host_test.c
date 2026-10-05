@@ -46,6 +46,15 @@ esp_err_t nvs_open(const char *ns, int mode, nvs_handle_t *h) {
 }
 void nvs_close(nvs_handle_t h) { (void)h; }
 esp_err_t nvs_commit(nvs_handle_t h) { (void)h; return ESP_OK; }
+esp_err_t nvs_erase_all(nvs_handle_t h) {
+    int ns = h - 1;
+    for (int i = 0; i < counts[active];)
+        if (records[active][i].ns == ns) {
+            memmove(&records[active][i], &records[active][i + 1],
+                    (size_t)(--counts[active] - i) * sizeof(records[active][i]));
+        } else ++i;
+    return ESP_OK;
+}
 esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *v) { size_t n=1; return get(h-1,key,NVS_TYPE_U8,v,&n); }
 esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t v) { return put(h-1,key,NVS_TYPE_U8,&v,1); }
 esp_err_t nvs_get_u32(nvs_handle_t h, const char *key, uint32_t *v) { size_t n=4; return get(h-1,key,NVS_TYPE_U32,v,&n); }
@@ -108,8 +117,12 @@ int main(void) {
     assert(book_history_backup_write(f)==ESP_OK);
     rewind(f); assert(book_history_backup_validate(f));
     active=1; rewind(f);
+    const char *stale = "/sdcard/books/stale.epub";
+    assert(put(0,"last",NVS_TYPE_STR,stale,strlen(stale)+1)==ESP_OK);
+    assert(put(3,"f_deadbeef",NVS_TYPE_U8,&favorite,1)==ESP_OK);
     assert(book_history_backup_restore(f)==ESP_OK);
     assert(counts[1]==counts[0]);
+    assert(!find_record(3,"f_deadbeef"));
     for (int i=0;i<counts[0];++i) {
         record_t *a=&records[0][i], *b=find_record(a->ns,a->key);
         assert(b && b->type==a->type && b->len==a->len && !memcmp(a->data,b->data,a->len));

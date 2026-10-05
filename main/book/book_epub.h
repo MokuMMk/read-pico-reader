@@ -47,3 +47,7 @@ uint32_t book_epub_chapter_byte_offset(const book_epub_t *book, size_t index);
 esp_err_t book_epub_cover(const char *path, uint8_t **data, size_t *size, bool *is_png);
 /// 只读 OPF 的书名和作者；供书架显示。/ Read OPF title and creator for the shelf.
 esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, char *author, size_t author_cap);
+/// 只读取已有元数据缓存，锁屏路径不打开和解析 EPUB。
+/// Read an existing metadata cache only; the lock path must not open or parse an EPUB.
+esp_err_t book_epub_metadata_cached(const char *path, char *title, size_t title_cap,
+                                    char *author, size_t author_cap);

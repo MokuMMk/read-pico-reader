@@ -60,6 +60,8 @@ typedef struct {char name[256],author[128],path[288];uint32_t size;uint16_t chap
 #define BOOK_GRID_ROWS 9
 #define BOOK_BULK_ROWS 6
 #define BOOKMARK_MAX 24
+#define BOOK_SCAN_DEPTH_LIMIT 12
+typedef struct {DIR* dir;char path[288];} shelf_scan_frame_t;
 typedef struct {uint16_t chapter,reserved;uint32_t byte_off,saved_s;} reader_bookmark_entry_t;
 typedef struct {uint32_t magic,file_size;uint16_t count,reserved;char path[288];reader_bookmark_entry_t entries[BOOKMARK_MAX];} reader_bookmarks_t;
 #define BOOK_STORE_PATH_MAX 288
@@ -100,12 +102,14 @@ static book_store_root_t test_roots[BOOK_STORE_ROOT_MAX];
 static int test_root_count=1;
 static void* heap_caps_realloc(void* p,size_t n,int caps){(void)caps;return test_oom?NULL:realloc(p,n);}
 static void* heap_caps_malloc(size_t n,int caps){(void)caps;return malloc(n);}
+static void* heap_caps_calloc(size_t count,size_t n,int caps){(void)caps;return test_oom?NULL:calloc(count,n);}
 static bool book_store_roots_degraded(void){return test_degraded;}
 static uint64_t book_store_free_bytes(const book_store_root_t* root){(void)root;return 1000000;}
 static int book_store_roots(book_store_root_t out[BOOK_STORE_ROOT_MAX],int* n){*n=test_root_count;memcpy(out,test_roots,sizeof(test_roots));return 0;}
 static bool book_progress_load(const char* p,uint32_t n,book_progress_t* out){(void)p;(void)n;*out=(book_progress_t){0};return false;}
 static bool book_progress_last_path(char* out,size_t cap){(void)out;(void)cap;return false;}
 static int book_epub_metadata(const char* path,char* title,size_t tcap,char* author,size_t acap){(void)path;(void)title;(void)tcap;(void)author;(void)acap;return -1;}
+static int book_epub_metadata_cached(const char* path,char* title,size_t tcap,char* author,size_t acap){return book_epub_metadata(path,title,tcap,author,acap);}
 static bool book_title_get(const char* path,char* out,size_t cap){(void)path;(void)out;(void)cap;return false;}
 static void book_title_clean_import(char* title){(void)title;}
 static bool book_title_from_path(const char* path,char* out,size_t cap){const char* name=strrchr(path,'/');name=name?name+1:path;size_t n=strlen(name);const char* dot=strrchr(name,'.');if(dot)n=(size_t)(dot-name);if(n>=cap)n=cap-1;memcpy(out,name,n);out[n]=0;return n>0;}
@@ -293,6 +297,20 @@ int main(void) {
     assert(mkdir(nested,0700)==0);snprintf(nested_book,sizeof(nested_book),"%s/inside.epub",nested);
     FILE* nested_file=fopen(nested_book,"w");assert(nested_file);fputs("x",nested_file);fclose(nested_file);
     scan_shelf(&ctx);assert(s_count==66);assert(unlink(nested_book)==0);assert(rmdir(nested)==0);scan_shelf(&ctx);
+    char deep[14][340];snprintf(deep[0],sizeof(deep[0]),"%s",test_roots[0].path);
+    for(int level=1;level<=13;level++){
+        snprintf(deep[level],sizeof(deep[level]),"%s/d%02d",deep[level-1],level);
+        assert(mkdir(deep[level],0700)==0);
+    }
+    char deep_book[380],ignored_book[380];
+    snprintf(deep_book,sizeof(deep_book),"%s/deep.epub",deep[12]);
+    snprintf(ignored_book,sizeof(ignored_book),"%s/ignored.epub",deep[13]);
+    FILE* deep_file=fopen(deep_book,"w");assert(deep_file);fputs("x",deep_file);fclose(deep_file);
+    deep_file=fopen(ignored_book,"w");assert(deep_file);fputs("x",deep_file);fclose(deep_file);
+    scan_shelf(&ctx);assert(s_count==66&&s_shelf_warning[0]);
+    assert(unlink(deep_book)==0&&unlink(ignored_book)==0);
+    for(int level=13;level>=1;level--)assert(rmdir(deep[level])==0);
+    scan_shelf(&ctx);assert(s_count==65);
     ctx.leaf=3;s_view=MANAGE;s_clear_confirm=false;s_file_removed=false;
     EpdRect back=manage_rect(0,3);manage_action(&ctx,back.x+1,back.y+1);
     assert(s_view==SHELF&&ctx.leaf==3);
