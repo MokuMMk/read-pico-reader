@@ -7,6 +7,14 @@ set(main_requires
     espressif__libpng
     espressif__zlib
     espressif__esp_tinyusb
+    # BLE HID 主机（蓝牙翻页器）。本仓库开了 MINIMAL_BUILD，组件不进依赖图的话连它的
+    # Kconfig 都不会加载，sdkconfig.defaults 里的 CONFIG_BT_* 会被判为未知符号而丢弃。
+    # BLE HID host (Bluetooth page-turner). This tree sets MINIMAL_BUILD, so a component
+    # outside the dependency graph does not even load its Kconfig and the CONFIG_BT_*
+    # entries in sdkconfig.defaults are dropped as unknown symbols.
+    bt
+    # 蓝牙翻页器本体。/ The page-turner itself.
+    ble_page_turner
     continuous_du
     e0470_epaper_waveform
     e0470_page_turn
