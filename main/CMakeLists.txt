@@ -4,7 +4,7 @@ set(main_requires
     read_pico_search
     espressif__qrcode
     espressif__esp_jpeg
-    # 渐进�?JPEG（基线仍�?esp_jpeg）�? Progressive JPEG; baseline stays on esp_jpeg.
+    # 渐进式 JPEG；基线仍走 esp_jpeg。/ Progressive JPEG; baseline stays on esp_jpeg.
     jpegdec
     espressif__libpng
     espressif__zlib
