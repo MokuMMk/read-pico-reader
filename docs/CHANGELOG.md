@@ -3,6 +3,10 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-05 · DeepSeek Harness
+
+- 书架收录读过的书（未发布版本）：从文件管理打开的 TXT/EPUB 可以位于 TF 卡任意位置，此前读完不会出现在书架里；现在只要留下阅读进度就上书架，文件已删除或内容已被替换的记录不上架。管理页新增「移出书架」：只把选中的书移出书架并记住，文件和阅读进度都保留，再次打开这本书就会重新上书架；批量按钮改为两行各三格，标签压到四字以内以免放大系统字号时顶出按钮。新增 `book_progress_list()` 供书架枚举已保存进度的路径。仅通过产品配置构建与宿主测试的语法检查，观感与行为尚待实机验收。
+
 ## 2026-10-05 · Codex
 
 - 固件 0.3.3-rc72：修复部分 EPUB 兼容性。

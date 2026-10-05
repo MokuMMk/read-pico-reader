@@ -112,6 +112,47 @@ bool book_progress_load(const char* path, uint32_t size, book_progress_t* out) {
     return true;
 }
 
+esp_err_t book_progress_list(book_progress_visit_fn visit, void* ctx) {
+    if (visit == NULL) return ESP_ERR_INVALID_ARG;
+    nvs_iterator_t it = NULL;
+    // 只遍历 blob：同命名空间的 seq 与 last 不是书。
+    // Walk blobs only; seq and last share the namespace but are not books.
+    esp_err_t err = nvs_entry_find(NVS_DEFAULT_PART_NAME, NS, NVS_TYPE_BLOB, &it);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (err != ESP_OK) return warn_error(err);
+    nvs_handle_t h;
+    if (nvs_open(NS, NVS_READONLY, &h) != ESP_OK) {
+        nvs_release_iterator(it);
+        return warn_error(ESP_ERR_NVS_NOT_FOUND);
+    }
+    uint8_t data[RECORD_CAP];
+    bool more = true;
+    while (more) {
+        nvs_entry_info_t info;
+        if (nvs_entry_info(it, &info) == ESP_OK) {
+            size_t len = sizeof(data);
+            // 与 load 相同的有效性门槛；坏记录跳过，不打断整轮遍历。
+            // Same validity gate as load; a bad record is skipped rather than ending the walk.
+            if (nvs_get_blob(h, info.key, data, &len) == ESP_OK && record_valid(data, len) &&
+                data[14] >= 36 && data[14] <= 72 && data[15] <= 100) {
+                book_progress_t value = {
+                    .file_size = get32(data + 4),
+                    .chapter = (uint16_t)(data[8] | (data[9] << 8)),
+                    .byte_off = get32(data + 10),
+                    .px = data[14],
+                    .pct = data[15],
+                    .last_open_s = data[3] == 2 ? get32(data + 16) : 0,
+                };
+                more = visit((const char*)data + HEADER_SIZE, &value, ctx);
+            }
+        }
+        if (more) more = nvs_entry_next(&it) == ESP_OK;
+    }
+    nvs_release_iterator(it);
+    nvs_close(h);
+    return ESP_OK;
+}
+
 // 旧记录必须可识别且属于同一路径；损坏或未知版本也不盲目覆盖。
 // Existing records must be recognized and owned by this path; preserve corrupt or unknown versions too.
 static esp_err_t check_owner(nvs_handle_t h, const char* key, const char* path) {

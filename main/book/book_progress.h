@@ -46,6 +46,14 @@ typedef struct {
 
 /// 校验版本、完整路径与文件大小后恢复；失败不改 out。/ Restore after version, full-path and size validation; leave out unchanged on failure.
 bool book_progress_load(const char* path, uint32_t size, book_progress_t* out);
+
+/// 遍历回调：progress 只在回调期间有效，返回 false 提前结束。
+/// Visit callback: progress is valid only for the duration of the call; return false to stop early.
+typedef bool (*book_progress_visit_fn)(const char* path, const book_progress_t* progress, void* ctx);
+/// 枚举全部已保存进度的书籍；损坏或未知版本的记录跳过并继续，顺序不保证。
+/// Enumerate every path with saved progress; skip unusable or unknown-version records and keep
+/// going. Order is unspecified. Returns ESP_OK when the walk finishes, including an empty set.
+esp_err_t book_progress_list(book_progress_visit_fn visit, void* ctx);
 /// 保存 v2 进度，忽略输入 last_open_s 并预留持久单调序号；路径最长 287 字节，碰撞拒绝覆盖。
 /// Save v2 progress, replacing input last_open_s with a reserved persistent sequence; paths up to 287 bytes, reject collision overwrites.
 esp_err_t book_progress_save(const char* path, const book_progress_t* progress);
