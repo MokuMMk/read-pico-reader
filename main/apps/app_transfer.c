@@ -213,11 +213,7 @@ static void draw_methods(uint8_t *fb) {
         if (i) ui_hairline(fb, row.y, 68, 548, 0xb8);
         int cy = row.y + row.height / 2;
         if (i == 0) ui_nav_wifi_icon(fb, 72, cy, 30, 0x6a);
-        else if (i == 1) {
-            epd_draw_circle(72, cy + 4, 8, 0x48, fb);
-            epd_draw_circle(72, cy + 4, 16, 0x70, fb);
-            epd_draw_line(72, cy - 21, 72, cy - 4, 0x48, fb);
-        }
+        else if (i == 1) ui_draw_icon(fb, 72, cy, 48, UI_ICON_RADIO_TOWER, 0x6a);
         ui_text(fb, 112, row.y + 21, 27, titles[i], EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 112, row.y + 64, 19, details[i], EPD_DRAW_ALIGN_LEFT, false);
         ui_text_vc(fb, 617, cy, 29, "›", EPD_DRAW_ALIGN_CENTER, false);

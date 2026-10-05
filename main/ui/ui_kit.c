@@ -54,6 +54,60 @@ static uint8_t ui_read_pixel(const uint8_t *fb, int x, int y) {
     return epd_get_pixel(px, py, epd_width(), epd_height(), fb) >> 4;
 }
 
+/* ---- 图标 / Icons ---- */
+
+// 越界钳到边缘，让双线性在掩模边界上也能取样。
+// Clamp to the edge so bilinear sampling stays valid at the mask border.
+static int icon_nibble(const uint8_t *mask, int x, int y) {
+    if (x < 0) x = 0;
+    else if (x >= UI_ICON_MASK_SIZE) x = UI_ICON_MASK_SIZE - 1;
+    if (y < 0) y = 0;
+    else if (y >= UI_ICON_MASK_SIZE) y = UI_ICON_MASK_SIZE - 1;
+    const int pixel = y * UI_ICON_MASK_SIZE + x;
+    const uint8_t byte = mask[pixel / 2];
+    return pixel & 1 ? byte & 15 : byte >> 4;
+}
+
+void ui_draw_icon(
+    uint8_t *framebuffer, int cx, int cy, int size, ui_icon_t icon, uint8_t gray
+) {
+    if (framebuffer == NULL || size < 1 || icon < 0 || icon >= UI_ICON_COUNT) return;
+    const uint8_t *mask = ui_icon_masks[icon];
+    // Q16 定点：一个目标像素跨过多少源像素。掩模 72 像素，显示通常更小，所以是降采样。
+    // Q16 fixed point: source pixels spanned by one target pixel. The 72 px mask is
+    // normally drawn smaller, so this is a downscale.
+    const int32_t step = ((int32_t)UI_ICON_MASK_SIZE << 16) / size;
+    const int32_t half = step / 2 - (1 << 15);
+    const int left = cx - size / 2;
+    const int top = cy - size / 2;
+    for (int y = 0; y < size; ++y) {
+        const int32_t sy = (int32_t)y * step + half;
+        const int y0 = sy >> 16;
+        const int fy = sy & 0xffff;
+        for (int x = 0; x < size; ++x) {
+            const int32_t sx = (int32_t)x * step + half;
+            const int x0 = sx >> 16;
+            const int fx = sx & 0xffff;
+            // 双线性插值取覆盖率，再按覆盖率把 ink 混到当前像素上。
+            // Bilinear coverage, then composite the ink by that coverage.
+            const int a00 = icon_nibble(mask, x0, y0);
+            const int a10 = icon_nibble(mask, x0 + 1, y0);
+            const int a01 = icon_nibble(mask, x0, y0 + 1);
+            const int a11 = icon_nibble(mask, x0 + 1, y0 + 1);
+            const int upper = (a00 * (0x10000 - fx) + a10 * fx) >> 16;
+            const int lower = (a01 * (0x10000 - fx) + a11 * fx) >> 16;
+            const int cover = (upper * (0x10000 - fy) + lower * fy) >> 16;
+            if (cover <= 0) continue;
+            const int px = left + x;
+            const int py = top + y;
+            const int background = ui_read_pixel(framebuffer, px, py) << 4;
+            const int blended =
+                (background * (15 - cover) + (int)gray * cover + 7) / 15;
+            epd_draw_pixel(px, py, ui_contrast_gray((uint8_t)blended), framebuffer);
+        }
+    }
+}
+
 static void draw_frosted(uint8_t *fb, EpdRect rect, bool pocket) {
     if (!fb || rect.width < 16 || rect.height < 16) return;
     size_t count = (size_t)rect.width * rect.height;

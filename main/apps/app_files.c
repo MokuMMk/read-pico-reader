@@ -365,23 +365,15 @@ static int count_root(int folder) {
     return count;
 }
 
+// 列表行的文件夹 / 文档图标，来自 Lucide；盒子 46 像素，中心对到原来的图形中心。
+// Lucide folder / file marks for list rows; a 46 px box centred on the old artwork.
+#define FILE_ICON_PX 46
+
 static void file_icon(uint8_t *fb, int x, int y, bool folder) {
-    if (folder) {
-        epd_draw_line(x, y + 7, x + 15, y + 7, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 15, y + 7, x + 22, y + 13, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 22, y + 13, x + 42, y + 13, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 42, y + 13, x + 42, y + 37, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 42, y + 37, x, y + 37, UI_GRAY_BLACK, fb);
-        epd_draw_line(x, y + 37, x, y + 7, UI_GRAY_BLACK, fb);
-    } else {
-        epd_draw_line(x + 5, y + 2, x + 31, y + 2, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 31, y + 2, x + 40, y + 11, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 40, y + 11, x + 40, y + 40, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 40, y + 40, x + 5, y + 40, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 5, y + 40, x + 5, y + 2, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 31, y + 2, x + 31, y + 11, UI_GRAY_BLACK, fb);
-        epd_draw_line(x + 31, y + 11, x + 40, y + 11, UI_GRAY_BLACK, fb);
-    }
+    ui_draw_icon(
+        fb, x + 21, y + 21, FILE_ICON_PX,
+        folder ? UI_ICON_FOLDER : UI_ICON_FILE, UI_GRAY_BLACK
+    );
 }
 
 static void file_detail(char *dst, size_t cap, const file_item_t *item) {
