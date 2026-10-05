@@ -31,6 +31,7 @@ static int s_tracking_px;
 static unsigned s_first_line_indent_em = 2;
 static unsigned s_reading_line;
 static int s_reading_line_offset;
+static bool s_images_visible = true;
 static size_t s_lead_skip;
 static unsigned s_lead_height;
 
@@ -134,6 +135,7 @@ void book_layout_set_reading_line(unsigned style) {
 void book_layout_set_reading_line_offset(int offset_px) {
     s_reading_line_offset = offset_px < -8 ? -8 : offset_px > 8 ? 8 : offset_px;
 }
+void book_layout_set_images_visible(bool visible) { s_images_visible = visible; }
 void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px) {
     s_lead_skip = skip_bytes;
     s_lead_height = height_px;
@@ -324,12 +326,30 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
     s_px = px;
     s_rect = rect;
     s_line = heap_caps_malloc(len + 1, PSRAM_CAPS);
-    if (!s_line || !append_page(s_lead_skip)) goto fail;
     size_t off = s_lead_skip;
+    if (!s_line) goto fail;
+    if (!s_images_visible) {
+        size_t visible_off = off;
+        while (visible_off < len) {
+            const blk_t* block = block_at(visible_off);
+            if (!block || block->image < 0 || block->offset != visible_off) break;
+            visible_off = block->offset + block->len;
+            if (visible_off < len && utf8[visible_off] == '\n') ++visible_off;
+        }
+        // An image-only chapter keeps one page so the existing chapter-skip path can advance.
+        // 纯插图章节仍保留可跳过的一页；有正文时直接从第一段正文开始。
+        if (visible_off < len) off = visible_off;
+    }
+    if (!append_page(off)) goto fail;
     int64_t used = s_lead_height;
     while (off < len) {
         const blk_t* block = block_at(off);
         if (block && block->image >= 0 && off == block->offset) {
+            if (!s_images_visible) {
+                off = block->offset + block->len;
+                if (off < len && utf8[off] == '\n') ++off;
+                continue;
+            }
             if (used && !append_page(off)) goto fail;
             used = rect.height;
             off = block->offset + block->len;
@@ -386,6 +406,12 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
     size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
     int64_t used = page == 0 ? s_lead_height : 0;
     while (off < end) {
+        const blk_t* block = block_at(off);
+        if (!s_images_visible && block && block->image >= 0 && off == block->offset) {
+            off = block->offset + block->len;
+            if (off < end && s_text[off] == '\n') ++off;
+            continue;
+        }
         size_t next;
         bool paragraph_end, heading;
         int line_px, line_width, indent, margin_before, margin_after;

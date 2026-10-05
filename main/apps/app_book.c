@@ -285,7 +285,7 @@ static void draw_control(uint8_t* fb, EpdRect rect, const char* label, int id) {
 static void lock_draw(void) { if (s_draw_lock) xSemaphoreTake(s_draw_lock, portMAX_DELAY); }
 static void unlock_draw(void) { if (s_draw_lock) xSemaphoreGive(s_draw_lock); }
 static size_t fb_bytes(void) { return (size_t)epd_width() * epd_height() / 2; }
-#define READER_FULLSCREEN_PROGRESS_TOP (UI_LOCK_HEIGHT - 8)
+#define READER_FULLSCREEN_PROGRESS_TOP (UI_LOCK_HEIGHT - 12)
 // 正文上方留出一致的呼吸空间，下沿靠近进度区；两种模式共用排版与刷新边界。
 // Give the body a consistent top inset and extend it toward the progress strip in both modes.
 static EpdRect reader_area(void) {
@@ -1909,7 +1909,7 @@ static void draw_reader(uint8_t* fb, size_t page) {
                 epd_draw_pixel(left + x, top + y,
                     ui_image_dither_gray(inline_ink_gray(s_inline_gray[y * s_inline_w + x]),
                                          left + (int)x, top + (int)y), fb);
-    } else if (book_layout_page_image(page) >= 0) {
+    } else if (!app_settings_reader_hide_images() && book_layout_page_image(page) >= 0) {
         ui_text_vc(fb, body.x + body.width / 2, body.y + body.height / 2,
                    UI_PX_CAPTION, "此插图暂无法显示", EPD_DRAW_ALIGN_CENTER, false);
     }
@@ -3753,6 +3753,7 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
 }
 static void on_enter(app_ctx_t* ctx) {
     book_layout_set_spacing(app_settings_book_line_spacing(), app_settings_book_paragraph_spacing());
+    book_layout_set_images_visible(!app_settings_reader_hide_images());
     book_layout_set_typography(((int)app_settings_book_tracking() - 2) * 2);
     book_layout_set_first_line_indent(app_settings_book_indent());
     book_layout_set_reading_line(app_settings_book_reading_line());

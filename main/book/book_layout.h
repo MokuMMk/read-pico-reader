@@ -31,6 +31,8 @@ EpdRect book_layout_balanced_rect(EpdRect outer, int px, int tracking_px);
 void book_layout_set_reading_line(unsigned style);
 /// 阅读线相对默认位置上下移动 -8..+8 像素；负值上移。/ Move guide -8..+8 px; negative is up.
 void book_layout_set_reading_line_offset(int offset_px);
+/// 关闭插图时，排版跳过图片块，不为其保留页或正文空位。/ When false, omit image blocks without reserving pages or body space.
+void book_layout_set_images_visible(bool visible);
 /// EPUB 章节首页预留标题区并跳过已经在题头显示的前置标题块；每章重排前调用。
 /// Reserve a first-page chapter heading and skip heading blocks already shown there; call before each chapter layout.
 void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px);

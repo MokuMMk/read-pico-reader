@@ -23,6 +23,7 @@
 #define DIRECTORY_MAX (4U * 1024U * 1024U)
 #define ARCHIVE_ENTRY_MAX (256U * 1024U * 1024U)
 #define INFLATE_CHUNK 32768U
+#define TRAILING_WHITESPACE_MAX 4096U
 
 typedef struct {
     char* name;
@@ -75,6 +76,13 @@ static uint32_t zip_crc32(const uint8_t* data, size_t len) {
     return ~crc;
 }
 
+static bool trailing_whitespace(const uint8_t* data, size_t len) {
+    if (len > TRAILING_WHITESPACE_MAX) return false;
+    for (size_t i = 0; i < len; ++i)
+        if (data[i] != ' ' && data[i] != '\t' && data[i] != '\r' && data[i] != '\n') return false;
+    return true;
+}
+
 void zip_close(zip_reader_t* z) {
     if (!z) return;
     if (z->file) fclose(z->file);
@@ -98,14 +106,19 @@ esp_err_t zip_open(const char* path, zip_reader_t** out) {
     long size = ftell(z->file);
     if (size < 22 || (uint64_t)size > UINT32_MAX || (uint64_t)size > INT32_MAX) goto fail;
     z->size = (uint32_t)size;
-    size_t tail_len = z->size < 66U * 1024U ? z->size : 66U * 1024U;
+    size_t tail_len = z->size < 22U + UINT16_MAX + TRAILING_WHITESPACE_MAX ?
+        z->size : 22U + UINT16_MAX + TRAILING_WHITESPACE_MAX;
     tail = heap_caps_malloc(tail_len, PSRAM);
     if (!tail) { err = ESP_ERR_NO_MEM; goto fail; }
     uint32_t tail_pos = z->size - tail_len;
     if (!read_at(z, tail_pos, tail, tail_len)) goto fail;
     size_t end = tail_len - 22;
     for (;;) {
-        if (u32(tail + end) == UINT32_C(0x06054b50) && end + 22U + u16(tail + end + 20) == tail_len) break;
+        if (u32(tail + end) == UINT32_C(0x06054b50)) {
+            size_t declared_end = end + 22U + u16(tail + end + 20);
+            if (declared_end <= tail_len &&
+                trailing_whitespace(tail + declared_end, tail_len - declared_end)) break;
+        }
         if (!end) goto fail;
         --end;
     }

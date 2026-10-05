@@ -132,6 +132,29 @@ int main(void) {
     book_layout_draw_page(&fb, 0, r, 10);
     book_layout_draw_page(&fb, 1, r, 10);
     assert(!strcmp(drawn, "Titlebody") && first_draw_px == 18 && last_draw_px == 10);
+    const char illustrated[] = "IMG\nAA\nIMG\nBB";
+    blk_t illustrated_blocks[] = {
+        {.offset = 0, .len = 3, .image = 0},
+        {.offset = 4, .len = 2, .image = -1},
+        {.offset = 7, .len = 3, .image = 1},
+        {.offset = 11, .len = 2, .image = -1},
+    };
+    EpdRect illustrated_rect = {0, 0, 100, 60};
+    assert(book_layout_build_blocks(illustrated, strlen(illustrated), illustrated_blocks, 4,
+                                    illustrated_rect, 10));
+    assert(book_layout_page_count() == 4);
+    assert(book_layout_page_image(0) == 0 && book_layout_page_image(2) == 1);
+    book_layout_set_images_visible(false);
+    assert(book_layout_build_blocks(illustrated, strlen(illustrated), illustrated_blocks, 4,
+                                    illustrated_rect, 10));
+    assert(book_layout_page_count() == 1 && book_layout_page_start_offset(0) == 4);
+    assert(book_layout_page_image(0) == -1);
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, illustrated_rect, 10);
+    assert(!strcmp(drawn, "AABB"));
+    assert(book_layout_build_blocks("IMG", 3, illustrated_blocks, 1, illustrated_rect, 10));
+    assert(book_layout_page_count() == 1 && book_layout_page_image(0) == 0);
+    book_layout_set_images_visible(true);
     EpdRect balanced = book_layout_balanced_rect((EpdRect){36, 0, 612, 100}, 48, 0);
     assert(balanced.x == 54 && balanced.width == 576);
     assert(balanced.x == 684 - balanced.x - balanced.width);

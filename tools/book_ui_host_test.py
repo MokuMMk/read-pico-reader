@@ -180,11 +180,13 @@ static int app_settings_book_indent(void){return 2;}
 static int app_settings_book_reading_line(void){return 0;}
 static int app_settings_book_reading_line_offset(void){return 0;}
 static bool app_settings_reader_immersive(void){return test_reader_immersive;}
+static bool app_settings_reader_hide_images(void){return false;}
 static void book_layout_set_spacing(int line,int para){(void)line;(void)para;}
 static void book_layout_set_typography(int tracking){(void)tracking;}
 static void book_layout_set_first_line_indent(unsigned em){(void)em;}
 static void book_layout_set_reading_line(int style){(void)style;}
 static void book_layout_set_reading_line_offset(int offset){(void)offset;}
+static void book_layout_set_images_visible(bool visible){(void)visible;}
 static bool app_settings_book_shake(void){return false;}
 static void read_pico_sd_start_probe(void){}
 typedef struct {bool present,mounted;} read_pico_sd_info_t;
@@ -211,7 +213,7 @@ static char test_wrapped[512];
 #define UI_MARGIN 40
 #define UI_LOCK_WIDTH 684
 #define UI_LOCK_HEIGHT 1216
-#define READER_FULLSCREEN_PROGRESS_TOP (UI_LOCK_HEIGHT - 8)
+#define READER_FULLSCREEN_PROGRESS_TOP (UI_LOCK_HEIGHT - 12)
 #define UI_BAR_TOP 1096
 #define UI_BAR_H 96
 #define BOOK_MARGIN_MIN 24
@@ -260,7 +262,7 @@ int main(void) {
     assert(reading_body.y==80&&text_body.y==96);
     assert(reading_body.y+reading_body.height==fullscreen_progress.y);
     assert(text_body.y+text_body.height==fullscreen_progress.y-2);
-    assert(fullscreen_progress.y==UI_LOCK_HEIGHT-8&&fullscreen_progress.height==8);
+    assert(fullscreen_progress.y==UI_LOCK_HEIGHT-12&&fullscreen_progress.height==12);
     test_reader_immersive=true;
     reading_body=reader_area();
     text_body=body_rect();
