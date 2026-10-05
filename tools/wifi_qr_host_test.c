@@ -38,6 +38,11 @@ int main(void) {
         for(size_t i=0;i<sizeof(image);i++)assert(image[i]==255);
     }
     assert(ui_wifi_qr_prepare_url("http://10.20.30.40/"));
+    assert(ui_wifi_qr_prepare_weread("https://weread.qq.com/web/confirm?uid=public-test_123"));
+    ui_wifi_qr_draw(image,(EpdRect){0,0,SIDE,SIDE});
+    save("build/wifi-qr-weread.pgm");
+    const char* bad_login[] = {NULL, "", "http://weread.qq.com/web/confirm?uid=x", "https://weread.qq.com.evil/web/confirm?uid=x", "https://weread.qq.com/web/confirm?uid=", "https://weread.qq.com/web/confirm?uid=x&next=evil", "https://weread.qq.com/web/confirm?uid=x\n"};
+    for(size_t j=0;j<sizeof(bad_login)/sizeof(bad_login[0]);++j) assert(!ui_wifi_qr_prepare_weread(bad_login[j]));
     ui_wifi_qr_clear();
     ui_wifi_qr_draw(image,(EpdRect){0,0,SIDE,SIDE});
     for(size_t i=0;i<sizeof(image);i++)assert(image[i]==255);

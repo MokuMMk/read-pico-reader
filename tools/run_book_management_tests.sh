@@ -38,3 +38,10 @@ bash tools/run_display_host_test.sh
 bash tools/run_water_turn_host_test.sh
 python3 tools/test_lcd_frame_lifecycle.py
 python3 tools/test_sd_media_guard.py
+
+python3 tools/test_transfer_netif.py
+python3 tools/test_weread_port.py
+cc -std=gnu11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    -Itools/weread_ui_stubs -Icomponents/pico_weread/include \
+    tools/weread_ui_host_test.c -o build/book-tests/weread-ui
+build/book-tests/weread-ui

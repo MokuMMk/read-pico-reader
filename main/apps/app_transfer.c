@@ -133,6 +133,11 @@ static bool transfer_set_wallpaper(const char *path) {
     return app_settings_lock_style() == 1;
 }
 
+void app_transfer_request_method_picker(void) {
+    s_usb_requested = s_hotspot_requested = s_wifi_upload_requested = s_wifi_setup_requested = false;
+    s_wifi_settings_only = false;
+}
+
 void app_transfer_request_usb_start(void) {
     s_usb_requested = true;
 }
@@ -197,12 +202,14 @@ static EpdRect method_control_rect(int id) {
 // S05 keeps method selection separate from the service details shown on the next page.
 static void draw_methods(uint8_t *fb) {
     ui_clear_page(fb);
-    transfer_header(fb, "文件传输", NULL);
+    epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, 0xe0, fb);
+    transfer_header(fb, "Wifi/热点传书", NULL);
     ui_text(fb, 42, 180, 21, "选择方式", EPD_DRAW_ALIGN_LEFT, false);
-    EpdRect card = {36, 214, 612, 224};
+    EpdRect card = {36, 224, 612, 224};
     ui_fill_round_rect(fb, card, 24, UI_GRAY_WHITE);
-    ui_draw_round_rect(fb, card, 24, 0xa0);
-    static const char *titles[] = {"加入 WiFi", "创建热点"};
+    ui_draw_round_rect(fb, card, 24, 0x60);
+    ui_draw_round_rect(fb, (EpdRect){37, 225, 610, 222}, 23, 0x60);
+    static const char *titles[] = {"WiFi传书", "热点传书"};
     static const char *details[] = {
         "与手机或电脑连接同一个无线网络",
         "由 Pico 创建临时网络，离线也能传书"
@@ -210,7 +217,7 @@ static void draw_methods(uint8_t *fb) {
     for (int i = 0; i < 2; ++i) {
         EpdRect row = method_control_rect(i);
         if (s_pressed == i) ui_draw_pressed_round_rect(fb, row, 0);
-        if (i) ui_hairline(fb, row.y, 68, 548, 0xb8);
+        if (i) epd_fill_rect((EpdRect){68, row.y, 548, 2}, 0x80, fb);
         int cy = row.y + row.height / 2;
         if (i == 0) ui_nav_wifi_icon(fb, 72, cy, 30, 0x6a);
         else if (i == 1) ui_draw_icon(fb, 72, cy, 48, UI_ICON_RADIO_TOWER, 0x6a);

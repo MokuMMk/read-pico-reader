@@ -1,6 +1,7 @@
 set(main_requires
     read_pico
     read_pico_transfer
+    pico_weread
     read_pico_search
     espressif__qrcode
     espressif__esp_jpeg
@@ -50,6 +51,7 @@ idf_component_register(
         "apps/app_device_settings.c"
         "apps/app_image.c"
         "apps/app_transfer.c"
+        "apps/app_weread.c"
         "apps/usb_storage.c"
         "book/book_store.c"
         "book/book_progress.c"

@@ -14,6 +14,8 @@ remain in the source. This project is not an official MindReset release.
 | [Lucide](https://lucide.dev/icons/) — the whole UI icon set, vendored as SVG sources in `tools/icons/lucide/` and compiled into `main/assets/ui_icons.h` by `tools/gen_ui_icons.py` | ISC | [Lucide notice](flash/licenses/LUCIDE-ISC.txt) |
 | [epdiy](https://github.com/vroland/epdiy), including the locally modified driver | LGPL-3.0-or-later | [Modification notes](components/epdiy/LICENSE), [LGPLv3](licenses/LGPL-3.0.txt), [GPLv3](licenses/GPL-3.0.txt) |
 | [pypinyin](https://github.com/mozillazg/python-pinyin) dictionary data used by offline book search | MIT | [pypinyin notice](components/read_pico_search/LICENSE.pypinyin) |
+| [CrossMux](https://github.com/0x1abin/crossmux) WeRead protocol, streaming download and EPUB writer, ported from commit `d6a1727bb27a858ba2ee9a44529ba8e458defbad` | MIT | [CrossMux notice](components/pico_weread/vendor/LICENSE-CrossMux.txt) |
+| FreeInk SDK StreamingJsonParser, commit `96de1be6ce08eb732909e6e8149af8f892b9a2c5` | MIT | [FreeInk SDK notice](components/pico_weread/vendor/LICENSE-FreeInk-SDK.txt) |
 | Embedded Noto Sans SC Medium font subset | SIL OFL-1.1 | [Font license](main/assets/OFL-Noto.txt) |
 | [ESP Web Tools](https://github.com/esphome/esp-web-tools) browser flasher | Apache-2.0 | [Bundled web tool license](flash/vendor/LICENSE) |
 | Espressif TinyUSB component | Apache-2.0 | [Component license](components/espressif__esp_tinyusb/LICENSE) |

@@ -30,7 +30,7 @@ class LocalLinks(HTMLParser):
 def stage(output: Path) -> None:
     check(FLASH)
     output.mkdir(parents=True, exist_ok=True)
-    for name in ("index.html", "notices.html", "manifest.json", "firmware.bin",
+    for name in ("index.html", "notices.html", "manifest.json", "transfer-preview.png", "firmware.bin",
                  "bootloader.bin", "partitions.bin", "ota_data_initial.bin"):
         shutil.copy2(FLASH / name, output / name)
     shutil.copytree(FLASH / "vendor/web", output / "vendor/web", dirs_exist_ok=True)
@@ -41,6 +41,8 @@ def stage(output: Path) -> None:
         ROOT / "licenses/GPL-3.0.txt": "GPL-3.0.txt",
         ROOT / "components/read_pico_search/LICENSE.pypinyin": "PYPINYIN-MIT.txt",
         ROOT / "main/assets/OFL-Noto.txt": "OFL-Noto.txt",
+        ROOT / "components/pico_weread/vendor/LICENSE-CrossMux.txt": "CROSSMUX-MIT.txt",
+        ROOT / "components/pico_weread/vendor/LICENSE-FreeInk-SDK.txt": "FREEINK-SDK-MIT.txt",
     }
     (output / "licenses").mkdir(exist_ok=True)
     for source, name in licenses.items():

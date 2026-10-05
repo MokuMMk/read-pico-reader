@@ -15,5 +15,7 @@ bool ui_wifi_qr_prepare(const char* ssid, const char* password);
 bool ui_wifi_qr_prepare_url(const char* url);
 /// 丢弃缓存，供网络停止或切换时调用。/ Discard cached code when networking stops or changes.
 void ui_wifi_qr_clear(void);
+/// 微信登录二维码仅接受其固定 HTTPS 确认地址。/ WeRead login QR accepts only its exact HTTPS confirmation endpoint.
+bool ui_wifi_qr_prepare_weread(const char* url);
 /// 纯绘制，整数缩放且保留四模块静区。/ Paint only, with integer scaling and a four-module quiet zone.
 void ui_wifi_qr_draw(uint8_t* fb, EpdRect area);

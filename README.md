@@ -52,3 +52,7 @@ EPUB metadata is allocated for the actual book size. ZIP entries and chapters ea
 The fork retains the upstream **Apache-2.0** license and notices. The UI icon set comes from **Lucide** under its **ISC** notice. The modified epdiy driver uses **LGPL-3.0-or-later**, and pypinyin dictionary data uses **MIT**. See [Third-party notices](THIRD_PARTY_NOTICES.md) and component directories for the exact scope; a component license does not change the license of the entire firmware.
 
 Please report firmware bugs in this repository, not in the MindReset upstream issue tracker. Hardware purchasing and repair remain matters for the [official support channels](https://dot.mindreset.tech/docs/contact).
+
+## Local rc76 transfer build
+
+File management groups its launchers as WiFi/hotspot, USB and WeRead transfer. WeRead uses saved internet WiFi for QR login, shelf sync and completed EPUB downloads into the SD books directory, with optional inline illustrations. The UI cancels and joins ongoing work before leaving, locking or losing SD media. Cloud progress is never uploaded. CrossMux and FreeInk SDK MIT notices accompany the native port. This is a local validation build; real account login/download and the reported hotspot reset still require device verification.

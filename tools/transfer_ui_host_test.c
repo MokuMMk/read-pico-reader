@@ -82,7 +82,9 @@ static void qr_regression(app_ctx_t* ctx) {
 int main(void) {
     uint8_t fb = 0;
     app_ctx_t ctx = {.fb = &fb};
+    app_transfer_request_method_picker();
     on_enter(&ctx);
+    assert(s_view == TRANSFER_METHODS && !s_wifi_settings_only && !s_start_pending);
     on_tick(&ctx);
     assert(test_qr_encodes == 0);
     qr_regression(&ctx);

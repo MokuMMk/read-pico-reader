@@ -363,6 +363,7 @@ static int list_books(const char *root, const char *query, size_t page, transfer
 #include "esp_timer.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "transfer_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_wifi.h"
 #include "nvs.h"
@@ -545,8 +546,8 @@ esp_err_t read_pico_transfer_sync_time(uint32_t *utc_seconds) {
     err = esp_event_loop_create_default();
     if (err == ESP_OK) loop_owned = true;
     else if (err != ESP_ERR_INVALID_STATE) goto time_cleanup;
-    netif = esp_netif_create_default_wifi_sta();
-    if (!netif) { err = ESP_ERR_NO_MEM; goto time_cleanup; }
+    err = transfer_create_netif(false, &netif);
+    if (err != ESP_OK) goto time_cleanup;
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     err = esp_wifi_init(&init); if (err != ESP_OK) goto time_cleanup;
     wifi_initialized = true;
@@ -634,8 +635,8 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
     // The documented scan flow creates a STA netif first. The remote/hosted
     // backend used by this target also needs it for control-plane setup.
     stage = "sta-netif";
-    scan_netif = esp_netif_create_default_wifi_sta();
-    if (!scan_netif) { err = ESP_ERR_NO_MEM; goto cleanup; }
+    err = transfer_create_netif(false, &scan_netif);
+    if (err != ESP_OK) goto cleanup;
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     stage = "wifi-init";
     err = esp_wifi_init(&init); if (err != ESP_OK) goto cleanup;
@@ -1147,23 +1148,28 @@ static esp_err_t titles_handler(httpd_req_t *req) {
         if (!page_text[0] || *end || page_text[0] == '-' || page > 1000000) return respond_error(req, 400);
         struct stat dir_st;
         if (stat(root, &dir_st) || !S_ISDIR(dir_st.st_mode)) return respond_error(req, 404);
-        transfer_book_page_t entries;
-        int result = list_books(root, "", page, &entries);
-        if (result) return respond_error(req, result);
+        transfer_book_page_t *entries = heap_caps_calloc(1, sizeof(*entries), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!entries) return respond_error(req, 503);
+        int result = list_books(root, "", page, entries);
+        if (result) { heap_caps_free(entries); return respond_error(req, result); }
         cJSON *json = cJSON_CreateObject();
-        if (!json) return ESP_ERR_NO_MEM;
-        cJSON_AddNumberToObject(json, "total", entries.total);
+        if (!json) { heap_caps_free(entries); return ESP_ERR_NO_MEM; }
+        cJSON_AddNumberToObject(json, "total", entries->total);
         cJSON_AddNumberToObject(json, "page", page);
-        cJSON_AddNumberToObject(json, "pages", (entries.total + BOOK_LIST_PAGE_SIZE - 1) / BOOK_LIST_PAGE_SIZE);
+        cJSON_AddNumberToObject(json, "pages", (entries->total + BOOK_LIST_PAGE_SIZE - 1) / BOOK_LIST_PAGE_SIZE);
         cJSON *items = cJSON_AddArrayToObject(json, "items");
-        for (size_t i = 0; i < entries.count; ++i) {
+        if (!items) { heap_caps_free(entries); cJSON_Delete(json); return ESP_ERR_NO_MEM; }
+        for (size_t i = 0; i < entries->count; ++i) {
             char path[448], title[121] = {0};
-            if (snprintf(path, sizeof(path), "%s/%s", root, entries.items[i].name) >= (int)sizeof(path)) continue;
+            if (snprintf(path, sizeof(path), "%s/%s", root, entries->items[i].name) >= (int)sizeof(path)) continue;
             s_cfg.title_get_cb(path, title, sizeof(title));
-            cJSON *item = cJSON_CreateObject(); cJSON_AddItemToArray(items, item);
-            cJSON_AddStringToObject(item, "name", entries.items[i].name);
+            cJSON *item = cJSON_CreateObject();
+            if (!item) { heap_caps_free(entries); cJSON_Delete(json); return ESP_ERR_NO_MEM; }
+            cJSON_AddItemToArray(items, item);
+            cJSON_AddStringToObject(item, "name", entries->items[i].name);
             cJSON_AddStringToObject(item, "title", title);
         }
+        heap_caps_free(entries);
         return send_json(req, json);
     }
     if (req->method != HTTP_POST || req->content_len < 2 || req->content_len > 192 ||
@@ -1739,8 +1745,8 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     err = esp_event_loop_create_default();
     if (err == ESP_OK) s_loop_owned = true;
     else if (err != ESP_ERR_INVALID_STATE) goto fail;
-    s_netif = cfg->mode == READ_PICO_TRANSFER_MODE_AP ? esp_netif_create_default_wifi_ap() : esp_netif_create_default_wifi_sta();
-    if (!s_netif) { err = ESP_ERR_NO_MEM; goto fail; }
+    err = transfer_create_netif(cfg->mode == READ_PICO_TRANSFER_MODE_AP, &s_netif);
+    if (err != ESP_OK) goto fail;
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     err = esp_wifi_init(&init); if (err != ESP_OK) goto fail;
     s_wifi = true;
@@ -1783,7 +1789,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     // File metadata and wallpaper settings access NVS; the HTTP stack must remain readable while caches are disabled.
     // 在无线电启动前预留网页任务，避免 WiFi 内存碎片导致任务创建失败。
     // Reserve the HTTP task before starting the radio to avoid WiFi heap fragmentation.
-    http.stack_size = 8192; http.max_uri_handlers = 16; http.max_open_sockets = 3;
+    http.stack_size = 12288; http.max_uri_handlers = 16; http.max_open_sockets = 3;
     http.recv_wait_timeout = 15;
     http.send_wait_timeout = 15;
     http.task_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
@@ -1793,14 +1799,6 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     err = httpd_start(&s_http, &http);
-    if (err == ESP_ERR_HTTPD_TASK) {
-        // 内存碎片较重的旧会话再试一次；目录递归路径已移到外部内存。
-        // Retry once with a smaller internal stack after fragmented sessions; recursive paths live in PSRAM.
-        ESP_LOGW("transfer", "http task retry internal largest=%u",
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-        http.stack_size = 7168;
-        err = httpd_start(&s_http, &http);
-    }
     if (err != ESP_OK) goto fail;
     ESP_LOGI("transfer", "http ready internal free=%u largest=%u psram free=%u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),

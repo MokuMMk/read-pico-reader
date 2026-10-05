@@ -37,12 +37,13 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_attr.h"
 #include "soc/rtc_cntl_reg.h"
 
 #define FILE_MAX 96
 #define FILE_ROWS 9
 typedef struct { char path[288]; char name[128]; off_t size; bool is_dir; } file_item_t;
-static file_item_t s_files[FILE_MAX];
+static EXT_RAM_BSS_ATTR file_item_t s_files[FILE_MAX];
 static int s_count, s_folder, s_page;
 static int s_requested_folder = -1;
 static int s_counts[3];
@@ -698,13 +699,13 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             if (capacity.width > 0) ui_fill_round_rect(fb, capacity, 3, 0x68);
         }
         ui_text(fb, 42, 308, 21, "传输文件", EPD_DRAW_ALIGN_LEFT, false);
-        static const char *const methods[] = {"WiFi 传书", "热点传书", "USB 读卡"};
-        static const char *const details[] = {"同一网络", "Pico 热点", "连接电脑"};
+        static const char *const methods[] = {"Wifi/热点传书", "USB传书", "微读传书"};
+        static const char *const details[] = {"选择传输方式", "连接电脑", "微信读书下载"};
         for (int i = 0; i < 3; ++i) {
             EpdRect card = home_transfer_rect(i);
             ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE);
             ui_draw_round_rect(fb, card, 20, 0x60);
-            ui_text_vc(fb, card.x + card.width / 2, card.y + 35, 23, methods[i],
+            ui_text_vc(fb, card.x + card.width / 2, card.y + 35, 21, methods[i],
                        EPD_DRAW_ALIGN_CENTER, false);
             ui_text_vc(fb, card.x + card.width / 2, card.y + 75, 19, details[i],
                        EPD_DRAW_ALIGN_CENTER, false);
@@ -1102,11 +1103,13 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_PAGE;
     }
     for (int i = 0; !long_press && i < 3; ++i) if (ui_rect_hit(home_transfer_rect(i), ev->x0, ev->y0)) {
-        if (i == 0) app_transfer_request_wifi_upload();
-        else if (i == 1) app_transfer_request_hotspot_start();
-        else app_transfer_request_usb_start();
-        extern const app_desc_t app_transfer;
-        ctx->request_app = &app_transfer;
+        extern const app_desc_t app_transfer, app_weread;
+        if (i == 2) ctx->request_app = &app_weread;
+        else {
+            if (i == 0) app_transfer_request_method_picker();
+            else app_transfer_request_usb_start();
+            ctx->request_app = &app_transfer;
+        }
         return APP_REDRAW_NONE;
     }
     if (ev->y0 >= 520 && ev->y0 < 975) {
