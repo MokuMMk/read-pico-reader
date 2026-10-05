@@ -36,7 +36,6 @@ def stage(output: Path) -> None:
     shutil.copytree(FLASH / "vendor/web", output / "vendor/web", dirs_exist_ok=True)
     shutil.copy2(FLASH / "vendor/LICENSE", output / "vendor/LICENSE")
     licenses = {
-        FLASH / "licenses/CROSSPOINT-MIT.txt": "CROSSPOINT-MIT.txt",
         FLASH / "licenses/LUCIDE-ISC.txt": "LUCIDE-ISC.txt",
         ROOT / "licenses/LGPL-3.0.txt": "LGPL-3.0.txt",
         ROOT / "licenses/GPL-3.0.txt": "GPL-3.0.txt",
