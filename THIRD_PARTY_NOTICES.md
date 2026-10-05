@@ -1,14 +1,14 @@
-﻿# Third-party notices / 绗笁鏂硅鍙?
+# Third-party notices / 第三方许可
 
 This is an independent reader firmware for MindReset's Read Pico board. It is
 based on the [MindReset demo firmware](https://github.com/MindReset/read_pico_firmware),
 which is licensed under Apache-2.0. The original copyright and license notices
 remain in the source. This project is not an official MindReset release.
 
-鏈」鐩槸鍩轰簬 MindReset Read Pico 瀹樻柟绀轰緥鍥轰欢寮€鍙戠殑鐙珛闃呰鍥轰欢锛屽苟闈?MindReset
-瀹樻柟鍙戝竷銆傚師椤圭洰鐨勭増鏉冨０鏄庡拰 Apache-2.0 璁稿彲鍧囦簣淇濈暀銆?
+本项目是基于 MindReset Read Pico 官方示例固件开发的独立阅读固件，并非 MindReset
+官方发布。原项目的版权声明和 Apache-2.0 许可均予保留。
 
-| Material / 缁勪欢 | License / 璁稿彲 | Notice / 澹版槑 |
+| Material / 组件 | License / 许可 | Notice / 声明 |
 | --- | --- | --- |
 | MindReset Read Pico firmware and board components | Apache-2.0 | [LICENSE](LICENSE); source file headers |
 | [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader) icon artwork used as a design source | MIT | [CrossPoint notice](flash/licenses/CROSSPOINT-MIT.txt) |
@@ -24,7 +24,7 @@ License terms apply to their respective material. The repository's top-level
 Apache-2.0 license does not replace those component licenses. In particular,
 the CrossPoint MIT credit does **not** mean the whole firmware is MIT-licensed.
 
-鍚勭粍浠剁户缁€傜敤鍚勮嚜鐨勮鍙€侰rossPoint 鐨?MIT 缃插悕涓嶈〃绀烘暣涓浐浠舵敼涓?MIT 璁稿彲銆?
+各组件继续适用各自的许可。CrossPoint 的 MIT 署名不表示整个固件改为 MIT 许可。
 The firmware bundles only the embedded Noto Sans SC subset; users may supply
 their own fonts on a TF card. The repository and flashing site do not provide
 additional font packages.

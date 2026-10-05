@@ -22,6 +22,30 @@ static uint8_t luminance(uint8_t r, uint8_t g, uint8_t b) {
     return (uint8_t)(((unsigned)r * 77 + (unsigned)g * 150 + (unsigned)b * 29) >> 8);
 }
 
+book_crop_t book_cover_crop(unsigned src_width, unsigned src_height,
+                            unsigned dst_width, unsigned dst_height) {
+    book_crop_t crop = {0, 0, src_width, src_height};
+    if (!src_width || !src_height || !dst_width || !dst_height) return crop;
+    // 比较 dst_w/src_w 与 dst_h/src_h，用交叉相乘避免浮点。
+    // Compare dst_w/src_w against dst_h/src_h by cross-multiplying, avoiding floating point.
+    if ((uint64_t)dst_width * src_height >= (uint64_t)dst_height * src_width) {
+        // 宽边受限：占满整宽，上下居中裁。/ Width-bound: keep the full width, crop top and bottom.
+        unsigned height = (unsigned)((uint64_t)dst_height * src_width / dst_width);
+        if (height < 1) height = 1;
+        if (height > src_height) height = src_height;
+        crop.height = height;
+        crop.y = (src_height - height) / 2;
+    } else {
+        // 高边受限：占满整高，左右居中裁。/ Height-bound: keep the full height, crop left and right.
+        unsigned width = (unsigned)((uint64_t)dst_width * src_height / dst_height);
+        if (width < 1) width = 1;
+        if (width > src_width) width = src_width;
+        crop.width = width;
+        crop.x = (src_width - width) / 2;
+    }
+    return crop;
+}
+
 /* ---- JPEG 帧头 / JPEG frame header ---- */
 
 // 读 SOF 标记与帧尺寸，只走标记段、不解码。
@@ -112,10 +136,13 @@ static bool jpegdec_gray(const uint8_t *data, size_t size, unsigned frame_width,
                                                  NULL, NULL) != 0;
     bool ok = false;
     if (decoded) {
+        // 1/8 小平面同样按长边铺满 + 居中裁剪映射到目标。
+        // The 1/8 plane maps to the target the same way: fill the longer side, centre-crop.
+        const book_crop_t crop = book_cover_crop(plane.stride, plane.height, out_width, out_height);
         for (unsigned y = 0; y < out_height; ++y) {
-            unsigned sy = (uint64_t)y * plane.height / out_height;
+            unsigned sy = crop.y + (unsigned)((uint64_t)y * crop.height / out_height);
             for (unsigned x = 0; x < out_width; ++x) {
-                unsigned sx = (uint64_t)x * plane.stride / out_width;
+                unsigned sx = crop.x + (unsigned)((uint64_t)x * crop.width / out_width);
                 out[y * out_width + x] = plane.plane[(size_t)sy * plane.stride + sx];
             }
         }
@@ -147,10 +174,13 @@ static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
         cfg.outbuf = pixels;
         cfg.outbuf_size = info.output_len;
         if (esp_jpeg_decode(&cfg, &info) == ESP_OK) {
+            // 长边铺满再居中裁剪，长宽比不同也不拉伸。
+            // Fill by the longer side and centre-crop, so a different aspect ratio is not stretched.
+            const book_crop_t crop = book_cover_crop(info.width, info.height, out_width, out_height);
             for (unsigned y = 0; y < out_height; ++y) {
-                unsigned sy = (uint64_t)y * info.height / out_height;
+                unsigned sy = crop.y + (unsigned)((uint64_t)y * crop.height / out_height);
                 for (unsigned x = 0; x < out_width; ++x) {
-                    unsigned sx = (uint64_t)x * info.width / out_width;
+                    unsigned sx = crop.x + (unsigned)((uint64_t)x * crop.width / out_width);
                     const uint8_t *p = pixels + ((size_t)sy * info.width + sx) * 2;
                     uint16_t color = (uint16_t)p[0] | (uint16_t)p[1] << 8;
                     uint8_t r = (uint8_t)((color >> 11) & 31);
@@ -204,11 +234,16 @@ static bool png_gray(const uint8_t *data, size_t size, unsigned out_width,
     row = cover_alloc(stride);
     if (!row) goto done;
     unsigned next_y = 0;
+    // 流式读取时裁剪窗口同时作用于行与列：窗口外的行直接丢弃，列按窗口取样。
+    // The streaming reader applies the crop window to rows and columns alike: rows outside the
+    // window are dropped and columns are sampled inside it.
+    const book_crop_t crop = book_cover_crop(width, height, out_width, out_height);
     for (png_uint_32 y = 0; y < height; ++y) {
         png_read_row(png, row, NULL);
-        while (next_y < out_height && (uint64_t)next_y * height / out_height == y) {
+        while (next_y < out_height &&
+               crop.y + (uint64_t)next_y * crop.height / out_height == y) {
             for (unsigned x = 0; x < out_width; ++x) {
-                unsigned sx = (uint64_t)x * width / out_width;
+                unsigned sx = crop.x + (uint64_t)x * crop.width / out_width;
                 const uint8_t *p = row + sx * 4;
                 uint8_t gray = luminance(p[0], p[1], p[2]);
                 out[next_y * out_width + x] = (uint8_t)(((unsigned)gray * p[3] + 255u * (255u - p[3])) / 255u);
