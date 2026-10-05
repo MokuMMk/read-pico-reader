@@ -5,8 +5,8 @@
 #include <stdint.h>
 #include "epd_highlevel.h"
 
-/// 按锁屏的等比留白规则绘制 TF 图片；预览与锁屏共用。
-/// Draw an SD image with the same aspect-fit rule for preview and lock screen.
+/// 按原比例居中裁切并铺满区域；预览与锁屏共用。
+/// Center-crop an SD image at its original aspect ratio to cover preview and lock screen.
 bool ui_wallpaper_draw(uint8_t *framebuffer, const char *path, EpdRect area);
 
 /// 居中填满圆角区域并裁切四角，用于设置页头像。

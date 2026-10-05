@@ -51,6 +51,7 @@
     .precheck, .steps, .after, .faq { margin-top: 42px; }
     .release { margin-top: 62px; padding: 25px 29px; border: 1px solid #c5c9c0; border-radius: 19px; background: #f8f8f4; }
     .release h2 { margin-bottom: 12px; }
+    .release h3 { margin: 22px 0 8px; font-size: 18px; }
     .release ul { margin: 0; padding-left: 22px; line-height: 1.75; color: #465046; font-size: 16px; }
     .release p { margin: 12px 0 0; font-size: 15px; }
     .precheck-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
@@ -150,7 +151,7 @@
     <section class="precheck" aria-labelledby="need-title"><div class="eyebrow">BEFORE YOU START</div><h2 id="need-title">先准备这 3 样</h2><div class="precheck-grid"><div class="check"><span>1</span><strong>确认设备型号</strong><p>这份固件只给 MindReset Read Pico RDP-G01-W 使用。</p></div><div class="check"><span>2</span><strong>打开电脑浏览器</strong><p>在电脑上使用 Chrome 或 Edge 打开本页。</p></div><div class="check"><span>3</span><strong>准备数据线</strong><p>使用能传文件的 USB-C 线；仅能充电的线无法刷机。</p></div></div></section>
     <section class="steps" aria-labelledby="steps-title"><div class="eyebrow">STEP BY STEP</div><h2 id="steps-title">按顺序完成 3 步</h2><ol>
       <li class="step"><div class="step-visual" aria-hidden="true"><div class="cable-figure"><div class="laptop">Chrome / Edge</div><div class="cord"></div><div class="mini-device">Pico</div></div></div><div class="step-body"><div class="step-number">第 1 步 · 连接</div><h3>把 Pico 接到电脑</h3><p>插稳 USB 数据线，让设备接通电源。刷机期间保持连接。</p></div></li>
-      <li class="step"><div class="step-visual" aria-hidden="true"><div class="mock-dialog"><div class="dialog-top"><i></i><i></i><i></i></div><div class="dialog-body"><strong>选择串口</strong><div class="port">Pico 对应的串口</div><span class="dialog-button">连接</span></div></div></div><div class="step-body"><div class="step-number">第 2 步 · 选择</div><h3>选 Pico 的串口</h3><p>点击下方刷机按钮，选择 Pico 对应的串口，再点“连接”。如果连接失败，可在 Pico 上点“设置 → Pico 卡片上的升级 → 进入 BOOT 模式”，等电脑重新识别后重试。</p></div></li>
+      <li class="step"><div class="step-visual" aria-hidden="true"><div class="mock-dialog"><div class="dialog-top"><i></i><i></i><i></i></div><div class="dialog-body"><strong>选择串口</strong><div class="port">Pico 对应的串口</div><span class="dialog-button">连接</span></div></div></div><div class="step-body"><div class="step-number">第 2 步 · 选择</div><h3>选 Pico 的串口</h3><p>点击下方刷机按钮，选择 Pico 对应的串口，再点“连接”。如果连接失败，可在 Pico 上点“文件管理 → BOOT”，等电脑重新识别后重试。</p></div></li>
       <li class="step"><div class="step-visual" aria-hidden="true"><div class="mock-dialog"><div class="dialog-top"><i></i><i></i><i></i></div><div class="dialog-body"><strong>正在安装阅读固件</strong><small>请保持 USB 连接</small><div class="progress"><i></i></div><span class="percent">72%</span></div></div></div><div class="step-body"><div class="step-number">第 3 步 · 等待</div><h3>确认安装，等它完成</h3><p>按弹窗提示开始安装。看到“完成”之前，不要拔线或关闭网页。</p></div></li>
     </ol>
     <div class="flash-panel" id="flash-action">
@@ -159,9 +160,29 @@
       <esp-web-install-button id="flash-installer" hidden manifest="./manifest.json"><button slot="activate" type="button">连接 Pico，开始刷机</button></esp-web-install-button>
     </div>
     <p class="safety">正常刷机不会清空设备设置，也不会改动 TF 卡里的书。重要文件仍建议先备份；若弹窗出现“清除数据”选项，请勿选择。</p></section>
-    <section class="release" aria-labelledby="release-title"><div class="eyebrow">0.3.3-rc58 / 更新日志</div><h2 id="release-title">这次更新了什么</h2><ul><li>修复部分 EPUB 打开后设备重启的兼容问题；已在实机验证可正常阅读和翻页。</li><li>目录支持一次快翻 10 页和百分比跳转，并改进大书与双目录识别。</li><li>阅读新增更清晰的阅读线、全屏进度线，以及每 30 页或不强制全刷选项。</li><li>设置页支持滑动、自定义设备名称与头像、状态栏签名、锁屏睡眠方式；新增选项可随 TF 卡配置备份和恢复。</li><li>加深首页、书架和文件管理中的线条，减少界面切换残影。</li></ul><p><a href="https://github.com/wegooo-cell/read-pico-reader/blob/main/docs/CHANGELOG.md">查看完整更新日志</a></p></section>
+    <section class="release" aria-labelledby="release-title">
+      <div class="eyebrow">0.3.3-rc68 / 详细更新日志</div><h2 id="release-title">这次更新了什么</h2>
+      <p>这次把 rc59–rc68 的本地改进合并到在线刷机固件。</p>
+      <h3>书架与阅读</h3><ul>
+        <li><code>books</code> 内的多级文件夹可加入书架；收藏书排在前面，最近阅读排序在重启后保留。</li>
+        <li>封面和书脊的收藏标记统一为黑色，深色背景增加白色轮廓。「封面与书脊」已标为<strong>测试版、非正式版本</strong>。</li>
+        <li>调整正文两侧对齐、首行缩进和页面留白；新设备默认中档行距。阅读线可选样式并微调位置。</li>
+        <li>全屏底部保留细线进度；可手动全刷，或按 5／10／15／30 页及“不强制”设置清残影周期。</li>
+      </ul>
+      <h3>图片与 EPUB</h3><ul>
+        <li>壁纸图片保持原比例、居中裁切铺满锁屏，预览和实际锁屏使用相同裁切位置。</li>
+        <li>WiFi 在线开书前释放可重建缓存，损坏的 EPUB 目录缓存重建时释放临时内存；书架会显示开书失败原因。</li>
+        <li>加深设置页、首页和书架的卡片边框与分隔线，提高墨水屏上的可读性。</li>
+      </ul>
+      <h3>传输、配置与升级</h3><ul>
+        <li>调整热点和同 WiFi 传书的启动与缓冲逻辑，改善服务创建失败和传输不稳定。</li>
+        <li>TF 卡配置备份包含字体、排版、显示、网络、设备资料、书籍进度、阅读时长、书签及收藏。备份含明文 WiFi 密码，请妥善保管 TF 卡。</li>
+        <li>首次刷入新版双槽固件后，可在文件管理中使用 TF 卡本地升级；升级包写入空闲槽，首次启动异常可回退。</li>
+      </ul>
+      <p>已通过编译与宿主测试；WiFi 连线下打开特定书籍、书脊测试样式及壁纸显示仍需实机反馈。<a href="https://github.com/wegooo-cell/read-pico-reader/blob/main/docs/RELEASE_NOTES_0.3.3-rc68.md">查看完整 rc68 更新说明</a>。</p>
+    </section>
     <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点或 USB 导入书籍和其他文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>
-    <section class="faq" aria-labelledby="faq-title"><div class="eyebrow">HELP</div><h2 id="faq-title">遇到问题时</h2><details><summary>点了按钮，却看不到 Pico 的串口？</summary><p>先确认你在电脑端 Chrome 或 Edge 中打开了本站，并退出 Pico 的 USB 读卡模式。换一根确定能传文件的 USB 线，拔插设备后重试；若串口被其他刷机工具占用，先关闭那个工具。已安装新版固件的设备也可从“设置 → Pico 卡片上的升级”进入 BOOT 模式。</p></details><details><summary>为什么需要进入 BOOT 模式？</summary><p>正常连接 USB 串口时，刷机工具会尝试自动切换。若设备处于锁屏休眠或电脑未识别到串口，可先唤醒 Pico，再从设置中进入 BOOT 模式，等电脑重新识别后重试。首次刷机时若还没有这个菜单，可先尝试直接连接刷机。</p></details><details><summary>刷完开机，为什么书架是空的？</summary><p>固件不预装书。请插入 TF 卡，在“文件管理”中使用 WiFi、热点或 USB 传书，也可以把 EPUB / TXT 文件放进 TF 卡的 <code>books</code> 文件夹。</p></details><details><summary>阅读时怎样打开设置？</summary><p>阅读正文时单击设备中间的触控键，打开阅读设置；长按中键可返回书架。</p></details></section>
+    <section class="faq" aria-labelledby="faq-title"><div class="eyebrow">HELP</div><h2 id="faq-title">遇到问题时</h2><details><summary>点了按钮，却看不到 Pico 的串口？</summary><p>先确认你在电脑端 Chrome 或 Edge 中打开了本站，并退出 Pico 的 USB 读卡模式。换一根确定能传文件的 USB 线，拔插设备后重试；若串口被其他刷机工具占用，先关闭那个工具。已安装新版固件的设备也可从“文件管理 → BOOT”进入刷写模式。</p></details><details><summary>为什么需要进入 BOOT 模式？</summary><p>正常连接 USB 串口时，刷机工具会尝试自动切换。若设备处于锁屏休眠或电脑未识别到串口，可先唤醒 Pico，再从文件管理进入 BOOT 模式，等电脑重新识别后重试。首次刷机时若还没有这个菜单，可先尝试直接连接刷机。</p></details><details><summary>刷完开机，为什么书架是空的？</summary><p>固件不预装书。请插入 TF 卡，在“文件管理”中使用 WiFi、热点或 USB 传书，也可以把 EPUB / TXT 文件放进 TF 卡的 <code>books</code> 文件夹。</p></details><details><summary>阅读时怎样打开设置？</summary><p>阅读正文时单击设备中间的触控键，打开阅读设置；长按中键可返回书架。</p></details></section>
     <footer><p><a href="https://github.com/wegooo-cell/read-pico-reader" target="_blank" rel="noopener">查看项目源码</a> · <a href="./notices.html">第三方许可与致谢</a></p><p>本项目基于 <a href="https://github.com/MindReset/read_pico_firmware" target="_blank" rel="noopener">MindReset Read Pico 示例固件</a>，并非官方发布。图标设计引用 <a href="https://github.com/crosspoint-reader/crosspoint-reader" target="_blank" rel="noopener">CrossPoint Reader</a>，保留其 <a href="./licenses/CROSSPOINT-MIT.txt">MIT 许可</a>及相关 <a href="./licenses/LUCIDE-ISC.txt">Lucide ISC 许可</a>。网页刷机使用 <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>。</p></footer>
   </main>
   <script>

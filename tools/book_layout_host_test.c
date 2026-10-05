@@ -16,6 +16,7 @@ static size_t measured_codepoints;
 static size_t measure_calls;
 static int first_draw_px, last_draw_px, first_draw_x, last_draw_x;
 static int last_tracking_px;
+static int fitted_target;
 int test_guide_segments;
 int test_guide_first_y;
 int test_guide_height;
@@ -45,6 +46,11 @@ void ttf_draw_text_px_spaced(uint8_t* fb, int x, int y, int px, const char* text
                              int tracking_px, uint8_t fg, uint8_t bg) {
     last_tracking_px = tracking_px;
     ttf_draw_text_px(fb, x, y, px, text, EPD_DRAW_ALIGN_LEFT, fg, bg);
+}
+void ttf_draw_text_px_fitted(uint8_t* fb, int x, int y, int px, const char* text,
+                             int tracking_px, int target_width, uint8_t fg, uint8_t bg) {
+    fitted_target = target_width;
+    ttf_draw_text_px_spaced(fb, x, y, px, text, tracking_px, fg, bg);
 }
 int main(void) {
     EpdRect r = {0, 0, 20, 30};
@@ -138,6 +144,14 @@ int main(void) {
         drawn[0] = 0;
         book_layout_draw_page(&fb, 0, r, 10);
         assert(first_draw_x == (int)em * 10);
+        // 原文的段首全角/半角空格不得额外叠加一个缩进档位。
+        // Source leading spaces must not add another visual indent stop.
+        const char *preindented = "　甲乙\n  丙丁";
+        assert(book_layout_build(preindented, strlen(preindented), r, 10));
+        drawn[0] = 0;
+        book_layout_draw_page(&fb, 0, r, 10);
+        assert(first_draw_x == (int)em * 10);
+        assert(!strcmp(drawn, "甲乙丙丁"));
     }
     book_layout_set_first_line_indent(2);
     const char punct[] = "甲乙，丙";
@@ -160,7 +174,7 @@ int main(void) {
     assert(book_layout_build_blocks(aligned, strlen(aligned), &aligned_block, 1, r, 10));
     drawn[0] = 0;
     book_layout_draw_page(&fb, 0, r, 10);
-    assert(first_draw_x == 55 && last_draw_x == 55);
+    assert(first_draw_x == 50 && last_draw_x == 50);
     r = (EpdRect){0, 0, 100, 45};
     book_layout_set_chapter_lead(6, 20);
     assert(book_layout_build_blocks(styled, strlen(styled), blocks, 2, r, 10));
@@ -250,6 +264,25 @@ int main(void) {
     assert(test_guide_first_y == 80);
     book_layout_set_spacing(150, 50);
     book_layout_set_reading_line(0);
+    // 右标点可在安全留白内悬挂，下一页必须仍从正文开始。/ Hang a closer safely without starting the next page with punctuation.
+    book_layout_set_first_line_indent(0);
+    r = (EpdRect){40, 0, 40, 15};
+    const char hanging[] = "甲乙丙丁，戊己庚辛";
+    assert(book_layout_build(hanging, strlen(hanging), r, 10));
+    assert(book_layout_page_start_offset(1) == strlen("甲乙丙丁，"));
+    drawn[0] = 0; fitted_target = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    assert(!strcmp(drawn, "甲乙丙丁，") && fitted_target == 43);
+    // 居中块的首行不应带入普通段落缩进。/ A centered block must not inherit first-line body indent.
+    blk_t centered = {.offset = 0, .len = strlen("甲乙丙丁戊己"), .align = 1, .indent_percent = 200, .image = -1};
+    r = (EpdRect){40, 0, 30, 15};
+    assert(book_layout_build_blocks("甲乙丙丁戊己", centered.len, &centered, 1, r, 10));
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 0, r, 10);
+    int first_center_x = first_draw_x;
+    drawn[0] = 0;
+    book_layout_draw_page(&fb, 1, r, 10);
+    assert(first_center_x == first_draw_x);
     book_layout_free();
     puts("book_layout_host_test: PASS");
 }

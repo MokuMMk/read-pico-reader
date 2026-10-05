@@ -2123,6 +2123,70 @@ void ttf_draw_text_px_spaced(
     }
 }
 
+static bool cjk_spacing_point(uint32_t cp) {
+    return (cp >= 0x2e80 && cp <= 0xffef) || (cp >= 0x2018 && cp <= 0x201d);
+}
+
+void ttf_draw_text_px_fitted(
+    uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
+    int tracking_px, int target_width, uint8_t fg, uint8_t bg
+) {
+    if (!font_ready || !framebuffer || !text || !*text) return;
+    ttf_cover_lut_init();
+    pixel_height = clamp_px(pixel_height);
+    warm_text_io(pixel_height, text);
+    int glyph_count = 0, cjk_gaps = 0;
+    const char* cursor = text;
+    uint32_t previous = 0;
+    while (*cursor) {
+        uint32_t cp = decode_utf8(&cursor);
+        if (glyph_count && (cjk_spacing_point(previous) || cjk_spacing_point(cp))) ++cjk_gaps;
+        previous = cp;
+        ++glyph_count;
+    }
+    int gaps = glyph_count - 1;
+    int natural = measure_width(pixel_height, text) + tracking_px * gaps;
+    int delta = target_width - natural;
+    bool compress = delta < 0;
+    int adjustable = compress ? gaps : cjk_gaps;
+    if (adjustable < 2 || (compress && -delta > adjustable * 3) ||
+        (!compress && delta > adjustable * 12)) {
+        ttf_draw_text_px_spaced(framebuffer, x, y, pixel_height, text, tracking_px, fg, bg);
+        return;
+    }
+    int quotient = delta / adjustable;
+    int remainder = delta % adjustable;
+    int adjusted = 0, cursor_x = x;
+    cursor = text;
+    while (*cursor) {
+        uint32_t cp = decode_utf8(&cursor);
+        const glyph_entry_t* glyph = get_glyph(cp, pixel_height);
+        if (glyph && glyph->bitmap) {
+            for (int gy = 0; gy < glyph->height; ++gy) {
+                int yy = y - glyph->top + gy;
+                for (int gx = 0; gx < glyph->width; ++gx) {
+                    uint8_t alpha = glyph->bitmap[gy * glyph->width + gx];
+                    if (alpha) epd_draw_pixel(cursor_x + glyph->left + gx, yy,
+                                              mix_ink(alpha, fg, bg) << 4, framebuffer);
+                }
+            }
+        }
+        if (glyph) cursor_x += glyph->advance_x;
+        if (*cursor) {
+            const char* peek = cursor;
+            uint32_t next = decode_utf8(&peek);
+            cursor_x += tracking_px;
+            if (compress || cjk_spacing_point(cp) || cjk_spacing_point(next)) {
+                int step = quotient;
+                if (remainder > 0 && adjusted < remainder) ++step;
+                if (remainder < 0 && adjusted < -remainder) --step;
+                cursor_x += step;
+                ++adjusted;
+            }
+        }
+    }
+}
+
 void ttf_draw_text_px_bw(
     uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
     enum EpdFontFlags align, uint8_t fg, uint8_t bg

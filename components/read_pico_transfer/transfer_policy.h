@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  * 凭据校验和有界连接状态机；不含平台资源。/ Credential validation and bounded connection policy without platform resources.
- * 冻结：密码不进入公开状态；每轮连接最多三次、15秒。/ Frozen: passwords never enter public status; three attempts within 15 seconds.
+ * 冻结：密码不进入公开状态；每轮连接最多五次、30秒。/ Frozen: passwords never enter public status; five attempts within 30 seconds.
  */
 #pragma once
 #include <stdbool.h>
@@ -150,7 +150,7 @@ typedef struct {
 } transfer_connection_t;
 
 static void connection_begin(transfer_connection_t *c, int64_t now) {
-    *c = (transfer_connection_t){.pending = true, .deadline_ms = now + 15000, .next_ms = now};
+    *c = (transfer_connection_t){.pending = true, .deadline_ms = now + 30000, .next_ms = now};
 }
 
 static void connection_lost(transfer_connection_t *c, int64_t now) {
@@ -162,7 +162,7 @@ static void connection_lost(transfer_connection_t *c, int64_t now) {
 // 0等待、1连接、-1终止本轮。/ 0 waits, 1 connects, -1 terminates this round.
 static int connection_poll(transfer_connection_t *c, int64_t now) {
     if (c->online || c->failed) return 0;
-    if (now >= c->deadline_ms || (c->pending && c->attempts >= 3)) {
+    if (now >= c->deadline_ms || (c->pending && c->attempts >= 5)) {
         c->failed = true; c->pending = false; return -1;
     }
     if (!c->pending || now < c->next_ms) return 0;

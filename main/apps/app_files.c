@@ -22,6 +22,7 @@
 #include "book_title.h"
 #include "display.h"
 #include "file_tree.h"
+#include "ota_update.h"
 #include "read_pico_sd.h"
 #include "read_pico_search.h"
 #include "settings.h"
@@ -52,6 +53,12 @@ typedef enum { FILE_VIEW_LIST, FILE_VIEW_ACTIONS, FILE_VIEW_RENAME, FILE_VIEW_MO
                FILE_VIEW_BOOT } file_view_t;
 static file_view_t s_view;
 static bool s_boot_pending;
+typedef enum { OTA_VIEW_IDLE, OTA_VIEW_CONFIRM, OTA_VIEW_INSTALLING,
+               OTA_VIEW_SUCCESS, OTA_VIEW_FAILED } ota_view_t;
+static ota_view_t s_ota_view;
+static pico_ota_info_t s_ota_info;
+static bool s_ota_work_pending, s_ota_restart_pending;
+static char s_ota_result[96];
 static file_item_t s_selected;
 static bool s_delete_confirm;
 static int s_move_origin_folder, s_move_origin_page;
@@ -61,6 +68,13 @@ static bool s_editor_chinese;
 static size_t s_editor_candidate_page, s_editor_candidate_count;
 static uint32_t s_editor_candidates[5];
 static void scan_folder(int folder);
+
+static void ota_refresh_info(void) {
+    memset(&s_ota_info, 0, sizeof(s_ota_info));
+    (void)pico_ota_inspect(PICO_OTA_UPDATE_PATH, &s_ota_info);
+    s_ota_view = OTA_VIEW_IDLE;
+    s_ota_result[0] = 0;
+}
 
 static const char *const names[] = {"书籍", "图片", "字体", "TF 卡目录"};
 static const char *folder_root(int folder) {
@@ -545,12 +559,70 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_view == FILE_VIEW_BOOT) {
         ui_nav_back(fb, 36, 79);
         ui_text_vc(fb, 342, 107, 34, "固件升级", EPD_DRAW_ALIGN_CENTER, false);
-        ui_text(fb, 42, 245, 23, "连接电脑后，在 Chrome 或 Edge 打开刷机页。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_fill_round_rect(fb, (EpdRect){36, 310, 612, 210}, 22, UI_GRAY_WHITE);
-        ui_text(fb, 60, 348, 29, "进入 BOOT 模式", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 60, 410, 21, "进入后屏幕会停留在当前画面。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 60, 451, 21, "刷写完成后设备将重新启动。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_draw_button(fb, (EpdRect){36, 588, 612, 82},
+        if (s_ota_view == OTA_VIEW_CONFIRM) {
+            ui_fill_round_rect(fb, (EpdRect){36, 214, 612, 616}, 24, UI_GRAY_WHITE);
+            file_card_border(fb, (EpdRect){36, 214, 612, 616}, 24);
+            ui_text_vc(fb, 342, 275, 30, "确认安装本地升级包？", EPD_DRAW_ALIGN_CENTER, false);
+            ui_text(fb, 70, 354, 20, "当前版本", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 614, 350, 24, s_ota_info.current_version, EPD_DRAW_ALIGN_RIGHT, false);
+            ui_text(fb, 70, 415, 20, "升级到", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 614, 411, 24, s_ota_info.candidate_version, EPD_DRAW_ALIGN_RIGHT, false);
+            file_rule(fb, 70, 472, 544);
+            ui_text(fb, 70, 515, 21, "安装过程中请保持供电并保留 TF 卡。", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 70, 558, 21, "校验失败时不会切换当前固件。", EPD_DRAW_ALIGN_LEFT, false);
+            ui_draw_button(fb, (EpdRect){60, 672, 265, 82}, "取消", false);
+            ui_draw_button(fb, (EpdRect){359, 672, 265, 82}, "开始安装", true);
+            ui_nav_draw(fb, 2);
+            return;
+        }
+        if (s_ota_view == OTA_VIEW_INSTALLING || s_ota_view == OTA_VIEW_SUCCESS ||
+            s_ota_view == OTA_VIEW_FAILED) {
+            ui_fill_round_rect(fb, (EpdRect){36, 260, 612, 430}, 24, UI_GRAY_WHITE);
+            file_card_border(fb, (EpdRect){36, 260, 612, 430}, 24);
+            const char *title = s_ota_view == OTA_VIEW_INSTALLING ? "正在安装" :
+                                s_ota_view == OTA_VIEW_SUCCESS ? "安装完成" : "安装失败";
+            ui_text_vc(fb, 342, 336, 34, title, EPD_DRAW_ALIGN_CENTER, false);
+            ui_text_vc(fb, 342, 421, 23,
+                       s_ota_view == OTA_VIEW_INSTALLING ? "正在写入空闲固件分区" : s_ota_result,
+                       EPD_DRAW_ALIGN_CENTER, false);
+            ui_text_vc(fb, 342, 468, 21,
+                       s_ota_view == OTA_VIEW_INSTALLING ? "请勿断电或取出 TF 卡" :
+                       s_ota_view == OTA_VIEW_SUCCESS ? "Pico 将自动重新启动" : "当前版本仍可继续使用",
+                       EPD_DRAW_ALIGN_CENTER, false);
+            if (s_ota_view == OTA_VIEW_FAILED)
+                ui_draw_button(fb, (EpdRect){60, 560, 564, 82}, "返回升级页", false);
+            ui_nav_draw(fb, 2);
+            return;
+        }
+
+        ui_fill_round_rect(fb, (EpdRect){36, 187, 612, 143}, 22, UI_GRAY_WHITE);
+        file_card_border(fb, (EpdRect){36, 187, 612, 143}, 22);
+        ui_text(fb, 60, 214, 20, "当前版本", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 254, 27, s_ota_info.current_version[0] ? s_ota_info.current_version : "未知",
+                EPD_DRAW_ALIGN_LEFT, false);
+
+        ui_fill_round_rect(fb, (EpdRect){36, 353, 612, 271}, 22, UI_GRAY_WHITE);
+        file_card_border(fb, (EpdRect){36, 353, 612, 271}, 22);
+        ui_text(fb, 60, 380, 27, s_ota_info.ready ? "发现本地升级包" : "TF 卡本地升级", EPD_DRAW_ALIGN_LEFT, false);
+        if (s_ota_info.ready) {
+            char detail[80];
+            snprintf(detail, sizeof(detail), "%s · %.1f MB", s_ota_info.candidate_version,
+                     s_ota_info.image_size / 1048576.0);
+            ui_text(fb, 60, 426, 21, detail, EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 60, 466, 19, "Pico-update.bin", EPD_DRAW_ALIGN_LEFT, false);
+            ui_draw_button(fb, (EpdRect){60, 518, 564, 78}, "安装升级", true);
+        } else {
+            ui_text(fb, 60, 426, 20, s_ota_info.message, EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 60, 470, 19, "文件名必须为 Pico-update.bin", EPD_DRAW_ALIGN_LEFT, false);
+            ui_draw_button(fb, (EpdRect){60, 518, 564, 78}, "重新检查 TF 卡", false);
+        }
+
+        ui_text(fb, 42, 672, 21, "电脑刷机", EPD_DRAW_ALIGN_LEFT, false);
+        ui_fill_round_rect(fb, (EpdRect){36, 710, 612, 202}, 22, UI_GRAY_WHITE);
+        file_card_border(fb, (EpdRect){36, 710, 612, 202}, 22);
+        ui_text(fb, 60, 742, 26, "进入 BOOT 模式", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 786, 19, "用于首次安装 OTA 基础版或故障恢复。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_draw_button(fb, (EpdRect){60, 821, 564, 66},
                        s_boot_pending ? "正在进入 BOOT 模式" : "进入 BOOT 模式", false);
         ui_nav_draw(fb, 2);
         return;
@@ -606,7 +678,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 36, 91, 52, "文件", EPD_DRAW_ALIGN_LEFT, false);
         ui_fill_round_rect(fb, (EpdRect){530, 91, 118, 59}, 27, UI_GRAY_WHITE);
         ui_draw_round_rect(fb, (EpdRect){530, 91, 118, 59}, 27, 0x68);
-        ui_text_vc(fb, 589, 120, 21, "BOOT", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 589, 120, 21, "升级", EPD_DRAW_ALIGN_CENTER, false);
         EpdRect storage = {36, 171, 612, 112};
         ui_fill_round_rect(fb, storage, 24, UI_GRAY_WHITE);
         file_card_border(fb, storage, 24);
@@ -686,6 +758,11 @@ static void on_enter(app_ctx_t *ctx) {
     s_folder = s_requested_folder; s_requested_folder = -1;
     s_view = FILE_VIEW_LIST;
     s_boot_pending = false;
+    s_ota_view = OTA_VIEW_IDLE;
+    s_ota_work_pending = false;
+    s_ota_restart_pending = false;
+    memset(&s_ota_info, 0, sizeof(s_ota_info));
+    s_ota_result[0] = 0;
     s_delete_confirm = false;
     snprintf(s_dir, sizeof(s_dir), "/sdcard");
     s_page = 0; s_scan_pending = true;
@@ -698,6 +775,8 @@ static void on_enter(app_ctx_t *ctx) {
 static void on_media_lost(app_ctx_t *ctx) {
     (void)ctx; s_folder = -1; s_count = 0; s_scan_pending = false;
     s_view = FILE_VIEW_LIST; s_delete_confirm = false;
+    s_ota_view = OTA_VIEW_IDLE; s_ota_work_pending = false; s_ota_restart_pending = false;
+    memset(&s_ota_info, 0, sizeof(s_ota_info));
     memset(s_counts, 0, sizeof(s_counts)); read_pico_sd_get_info(&s_sd);
 }
 static void on_media_ready(app_ctx_t *ctx) {
@@ -706,6 +785,23 @@ static void on_media_ready(app_ctx_t *ctx) {
 }
 static app_redraw_t on_tick(app_ctx_t *ctx) {
     (void)ctx;
+    if (s_ota_restart_pending) {
+        s_ota_restart_pending = false;
+        esp_restart();
+        return APP_REDRAW_NONE;
+    }
+    if (s_ota_work_pending) {
+        s_ota_work_pending = false;
+        esp_err_t err = pico_ota_install(PICO_OTA_UPDATE_PATH, s_ota_result, sizeof(s_ota_result));
+        if (err == ESP_OK) {
+            s_ota_view = OTA_VIEW_SUCCESS;
+            s_ota_restart_pending = true;
+        } else {
+            ESP_LOGE("files", "local OTA failed: %s", esp_err_to_name(err));
+            s_ota_view = OTA_VIEW_FAILED;
+        }
+        return APP_REDRAW_PAGE;
+    }
     if (s_boot_pending) {
         s_boot_pending = false;
         pmu_selftest_prepare_powerdown();
@@ -887,8 +983,33 @@ static app_redraw_t rename_gesture(const ui_gesture_event_t *ev) {
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     if (s_view == FILE_VIEW_BOOT) {
         if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+        if (s_ota_view == OTA_VIEW_INSTALLING || s_ota_view == OTA_VIEW_SUCCESS) return APP_REDRAW_NONE;
+        if (s_ota_view == OTA_VIEW_CONFIRM) {
+            if (ev->y0 >= 672 && ev->y0 < 754) {
+                if (ev->x0 < 342) s_ota_view = OTA_VIEW_IDLE;
+                else {
+                    s_ota_view = OTA_VIEW_INSTALLING;
+                    s_ota_work_pending = true;
+                }
+                return APP_REDRAW_PAGE;
+            }
+            if (ev->y0 < 180) { s_ota_view = OTA_VIEW_IDLE; return APP_REDRAW_PAGE; }
+            return APP_REDRAW_NONE;
+        }
+        if (s_ota_view == OTA_VIEW_FAILED) {
+            if ((ev->y0 >= 560 && ev->y0 < 642) || ev->y0 < 180) {
+                ota_refresh_info();
+                return APP_REDRAW_PAGE;
+            }
+            return APP_REDRAW_NONE;
+        }
         if (ev->y0 < 180) { s_view = FILE_VIEW_LIST; return APP_REDRAW_PAGE; }
-        if (ev->y0 >= 588 && ev->y0 < 670) { s_boot_pending = true; return APP_REDRAW_PAGE; }
+        if (ev->y0 >= 518 && ev->y0 < 596) {
+            if (s_ota_info.ready) s_ota_view = OTA_VIEW_CONFIRM;
+            else ota_refresh_info();
+            return APP_REDRAW_PAGE;
+        }
+        if (ev->y0 >= 821 && ev->y0 < 887) { s_boot_pending = true; return APP_REDRAW_PAGE; }
         int tab = ui_nav_hit(ev->x0, ev->y0);
         if (tab >= 0) ui_nav_request(ctx, tab);
         return APP_REDRAW_NONE;
@@ -981,6 +1102,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
     if (!long_press && ev->y0 >= 91 && ev->y0 < 150 && ev->x0 >= 530) {
         s_view = FILE_VIEW_BOOT;
+        ota_refresh_info();
         return APP_REDRAW_PAGE;
     }
     for (int i = 0; !long_press && i < 3; ++i) if (ui_rect_hit(home_transfer_rect(i), ev->x0, ev->y0)) {
@@ -1015,7 +1137,15 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
 }
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
-    if (s_view == FILE_VIEW_BOOT) { s_view = FILE_VIEW_LIST; return APP_REDRAW_PAGE; }
+    if (s_view == FILE_VIEW_BOOT) {
+        if (s_ota_view == OTA_VIEW_INSTALLING || s_ota_view == OTA_VIEW_SUCCESS) return APP_REDRAW_NONE;
+        if (s_ota_view != OTA_VIEW_IDLE) {
+            ota_refresh_info();
+            return APP_REDRAW_PAGE;
+        }
+        s_view = FILE_VIEW_LIST;
+        return APP_REDRAW_PAGE;
+    }
     if (s_view == FILE_VIEW_MOVE) { leave_move(false); return APP_REDRAW_PAGE; }
     if (key == 1) { ui_nav_request(ctx, 0); return APP_REDRAW_NONE; }
     if (s_view == FILE_VIEW_RENAME) { s_view = FILE_VIEW_ACTIONS; return APP_REDRAW_PAGE; }

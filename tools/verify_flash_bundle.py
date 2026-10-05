@@ -13,6 +13,7 @@ EXPECTED = {
     "bootloader.bin": (0x0, 0x8000),
     "partitions.bin": (0x8000, 0x10000),
     "firmware.bin": (0x10000, 0x500000),
+    "ota_data_initial.bin": (0xD10000, 0xD12000),
 }
 
 

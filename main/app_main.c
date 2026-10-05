@@ -18,6 +18,7 @@
 #include "epd_highlevel.h"
 #include "epdiy.h"
 #include "esp_log.h"
+#include "ota_update.h"
 #include "pmu_selftest.h"
 #include "read_pico_board.h"
 #include "read_pico_init.h"
@@ -107,6 +108,10 @@ void app_main(void) {
     if (hw.pmu_ready && !vcom_ok) {
         vcom_setup_run(&hl, framebuffer, hw.touch);
     }
+
+    // 硬件、显示、触摸与必要的出厂设置均成功后确认新槽。
+    // Confirm a new slot only after hardware, display, touch, and required setup succeed.
+    pico_ota_confirm_running();
 
     app_loop_run(&(app_loop_config_t){
         .hl = &hl,

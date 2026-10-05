@@ -175,7 +175,8 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
     *align = block ? block->align : 0;
     // 首行缩进由阅读设置统一控制；书内标题和对齐块仍保持原本的位置。
     // The reader setting controls paragraph indent; headings and aligned blocks keep their placement.
-    *indent = first_line && block ? (int)((unsigned)*px * block->indent_percent / 100) : 0;
+    *indent = first_line && block && !*heading && !*align ?
+        (int)((unsigned)*px * block->indent_percent / 100) : 0;
     if (first_line && !*heading && !*align) *indent = *px * (int)s_first_line_indent_em;
     if (*indent >= s_rect.width) *indent = s_rect.width > 1 ? s_rect.width - 1 : 0;
     if (*indent + *px > s_rect.width) *indent = 0;
@@ -183,11 +184,28 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
     *margin_after = block ? (int)((unsigned)*px * block->margin_after_percent / 100) : 0;
     int available = s_rect.width - *indent;
     size_t limit = block ? block->offset + block->len : s_len;
-    size_t end = off;
-    size_t last_start = off;
+    // 纸书常把全角空格写进段首；统一由阅读设置决定缩进，原文偏移仍保留。
+    // Printed-book source often contains leading spaces; the reader setting owns the visual indent.
+    size_t visible_off = off;
+    if (first_line && !*heading && !*align) {
+        while (visible_off < limit) {
+            unsigned char c = (unsigned char)s_text[visible_off];
+            if (c == ' ' || c == '\t') { ++visible_off; continue; }
+            if (visible_off + 3 <= limit && !memcmp(s_text + visible_off, "\xe3\x80\x80", 3)) {
+                visible_off += 3; continue;
+            }
+            if (visible_off + 2 <= limit && !memcmp(s_text + visible_off, "\xc2\xa0", 2)) {
+                visible_off += 2; continue;
+            }
+            break;
+        }
+    }
+    size_t end = visible_off;
+    size_t last_start = visible_off;
     uint32_t last_cp = 0;
     int64_t width = 0;
     int64_t last_width = 0;
+    int glyph_count = 0;
     s_line[0] = 0;
     *paragraph_end = false;
     while (end < limit && s_text[end] != '\r' && s_text[end] != '\n') {
@@ -200,24 +218,34 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
         memcpy(glyph, s_text + end, n);
         glyph[n] = 0;
         int64_t candidate = width + ttf_text_width_px(*px, glyph) +
-                            (end > off && !*heading ? s_tracking_px : 0);
+                            (end > visible_off && !*heading ? s_tracking_px : 0);
         if (candidate < 0) return false;
         if (candidate > available) {
-            if (end == off) return false;
-            // 右标点与前一字一起移到下一行，避免把标点悬挂到右侧留白。
-            // Move a closing mark with the preceding glyph rather than hanging it into the right margin.
+            if (end == visible_off) return false;
+            // 优先让行尾正文对齐，再允许右标点小幅悬挂到留白；超出安全宽度才回退前一字。
+            // Align the text edge first, hang a closing mark slightly into the margin, then roll back only if needed.
             if (prohibited_line_start(cp)) {
-                if (last_start > off) {
+                int hang = s_rect.x > 4 ? *px / 3 : 0;
+                if (hang > s_rect.x - 4) hang = s_rect.x - 4;
+                int squeeze = glyph_count > 1 ? (glyph_count - 1) * 3 : 0;
+                if (candidate <= (int64_t)available + hang + squeeze) {
+                    memcpy(s_line + end - visible_off, glyph, n);
+                    s_line[end - visible_off + n] = 0;
+                    width = candidate;
+                    end += n;
+                    break;
+                }
+                if (last_start > visible_off) {
                     end = last_start;
-                    s_line[end - off] = 0;
+                    s_line[end - visible_off] = 0;
                     width = last_width;
                     break;
                 }
                 // 极窄行容不下两个字时才保留悬挂，避免出现以标点开头的死循环。
                 // Only a one-glyph-wide line may hang punctuation to avoid a non-progressing wrap.
                 if (candidate <= (int64_t)available + *px * 2) {
-                    memcpy(s_line + end - off, glyph, n);
-                    s_line[end - off + n] = 0;
+                    memcpy(s_line + end - visible_off, glyph, n);
+                    s_line[end - visible_off + n] = 0;
                     width = candidate;
                     end += n;
                     break;
@@ -226,13 +254,13 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
             // 若最后一个字是左括号，将它回退到下一行；极窄行则让括号和首字成组悬挂。
             // Move a trailing opener to the next line; on a one-glyph line keep the pair together.
             if (prohibited_line_end(last_cp)) {
-                if (last_start > off) {
+                if (last_start > visible_off) {
                     end = last_start;
-                    s_line[end - off] = 0;
+                    s_line[end - visible_off] = 0;
                     width = last_width;
                 } else if (candidate <= (int64_t)available + *px * 2) {
-                    memcpy(s_line + end - off, glyph, n);
-                    s_line[end - off + n] = 0;
+                    memcpy(s_line + end - visible_off, glyph, n);
+                    s_line[end - visible_off + n] = 0;
                     width = candidate;
                     end += n;
                 }
@@ -241,10 +269,11 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
         }
         last_width = width;
         width = candidate;
+        ++glyph_count;
         last_start = end;
         last_cp = cp;
-        memcpy(s_line + end - off, glyph, n);
-        s_line[end - off + n] = 0;
+        memcpy(s_line + end - visible_off, glyph, n);
+        s_line[end - visible_off + n] = 0;
         end += n;
     }
     *line_width = (int)width;
@@ -382,12 +411,22 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
             int available = rect.width - indent;
             if (align == 1) x += (available - line_width) / 2;
             else if (align == 2) x += available - line_width;
-            if (s_tracking_px && !heading)
-                ttf_draw_text_px_spaced(fb, x, rect.y + (int)used + ttf_ascender_px(line_px),
-                                        line_px, s_line, s_tracking_px, 0, 15);
+            int baseline = rect.y + (int)used + ttf_ascender_px(line_px);
+            const blk_t *line_block = block_at(off);
+            bool final_line = paragraph_end || next >= s_len ||
+                (line_block && next >= line_block->offset + line_block->len);
+            if (!heading && !align && (!final_line || line_width > available)) {
+                // 完整正文行对齐到统一右边界；悬挂标点最多使用少量右侧留白。
+                // Justify complete body lines; a hanging closer may use a small part of the right margin.
+                int hang = s_rect.x > 4 ? line_px / 3 : 0;
+                if (hang > s_rect.x - 4) hang = s_rect.x - 4;
+                int target = line_width > available ? available + hang : available;
+                ttf_draw_text_px_fitted(fb, x, baseline, line_px, s_line, s_tracking_px,
+                                        target, 0, 15);
+            } else if (s_tracking_px && !heading)
+                ttf_draw_text_px_spaced(fb, x, baseline, line_px, s_line, s_tracking_px, 0, 15);
             else
-                ttf_draw_text_px(fb, x, rect.y + (int)used + ttf_ascender_px(line_px), line_px,
-                                 s_line, EPD_DRAW_ALIGN_LEFT, 0, 15);
+                ttf_draw_text_px(fb, x, baseline, line_px, s_line, EPD_DRAW_ALIGN_LEFT, 0, 15);
         }
         used += line_height;
         if (paragraph_end) used += gap_for(line_height, heading) + margin_after;

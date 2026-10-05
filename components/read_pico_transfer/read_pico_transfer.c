@@ -24,6 +24,9 @@
 #include <sys/time.h>
 #include <dirent.h>
 #include <unistd.h>
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#endif
 
 #define IMAGE_UPLOAD_LIMIT (20u * 1024u * 1024u)
 #define FONT_UPLOAD_LIMIT (32u * 1024u * 1024u)
@@ -220,6 +223,17 @@ static int receive_file(const char *path, const char *part, size_t total, char *
                         size_t cap, receive_cb_t recv, void *ctx, progress_cb_t progress) {
     FILE *f = fopen(part, "wb");
     if (!f) return 507;
+    // HTTP 常按小包到达；扩大文件缓冲可显著减少 TF 卡零碎写入。
+    // HTTP arrives in small packets; a larger file buffer cuts fragmented SD writes.
+#ifdef ESP_PLATFORM
+    char *write_buffer = heap_caps_malloc(8192, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+    char *write_buffer = malloc(8192);
+#endif
+    if (write_buffer && setvbuf(f, write_buffer, _IOFBF, 8192) != 0) {
+        free(write_buffer);
+        write_buffer = NULL;
+    }
     int error = 0;
     size_t done = 0;
     while (done < total) {
@@ -231,6 +245,7 @@ static int receive_file(const char *path, const char *part, size_t total, char *
         if (progress) progress(done);
     }
     if (fclose(f) != 0) error = 507;
+    free(write_buffer);
     if (!error) {
         int committed = commit_file(part, path);
         if (committed < 0) error = 507;
@@ -415,6 +430,56 @@ esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured) {
     esp_err_t err = load_credentials(&saved);
     if (err == ESP_OK && saved.version == 1) { memcpy(ssid, saved.ssid, 33); *configured = true; }
     clear_secret(&saved, sizeof(saved)); release_config();
+    return err;
+}
+
+esp_err_t read_pico_transfer_export_wifi_backup(read_pico_transfer_wifi_backup_t *out) {
+    if (!out) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    if (!claim_config()) return ESP_ERR_INVALID_STATE;
+    transfer_credentials_t saved;
+    esp_err_t err = load_credentials(&saved);
+    if (err == ESP_OK && saved.version == 1) {
+        out->configured = 1;
+        memcpy(out->ssid, saved.ssid, sizeof(out->ssid));
+        memcpy(out->password, saved.password, sizeof(out->password));
+    }
+    clear_secret(&saved, sizeof(saved));
+    release_config();
+    return err;
+}
+
+bool read_pico_transfer_wifi_backup_valid(const read_pico_transfer_wifi_backup_t *backup) {
+    if (!backup || backup->configured > 1) return false;
+    if (!backup->configured) {
+        for (size_t i = 0; i < sizeof(backup->ssid); ++i)
+            if (backup->ssid[i]) return false;
+        for (size_t i = 0; i < sizeof(backup->password); ++i)
+            if (backup->password[i]) return false;
+        return true;
+    }
+    transfer_credentials_t saved = {0};
+    saved.version = 1;
+    memcpy(saved.ssid, backup->ssid, sizeof(saved.ssid));
+    memcpy(saved.password, backup->password, sizeof(saved.password));
+    bool valid = credentials_valid(&saved);
+    clear_secret(&saved, sizeof(saved));
+    return valid;
+}
+
+esp_err_t read_pico_transfer_import_wifi_backup(const read_pico_transfer_wifi_backup_t *backup) {
+    if (!read_pico_transfer_wifi_backup_valid(backup)) return ESP_ERR_INVALID_ARG;
+    if (!claim_config()) return ESP_ERR_INVALID_STATE;
+    transfer_credentials_t next = {0};
+    if (backup->configured) {
+        next.version = 1;
+        memcpy(next.ssid, backup->ssid, sizeof(next.ssid));
+        memcpy(next.password, backup->password, sizeof(next.password));
+    }
+    esp_err_t err = store_credentials(backup->configured ? &next : NULL);
+    if (err == ESP_OK && !s_wifi) publish_credentials(backup->configured ? &next : NULL);
+    clear_secret(&next, sizeof(next));
+    release_config();
     return err;
 }
 
@@ -1354,14 +1419,16 @@ static int inspect_sd_tree(const char *path, unsigned depth, unsigned *nodes, ui
     if (!S_ISDIR(st.st_mode)) return 400;
     DIR *dir = opendir(path);
     if (!dir) return 507;
+    char *child = heap_caps_malloc(512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!child) { closedir(dir); return 507; }
     int status = 200;
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char child[512];
-        if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) >= (int)sizeof(child) ||
+        if (snprintf(child, 512, "%s/%s", path, entry->d_name) >= 512 ||
             (status = inspect_sd_tree(child, depth + 1, nodes, bytes)) != 200) break;
     }
+    free(child);
     if (closedir(dir)) status = 507;
     return status;
 }
@@ -1378,14 +1445,16 @@ static int delete_sd_tree(const char *path, unsigned depth) {
     if (!S_ISDIR(st.st_mode)) return 400;
     DIR *dir = opendir(path);
     if (!dir) return 507;
+    char *child = heap_caps_malloc(512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!child) { closedir(dir); return 507; }
     int status = 200;
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char child[512];
-        if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) >= (int)sizeof(child) ||
+        if (snprintf(child, 512, "%s/%s", path, entry->d_name) >= 512 ||
             (status = delete_sd_tree(child, depth + 1)) != 200) break;
     }
+    free(child);
     if (closedir(dir)) status = 507;
     if (status == 200 && rmdir(path)) status = 507;
     if (status == 200 && s_cfg.directory_deleted_cb) s_cfg.directory_deleted_cb(path);
@@ -1400,15 +1469,18 @@ static int copy_sd_tree(const char *source, const char *target, unsigned depth) 
     if (!S_ISDIR(st.st_mode) || mkdir(target, 0775)) return 507;
     DIR *dir = opendir(source);
     if (!dir) { rmdir(target); return 507; }
+    char *names = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!names) { closedir(dir); rmdir(target); return 507; }
+    char *from = names, *to = names + 512;
     int status = 200;
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char from[512], to[512];
-        if (snprintf(from, sizeof(from), "%s/%s", source, entry->d_name) >= (int)sizeof(from) ||
-            snprintf(to, sizeof(to), "%s/%s", target, entry->d_name) >= (int)sizeof(to) ||
+        if (snprintf(from, 512, "%s/%s", source, entry->d_name) >= 512 ||
+            snprintf(to, 512, "%s/%s", target, entry->d_name) >= 512 ||
             (status = copy_sd_tree(from, to, depth + 1)) != 200) break;
     }
+    free(names);
     if (closedir(dir)) status = 507;
     if (status != 200) (void)delete_sd_tree(target, depth);
     return status;
@@ -1427,14 +1499,17 @@ static void notify_sd_move_tree(const char *old_path, const char *new_path, unsi
     if (s_cfg.directory_moved_cb) s_cfg.directory_moved_cb(old_path, new_path);
     DIR *dir = opendir(new_path);
     if (!dir) return;
+    char *names = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!names) { closedir(dir); return; }
+    char *old_child = names, *new_child = names + 512;
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char old_child[512], new_child[512];
-        if (snprintf(old_child, sizeof(old_child), "%s/%s", old_path, entry->d_name) >= (int)sizeof(old_child) ||
-            snprintf(new_child, sizeof(new_child), "%s/%s", new_path, entry->d_name) >= (int)sizeof(new_child)) continue;
+        if (snprintf(old_child, 512, "%s/%s", old_path, entry->d_name) >= 512 ||
+            snprintf(new_child, 512, "%s/%s", new_path, entry->d_name) >= 512) continue;
         notify_sd_move_tree(old_child, new_child, depth + 1);
     }
+    free(names);
     closedir(dir);
 }
 
@@ -1691,20 +1766,31 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         s_buffer = heap_caps_malloc(16384, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!s_buffer) { err = ESP_ERR_NO_MEM; goto fail; }
     }
-    err = esp_wifi_start(); if (err != ESP_OK) goto fail;
-    s_started = true;
     if (!cfg->network_only) {
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
     // 文件元数据和壁纸设置会访问 NVS；HTTP 栈必须在禁用缓存时仍可读取的内部内存。
     // File metadata and wallpaper settings access NVS; the HTTP stack must remain readable while caches are disabled.
-    http.stack_size = 12288; http.max_uri_handlers = 16; http.recv_wait_timeout = 5;
+    // 在无线电启动前预留网页任务，避免 WiFi 内存碎片导致任务创建失败。
+    // Reserve the HTTP task before starting the radio to avoid WiFi heap fragmentation.
+    http.stack_size = 8192; http.max_uri_handlers = 16; http.max_open_sockets = 3;
+    http.recv_wait_timeout = 15;
+    http.send_wait_timeout = 15;
     http.task_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     http.lru_purge_enable = true;
     ESP_LOGI("transfer", "http start internal free=%u largest=%u psram free=%u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    err = httpd_start(&s_http, &http); if (err != ESP_OK) goto fail;
+    err = httpd_start(&s_http, &http);
+    if (err == ESP_ERR_HTTPD_TASK) {
+        // 内存碎片较重的旧会话再试一次；目录递归路径已移到外部内存。
+        // Retry once with a smaller internal stack after fragmented sessions; recursive paths live in PSRAM.
+        ESP_LOGW("transfer", "http task retry internal largest=%u",
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        http.stack_size = 7168;
+        err = httpd_start(&s_http, &http);
+    }
+    if (err != ESP_OK) goto fail;
     ESP_LOGI("transfer", "http ready internal free=%u largest=%u psram free=%u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
@@ -1729,6 +1815,12 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     for (size_t i = 0; i < sizeof(routes)/sizeof(*routes); ++i) {
         err = httpd_register_uri_handler(s_http, &routes[i]); if (err != ESP_OK) goto fail;
     }
+    }
+    err = esp_wifi_start(); if (err != ESP_OK) goto fail;
+    s_started = true;
+    if (cfg->mode == READ_PICO_TRANSFER_MODE_STA && !cfg->network_only) {
+        esp_err_t power_err = esp_wifi_set_ps(WIFI_PS_NONE);
+        if (power_err != ESP_OK) ESP_LOGW("transfer", "disable wifi power save: %s", esp_err_to_name(power_err));
     }
     if (cfg->mode == READ_PICO_TRANSFER_MODE_AP) {
         portENTER_CRITICAL(&s_lock);

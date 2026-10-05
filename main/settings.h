@@ -85,6 +85,12 @@ void app_settings_set_reader_power_turn(bool on);
 /// 沉浸全屏时隐藏阅读状态栏。/ Hide the reader status bar in immersive full screen.
 bool app_settings_reader_immersive(void);
 void app_settings_set_reader_immersive(bool on);
+/// 阅读时跳过书内插图页；原图仍保留在 EPUB 中。/ Skip inline illustrations while reading without changing the EPUB.
+bool app_settings_reader_hide_images(void);
+void app_settings_set_reader_hide_images(bool on);
+/// 书架排序偏好重启后保持。/ Persist the shelf's recent-reading sort across restarts.
+bool app_settings_shelf_recent_sort(void);
+void app_settings_set_shelf_recent_sort(bool on);
 /// 字间距档位 0..4，默认 2 居中；对应 -4/-2/0/+2/+4 像素。/ Tracking index 0..4, centered default 2; maps to -4/-2/0/+2/+4 pixels.
 uint8_t app_settings_book_tracking(void);
 void app_settings_set_book_tracking(uint8_t index);
@@ -106,7 +112,7 @@ void app_settings_set_book_margin(uint8_t px);
 /// 段后距离百分比，0/25/50/75。/ Paragraph-gap percentage: 0/25/50/75.
 uint8_t app_settings_book_paragraph_spacing(void);
 void app_settings_set_book_paragraph_spacing(uint8_t percent);
-/// 书架样式：1 深色书轨、2 亚克力挡板、3 半透明书袋。/ Shelf style: 1 dark rail, 2 acrylic guard, 3 frosted pocket.
+/// 书架样式：1 深色书轨、2 亚克力挡板、3 半透明书袋、4 封面与书脊。/ Shelf style: rail, acrylic, pocket, or covers and spines.
 uint8_t app_settings_shelf_style(void);
 void app_settings_set_shelf_style(uint8_t style);
 /// 当前 TF 卡书籍目录和字体目录；默认分别为 /sdcard/books、/sdcard/fonts。
@@ -116,9 +122,9 @@ const char* app_settings_fonts_dir(void);
 bool app_settings_set_books_dir(const char* path);
 bool app_settings_set_fonts_dir(const char* path);
 
-/// 将个性化设置保存到 TF 卡根目录 Pico-settings.backup；不包含 WiFi 密码和书籍进度。
-/// Save personal settings to the TF root; WiFi secrets and reading progress are excluded.
+/// 将设置、阅读记录和 WiFi 凭据保存到 TF 卡根目录；备份含明文密码，需妥善保管。
+/// Save settings, reading records and WiFi credentials to TF root; keep the plaintext-secret backup private.
 esp_err_t app_settings_backup_save(void);
-/// 校验备份后一次写入 NVS；缺失的外部字体或壁纸回退到内建资源。
-/// Validate before applying in one NVS transaction; missing external assets fall back safely.
+/// 校验备份后恢复 NVS；缺失的外部字体或壁纸回退到内建资源。
+/// Validate before restoring NVS; missing external assets fall back safely.
 esp_err_t app_settings_backup_restore(void);

@@ -5,6 +5,14 @@ cmake_minimum_required(VERSION 3.22)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)
+
+# 本地 OTA 验证可指定版本号；未指定时使用当前开发版。
+# Local OTA validation may override the version; otherwise use the current development build.
+if(DEFINED ENV{PICO_PROJECT_VER} AND NOT "$ENV{PICO_PROJECT_VER}" STREQUAL "")
+    set(PROJECT_VER "$ENV{PICO_PROJECT_VER}")
+else()
+    set(PROJECT_VER "0.3.3-rc68")
+endif()
 project(Read_Pico)
 
 # 固件描述时间统一为 UTC，与概览页标识一致；保留已有编译缓存启动器。

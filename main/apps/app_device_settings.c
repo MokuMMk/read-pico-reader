@@ -29,6 +29,7 @@
 #include "ui_nav.h"
 #include "ui_wallpaper.h"
 #include "read_pico_search.h"
+#include "book_store.h"
 #include "../assets/app_icons.h"
 
 static char s_notice[96];
@@ -220,10 +221,19 @@ static bool time_save(void) {
     return true;
 }
 
+static void settings_card(uint8_t *fb, EpdRect rect, int radius, uint8_t fill, uint8_t edge) {
+    ui_fill_round_rect(fb, rect, radius, fill);
+    ui_draw_round_rect(fb, rect, radius, edge);
+    ui_draw_round_rect(fb, (EpdRect){rect.x + 1, rect.y + 1,
+                                     rect.width - 2, rect.height - 2}, radius - 1, edge);
+}
+static void settings_divider(uint8_t *fb, int y, int x, int width) {
+    epd_fill_rect((EpdRect){x, y, width, 2}, 0x78, fb);
+}
 static void row(uint8_t *fb, int y, const char *label, const char *value) {
     ui_text(fb, 54, y + 17, 27, label, EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, 627, y + 20, 21, value, EPD_DRAW_ALIGN_RIGHT, false);
-    ui_hairline(fb, y + 68, 54, 575, UI_GRAY_LIGHT);
+    settings_divider(fb, y + 68, 54, 575);
 }
 static void section(uint8_t *fb, int y, const char *title) {
     ui_text(fb, 40, y, 22, title, EPD_DRAW_ALIGN_LEFT, false);
@@ -231,7 +241,7 @@ static void section(uint8_t *fb, int y, const char *title) {
 static void back_header(uint8_t *fb, const char *title) {
     ui_nav_back(fb, 36, 79);
     ui_text_vc(fb, 342, 107, 34, title, EPD_DRAW_ALIGN_CENTER, false);
-    ui_hairline(fb, 174, 36, 612, UI_GRAY_LIGHT);
+    settings_divider(fb, 174, 36, 612);
 }
 
 static void setting_icon(uint8_t *fb, int index, int cx, int cy) {
@@ -302,10 +312,11 @@ static void setting_group(uint8_t *fb, int title_y, const char *title,
     title_y -= s_main_scroll;
     card_y -= s_main_scroll;
     ui_text(fb, 42, title_y, 20, title, EPD_DRAW_ALIGN_LEFT, false);
-    ui_fill_round_rect(fb, (EpdRect){36, card_y, 612, count * row_height}, 22, UI_GRAY_WHITE);
+    settings_card(fb, (EpdRect){36, card_y, 612, count * row_height}, 22,
+                  UI_GRAY_WHITE, 0x70);
     for (int i = 0; i < count; ++i) {
         int y = card_y + i * row_height;
-        if (i) ui_hairline(fb, y, 88, 544, 0xd0);
+        if (i) settings_divider(fb, y, 88, 544);
         setting_icon(fb, icons[i], 67, y + row_height / 2);
         ui_text(fb, 100, y + 19, 25, labels[i], EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 619, y + 22, 20, values[i], EPD_DRAW_ALIGN_RIGHT, false);
@@ -313,7 +324,7 @@ static void setting_group(uint8_t *fb, int title_y, const char *title,
 }
 
 static void setting_toggle(uint8_t *fb, int y, const char *title, const char *detail, bool active) {
-    ui_fill_round_rect(fb, (EpdRect){36, y, 612, 126}, 22, UI_GRAY_WHITE);
+    settings_card(fb, (EpdRect){36, y, 612, 126}, 22, UI_GRAY_WHITE, 0x70);
     ui_text(fb, 59, y + 24, 27, title, EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, 59, y + 75, 19, detail, EPD_DRAW_ALIGN_LEFT, false);
     EpdRect track = {555, y + 43, 69, 39};
@@ -326,6 +337,21 @@ static void setting_toggle(uint8_t *fb, int y, const char *title, const char *de
 static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
     if (top < 242 || top + 170 >= UI_NAV_TOP) return;
     const int left = 99;
+    if (style == 4) {
+        for (int i = 0; i < 2; ++i) {
+            EpdRect cover = {left + 20 + i * 128, top + 3, 92, 135};
+            epd_fill_rect(cover, i ? 0x78 : 0x48, fb);
+            ui_draw_round_rect(fb, cover, 0, 0x28);
+            epd_fill_rect((EpdRect){cover.x + cover.width + 1, cover.y + 5, 6, 130}, 0xc8, fb);
+        }
+        for (int i = 0; i < 7; ++i) {
+            EpdRect spine = {left + 286 + i * 28, top + 29, 24, 109};
+            epd_fill_rect(spine, i % 2 ? 0x78 : 0x48, fb);
+            ui_draw_round_rect(fb, spine, 0, 0x28);
+        }
+        epd_fill_rect((EpdRect){left, top + 140, 486, 12}, 0x40, fb);
+        return;
+    }
     for (int i = 0; i < 3; ++i) {
         int x = left + 20 + i * 155;
         EpdRect cover = {x, top, 116, 145};
@@ -372,7 +398,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             if (index >= s_wallpaper_count) break;
             EpdRect box = {36, 374 + i * 96, 612, 80};
             bool active = !strcmp(s_wallpapers[index].path, app_settings_avatar_path());
-            ui_fill_round_rect(fb, box, 17, active ? 0xd0 : UI_GRAY_WHITE);
+            settings_card(fb, box, 17, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
             char name[96]; snprintf(name, sizeof(name), "%s", s_wallpapers[index].name);
             fit_value(name, 490);
             ui_text_vc(fb, 60, box.y + 40, 24, name, EPD_DRAW_ALIGN_LEFT, false);
@@ -433,17 +459,17 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_page == SETTINGS_SHELF_STYLE) {
         ui_nav_back(fb, 36, 79);
         ui_text_vc(fb, 342, 107, 34, "书架样式", EPD_DRAW_ALIGN_CENTER, false);
-        ui_text(fb, 36, 207, 23, "每页最多显示 9 本书", EPD_DRAW_ALIGN_LEFT, false);
-        static const char *const styles[] = {"深色书轨", "亚克力书架", "半透明书袋"};
-        static const char *const descriptions[] = {"封面落在书轨上", "透明亚克力挡板", "每本独立透明书袋"};
-        for (int i = 0; i < 3; ++i) {
+        ui_text(fb, 36, 207, 23, "常规每页 9 本 · 书脊模式为测试版", EPD_DRAW_ALIGN_LEFT, false);
+        static const char *const styles[] = {"深色书轨", "亚克力书架", "半透明书袋", "封面与书脊 · 测试版"};
+        static const char *const descriptions[] = {"封面落在书轨上", "透明亚克力挡板", "每本独立透明书袋", "非正式版本"};
+        for (int i = 0; i < 4; ++i) {
             int y = 263 + i * 253 - s_style_scroll;
             if (y + 230 < 242 || y > 1095) continue;
             EpdRect card = {36, y, 612, 230};
             int style = i + 1;
             bool active = app_settings_shelf_style() == style;
-            ui_fill_round_rect(fb, card, 24, active ? 0xd0 : UI_GRAY_WHITE);
-            ui_draw_round_rect(fb, card, 24, active ? 0x90 : 0xd0);
+            settings_card(fb, card, 24, active ? 0xd0 : UI_GRAY_WHITE,
+                          active ? 0x58 : 0x70);
             draw_style_thumbnail(fb, style, y + 11);
             if (y + 190 < 1096) ui_text(fb, 68, y + 188, 23, styles[i], EPD_DRAW_ALIGN_LEFT, false);
             if (y + 195 < 1096) ui_text(fb, 440, y + 192, 17, descriptions[i], EPD_DRAW_ALIGN_LEFT, false);
@@ -501,7 +527,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             EpdRect box = {36, 292 + slot * 92, 612, 78};
             const ttf_font_item_t *item = item_index ? ttf_font_item(item_index - 1) : NULL;
             bool active = item ? !strcmp(selected, item->path) : !selected[0];
-            ui_fill_round_rect(fb, box, 18, active ? 0xd0 : UI_GRAY_WHITE);
+            settings_card(fb, box, 18, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
             ui_draw_round_rect(fb, box, 18, active ? 0x90 : 0xd0);
             ui_text_vc(fb, 60, box.y + 39, 26,
                        item ? system_font_label(item->path) : "思源黑体（内建）", EPD_DRAW_ALIGN_LEFT, false);
@@ -519,7 +545,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             int value = 100 + i * 10;
             EpdRect box = {36, 298 + i * 116, 612, 90};
             bool active = app_settings_system_font_size() == value;
-            ui_fill_round_rect(fb, box, 20, active ? 0xd0 : UI_GRAY_WHITE);
+            settings_card(fb, box, 20, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
             char label[48]; snprintf(label, sizeof(label), "%d%%", value);
             ui_text_vc(fb, 64, box.y + 45, 29, label, EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(605, box.y + 45, 8, UI_GRAY_BLACK, fb);
@@ -535,7 +561,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             int value = 100 + i * 10;
             EpdRect box = {36, 298 + i * 116, 612, 90};
             bool active = app_settings_system_contrast() == value;
-            ui_fill_round_rect(fb, box, 20, active ? 0xd0 : UI_GRAY_WHITE);
+            settings_card(fb, box, 20, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
             ui_text_vc(fb, 64, box.y + 45, 28, names[i], EPD_DRAW_ALIGN_LEFT, false);
             char shown[16]; snprintf(shown, sizeof(shown), "%d%%", value);
             ui_text_vc(fb, 570, box.y + 45, 22, shown, EPD_DRAW_ALIGN_RIGHT, false);
@@ -553,7 +579,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (int i = 0; i < 2; ++i) {
             EpdRect box = {36, 300 + i * 154, 612, 132};
             bool active = app_settings_lock_style() == values[i];
-            ui_fill_round_rect(fb, box, 22, active ? 0xd0 : UI_GRAY_WHITE);
+            settings_card(fb, box, 22, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
             ui_text(fb, 64, box.y + 23, 31, labels[i], EPD_DRAW_ALIGN_LEFT, false);
             ui_text(fb, 64, box.y + 79, 20, details[i], EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(609, box.y + 66, 8, UI_GRAY_BLACK, fb);
@@ -574,7 +600,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             if (index >= s_wallpaper_count) break;
             EpdRect box = {36, 292 + i * 92, 612, 78};
             bool active = !strcmp(s_wallpapers[index].path, app_settings_wallpaper_path());
-            ui_fill_round_rect(fb, box, 18, active ? 0xd0 : UI_GRAY_WHITE);
+            settings_card(fb, box, 18, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
             char name[96]; snprintf(name, sizeof(name), "%s", s_wallpapers[index].name);
             fit_value(name, 490);
             ui_text_vc(fb, 60, box.y + 39, 24, name, EPD_DRAW_ALIGN_LEFT, false);
@@ -589,7 +615,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_fill_round_rect(fb, image, 8, UI_GRAY_WHITE);
         s_wallpaper_preview_ok = s_wallpaper_selected >= 0 && s_wallpaper_selected < s_wallpaper_count &&
             ui_wallpaper_draw(fb, s_wallpapers[s_wallpaper_selected].path, image);
-        ui_draw_round_rect(fb, image, 8, UI_GRAY_LIGHT);
+        ui_draw_round_rect(fb, image, 8, 0x70);
         if (!s_wallpaper_preview_ok)
             ui_text_vc(fb, 342, 507, 23, "图片无法预览", EPD_DRAW_ALIGN_CENTER, false);
         if (s_wallpaper_selected >= 0 && s_wallpaper_selected < s_wallpaper_count) {
@@ -644,8 +670,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         section(fb, 240, "阅读正文");
         setting_toggle(fb, 281, "电源键翻页", "短按下一页，长按锁屏", app_settings_reader_power_turn());
         setting_toggle(fb, 431, "全屏沉浸", "全屏时隐藏状态栏，让正文延伸至顶部", app_settings_reader_immersive());
-        ui_text(fb, 50, 615, 20, "轻点正文中央切换全屏；中间触控键打开阅读设置。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 50, 656, 19, "关闭按键翻页时，电源键仍按原有锁屏逻辑工作。", EPD_DRAW_ALIGN_LEFT, false);
+        setting_toggle(fb, 581, "关闭书内图片", "阅读时跳过插图，保留原书文件", app_settings_reader_hide_images());
+        ui_text(fb, 50, 765, 20, "轻点正文中央切换全屏；中间触控键打开阅读设置。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 50, 806, 19, "关闭按键翻页时，电源键仍按原有锁屏逻辑工作。", EPD_DRAW_ALIGN_LEFT, false);
         ui_nav_draw(fb, 3);
         return;
     }
@@ -658,7 +685,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (int i = 0; i < 2; ++i) {
             EpdRect box = {36, 300 + i * 154, 612, 132};
             bool active = app_settings_staged_shutdown() == (i == 1);
-            ui_fill_round_rect(fb, box, 22, active ? 0xd0 : UI_GRAY_WHITE);
+            settings_card(fb, box, 22, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
             ui_text(fb, 64, box.y + 23, 29, labels[i], EPD_DRAW_ALIGN_LEFT, false);
             ui_text(fb, 64, box.y + 79, 20, details[i], EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(609, box.y + 66, 8, UI_GRAY_BLACK, fb);
@@ -671,27 +698,30 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_page == SETTINGS_CONFIG) {
         back_header(fb, "保存与恢复配置");
         section(fb, 248, "换机或刷机后，快速恢复个性化设置");
-        ui_fill_round_rect(fb, (EpdRect){36, 299, 612, 197}, 22, UI_GRAY_WHITE);
+        settings_card(fb, (EpdRect){36, 299, 612, 197}, 22, UI_GRAY_WHITE, 0x70);
         ui_text(fb, 60, 326, 26, "TF 卡根目录", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 60, 377, 23, "Pico-settings.backup", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 60, 435, 19, "文字排版、显示、锁屏、设备资料与阅读操作", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 435, 19, "文字排版、设备资料、阅读记录与书签", EPD_DRAW_ALIGN_LEFT, false);
         ui_draw_button(fb, (EpdRect){36, 561, 612, 83}, "保存当前配置到 TF 卡", false);
         ui_draw_button(fb, (EpdRect){36, 681, 612, 83},
                        s_config_confirm ? "再次点按，确认恢复配置" : "从 TF 卡恢复配置", false);
         if (s_notice[0]) ui_text(fb, 48, 819, 21, s_notice, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 48, 899, 19, "不包含书籍、阅读进度和 WiFi 密码。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 48, 939, 19, "请保留 TF 卡上的自选字体与壁纸图片。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 899, 19, "包含阅读记录、设备资料和已存 WiFi。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 939, 19, "书籍、字体和图片仍需留在 TF 卡。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 979, 19, "备份含 WiFi 密码，请妥善保管 TF 卡。", EPD_DRAW_ALIGN_LEFT, false);
         ui_nav_draw(fb, 3);
         return;
     }
     const int profile_y = 164 - s_main_scroll;
     if (profile_y + 106 > 160) {
-        ui_fill_round_rect(fb, (EpdRect){36, profile_y, 612, 106}, 24, UI_GRAY_WHITE);
-        ui_fill_round_rect(fb, (EpdRect){57, profile_y + 11, 82, 82}, 20, 0x30);
+        settings_card(fb, (EpdRect){36, profile_y, 612, 106}, 24, UI_GRAY_WHITE, 0x70);
         bool avatar_ok = app_settings_avatar_path()[0] &&
             ui_wallpaper_draw_rounded(fb, app_settings_avatar_path(),
-                                      (EpdRect){58, profile_y + 12, 80, 80}, 19);
-        if (!avatar_ok) ui_text(fb, 98, profile_y + 25, 49, "P", EPD_DRAW_ALIGN_CENTER, true);
+                                      (EpdRect){57, profile_y + 11, 82, 82}, 20);
+        if (!avatar_ok) {
+            ui_fill_round_rect(fb, (EpdRect){57, profile_y + 11, 82, 82}, 20, 0x30);
+            ui_text(fb, 98, profile_y + 25, 49, "P", EPD_DRAW_ALIGN_CENTER, true);
+        }
         char profile_name[64]; snprintf(profile_name, sizeof(profile_name), "%s", app_settings_device_name());
         while (profile_name[0] && ttf_text_width_px(ui_text_effective_px(30), profile_name) > 345) {
             size_t n = strlen(profile_name) - 1;
@@ -704,7 +734,10 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         const pmu_snapshot_t *pmu = read_pico_pmu_get();
         if (pmu && pmu->soc_permille <= 1000) {
             char battery[12]; snprintf(battery, sizeof(battery), "%u%%", (unsigned)pmu->soc_permille / 10);
-            ui_text(fb, 618, profile_y + 26, 22, battery, EPD_DRAW_ALIGN_RIGHT, false);
+            // 电量和“编辑”从同一左边界起排，避免数字较短时看起来偏右。
+            // Start the percentage at the edit label's left edge so short numbers do not appear offset.
+            int edit_left = 618 - ui_text_fixed_width_px(ui_text_effective_px(19), "编辑  ›");
+            ui_text(fb, edit_left, profile_y + 26, 22, battery, EPD_DRAW_ALIGN_LEFT, false);
         }
     }
     char wifi_ssid[33] = {0}; bool wifi_saved = false;
@@ -723,7 +756,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     fit_value(font, 235);
     char size[32]; snprintf(size, sizeof(size), "%u%%  ›", app_settings_system_font_size());
     char contrast[32]; snprintf(contrast, sizeof(contrast), "%u%%  ›", app_settings_system_contrast());
-    static const char *const styles[] = {"深色书轨  ›", "深色书轨  ›", "亚克力书架  ›", "半透明书袋  ›"};
+    static const char *const styles[] = {"深色书轨  ›", "深色书轨  ›", "亚克力书架  ›", "半透明书袋  ›", "书脊测试版  ›"};
     char signature_value[96];
     snprintf(signature_value, sizeof(signature_value), "%s  ›",
              app_settings_status_signature()[0] ? app_settings_status_signature() : "未设置");
@@ -862,6 +895,11 @@ save_text:
     if (s_editor_signature) app_settings_set_status_signature(s_editor);
     else if (s_editor[0]) app_settings_set_device_name(s_editor);
     else { snprintf(s_editor_notice, sizeof(s_editor_notice), "设备名称不能为空"); return APP_REDRAW_PAGE; }
+    const char *saved = s_editor_signature ? app_settings_status_signature() : app_settings_device_name();
+    if (strcmp(saved, s_editor)) {
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "保存失败，请检查设置存储空间");
+        return APP_REDRAW_PAGE;
+    }
     s_page = s_editor_signature ? SETTINGS_MAIN : SETTINGS_PROFILE;
     return APP_REDRAW_PAGE;
 }
@@ -891,8 +929,14 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         s_wallpaper_page = next / 8;
         return APP_REDRAW_PAGE;
     }
-    if (s_page == SETTINGS_SHELF_STYLE && (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D))
-        return APP_REDRAW_NONE;
+    if (s_page == SETTINGS_SHELF_STYLE && (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
+        int next = s_style_scroll + (ev->type == UI_GESTURE_SWIPE_U ? 253 : -253);
+        if (next < 0) next = 0;
+        if (next > 253) next = 253;
+        if (next == s_style_scroll) return APP_REDRAW_NONE;
+        s_style_scroll = next;
+        return APP_REDRAW_PAGE;
+    }
     if ((s_page == SETTINGS_SYSTEM_FONT || s_page == SETTINGS_WALLPAPER) &&
         (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
         int *page = s_page == SETTINGS_SYSTEM_FONT ? &s_font_page : &s_wallpaper_page;
@@ -966,7 +1010,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
     if (s_page == SETTINGS_SHELF_STYLE) {
         if (y < 190) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 4; ++i) {
             if (y >= 263 + i * 253 - s_style_scroll && y < 493 + i * 253 - s_style_scroll && y < 1096) {
                 app_settings_set_shelf_style((uint8_t)(i + 1));
                 s_page = SETTINGS_MAIN;
@@ -1051,6 +1095,10 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             app_settings_set_reader_immersive(!app_settings_reader_immersive());
             return APP_REDRAW_PAGE;
         }
+        if (y >= 581 && y < 707) {
+            app_settings_set_reader_hide_images(!app_settings_reader_hide_images());
+            return APP_REDRAW_PAGE;
+        }
         return APP_REDRAW_NONE;
     }
     if (s_page == SETTINGS_POWER_SLEEP) {
@@ -1086,13 +1134,16 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                 ttf_font_scan();
                 app_font_activate_system();
                 ui_text_set_system_scale(true);
+                // 阅读记录恢复后令首页和书架重新取进度、时长与排序。
+                // Rebuild home and shelf caches after restoring reading records.
+                book_store_notify_changed();
             }
             snprintf(s_notice, sizeof(s_notice), "%s",
-                     err == ESP_OK ? "配置已恢复，界面和阅读设置即时生效" :
+                     err == ESP_OK ? "配置与阅读记录已恢复" :
                      err == ESP_ERR_INVALID_STATE ? "未识别到 TF 卡，请插卡后重试" :
                      err == ESP_ERR_NOT_FOUND ? "未找到 Pico-settings.backup" :
                      err == ESP_ERR_INVALID_RESPONSE ? "配置文件损坏或版本不兼容" :
-                     "恢复失败，原有设置已保留");
+                     "恢复未完成，请重试");
             return APP_REDRAW_PAGE;
         }
         return APP_REDRAW_NONE;

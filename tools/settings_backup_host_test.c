@@ -22,6 +22,42 @@ size_t strlcpy(char *dst, const char *src, size_t cap) {
 #define APP_SETTINGS_BACKUP_ROOT "build/book-tests/settings-card"
 #include "../main/settings.c"
 
+static read_pico_transfer_wifi_backup_t saved_wifi = {
+    .configured = 1, .ssid = "Home_2.4G", .password = "password123"
+};
+static unsigned wifi_imports;
+esp_err_t read_pico_transfer_export_wifi_backup(read_pico_transfer_wifi_backup_t *out) {
+    *out = saved_wifi;
+    return ESP_OK;
+}
+bool read_pico_transfer_wifi_backup_valid(const read_pico_transfer_wifi_backup_t *backup) {
+    if (!backup || backup->configured > 1) return false;
+    if (!backup->configured) return !backup->ssid[0] && !backup->password[0];
+    return backup->ssid[0] &&
+           strnlen(backup->ssid, sizeof(backup->ssid)) < sizeof(backup->ssid) &&
+           strnlen(backup->password, sizeof(backup->password)) < sizeof(backup->password);
+}
+esp_err_t read_pico_transfer_import_wifi_backup(const read_pico_transfer_wifi_backup_t *backup) {
+    if (!read_pico_transfer_wifi_backup_valid(backup)) return ESP_ERR_INVALID_ARG;
+    saved_wifi = *backup;
+    ++wifi_imports;
+    return ESP_OK;
+}
+
+static unsigned history_saves, history_restores;
+esp_err_t book_history_backup_write(FILE *file) {
+    ++history_saves;
+    return fwrite("RPHIST1", 1, 8, file) == 8 ? ESP_OK : ESP_FAIL;
+}
+bool book_history_backup_validate(FILE *file) {
+    char marker[8];
+    return fread(marker, 1, 8, file) == 8 && !memcmp(marker, "RPHIST1", 8) && fgetc(file) == EOF;
+}
+esp_err_t book_history_backup_restore(FILE *file) {
+    ++history_restores;
+    return book_history_backup_validate(file) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+}
+
 static bool card_mounted = true;
 static bool commit_fails;
 static int commit_count;
@@ -39,6 +75,7 @@ esp_err_t nvs_commit(nvs_handle_t h) { (void)h; ++commit_count; return commit_fa
 
 int main(void) {
     assert(app_settings_system_contrast() == 100);
+    assert(app_settings_book_line_spacing() == 130); /* New installations start at the middle slider stop. */
     (void)mkdir(APP_SETTINGS_BACKUP_ROOT, 0700);
     (void)remove(BACKUP_FILE);
     (void)remove(BACKUP_PREVIOUS);
@@ -64,6 +101,33 @@ int main(void) {
     s_lock_style = 1;
     strlcpy(s_wallpaper, "/sdcard/pictures/missing.jpg", sizeof(s_wallpaper));
     assert(app_settings_backup_save() == ESP_OK);
+    assert(history_saves == 1);
+    FILE *saved = fopen(BACKUP_FILE, "rb");
+    assert(saved && fseek(saved, sizeof(settings_backup_v1_t) + 7, SEEK_SET) == 0);
+    settings_backup_profile_t saved_profile;
+    assert(fread(&saved_profile, 1, sizeof(saved_profile), saved) == sizeof(saved_profile));
+    settings_backup_wifi_t saved_network;
+    assert(fread(&saved_network, 1, sizeof(saved_network), saved) == sizeof(saved_network));
+    assert(fclose(saved) == 0);
+    assert(!strcmp(saved_profile.device_name, "Kiiko Pico") &&
+           !strcmp(saved_profile.status_signature, "今天也要读书") &&
+           !strcmp(saved_profile.avatar, "/sdcard/pictures/missing-avatar.jpg"));
+    assert(backup_wifi_valid(&saved_network) && saved_network.credentials.configured &&
+           !strcmp(saved_network.credentials.ssid, "Home_2.4G") &&
+           !strcmp(saved_network.credentials.password, "password123"));
+    memset(&saved_wifi, 0, sizeof(saved_wifi));
+    saved = fopen(BACKUP_FILE, "r+b");
+    assert(saved && fseek(saved, sizeof(settings_backup_v1_t) + 7 +
+                            sizeof(settings_backup_profile_t) +
+                            offsetof(settings_backup_wifi_t, credentials.password), SEEK_SET) == 0);
+    assert(fputc('X', saved) != EOF && fclose(saved) == 0);
+    assert(app_settings_backup_restore() == ESP_ERR_INVALID_RESPONSE);
+    assert(!saved_wifi.configured && wifi_imports == 0);
+    saved = fopen(BACKUP_FILE, "r+b");
+    assert(saved && fseek(saved, sizeof(settings_backup_v1_t) + 7 +
+                            sizeof(settings_backup_profile_t), SEEK_SET) == 0);
+    assert(fwrite(&saved_network, 1, sizeof(saved_network), saved) == sizeof(saved_network));
+    assert(fclose(saved) == 0);
     s_book_px = 48;
     s_book_tracking = 2;
     s_book_indent = 0;
@@ -81,6 +145,10 @@ int main(void) {
     s_lock_style = 0;
     s_wallpaper[0] = 0;
     assert(app_settings_backup_restore() == ESP_OK);
+    assert(history_restores == 1);
+    assert(wifi_imports == 1 && saved_wifi.configured &&
+           !strcmp(saved_wifi.ssid, "Home_2.4G") &&
+           !strcmp(saved_wifi.password, "password123"));
     assert(s_book_px == 62 && s_book_tracking == 4 && s_book_indent == 3 &&
            s_book_rule_offset == 7 && s_reader_full_pages == 5);
     assert(s_reader_turn_effect == 1 && s_reader_power_turn && s_reader_immersive && s_shelf_style == 3);
@@ -104,12 +172,15 @@ int main(void) {
     assert(app_settings_backup_save() == ESP_OK); /* Overwrite an existing backup. */
     s_book_px = 48;
     commit_fails = true;
+    strlcpy(saved_wifi.ssid, "Other_2.4G", sizeof(saved_wifi.ssid));
     assert(app_settings_backup_restore() == ESP_FAIL);
     assert(s_book_px == 48); /* RAM state is unchanged on commit failure. */
+    assert(!strcmp(saved_wifi.ssid, "Other_2.4G"));
     commit_fails = false;
     assert(app_settings_backup_restore() == ESP_OK && s_book_px == 70 &&
            s_reader_full_pages == 0 && app_settings_book_reading_line_offset() == -8 &&
            s_staged_shutdown);
+    assert(!strcmp(saved_wifi.ssid, "Home_2.4G"));
 
     /* PICOSET3 backups predate the shutdown choice and restore the safe off default. */
     FILE *file = fopen(BACKUP_FILE, "rb");
@@ -129,6 +200,7 @@ int main(void) {
     assert(fclose(file) == 0);
     assert(app_settings_backup_restore() == ESP_OK && !s_staged_shutdown);
     assert(!s_home_full_refresh && !strcmp(s_device_name, "Pico") && !s_status_signature[0]);
+    assert(!strcmp(saved_wifi.ssid, "Home_2.4G")); /* Old backups leave network alone. */
 
     /* Existing PICOSET2 backups remain readable, with centered guide lines. */
     file = fopen(BACKUP_FILE, "rb");
@@ -161,7 +233,13 @@ int main(void) {
     assert(fclose(file) == 0);
     s_book_indent = 0;
     assert(app_settings_backup_restore() == ESP_OK && s_book_indent == 2);
+    /* A backup without a configured network clears an existing saved network. */
+    memset(&saved_wifi, 0, sizeof(saved_wifi));
     assert(app_settings_backup_save() == ESP_OK);
+    saved_wifi.configured = 1;
+    strlcpy(saved_wifi.ssid, "Temporary", sizeof(saved_wifi.ssid));
+    strlcpy(saved_wifi.password, "temporary123", sizeof(saved_wifi.password));
+    assert(app_settings_backup_restore() == ESP_OK && !saved_wifi.configured);
 
     file = fopen(BACKUP_FILE, "r+b");
     assert(file);

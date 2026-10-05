@@ -31,7 +31,7 @@ def stage(output: Path) -> None:
     check(FLASH)
     output.mkdir(parents=True, exist_ok=True)
     for name in ("index.html", "notices.html", "manifest.json", "firmware.bin",
-                 "bootloader.bin", "partitions.bin"):
+                 "bootloader.bin", "partitions.bin", "ota_data_initial.bin"):
         shutil.copy2(FLASH / name, output / name)
     shutil.copytree(FLASH / "vendor/web", output / "vendor/web", dirs_exist_ok=True)
     shutil.copy2(FLASH / "vendor/LICENSE", output / "vendor/LICENSE")

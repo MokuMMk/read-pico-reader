@@ -7,8 +7,12 @@ set -euo pipefail
 bash tools/run_book_host_tests.sh
 mkdir -p build/book-tests/settings-card
 cc -std=gnu11 -Wall -Wextra -Werror -Itools/settings_backup_stubs \
+    -Icomponents/read_pico_transfer/include \
     tools/settings_backup_host_test.c -o build/book-tests/settings-backup
 build/book-tests/settings-backup
+cc -std=gnu11 -Wall -Wextra -Werror -Itools/settings_backup_stubs \
+    tools/book_history_backup_host_test.c -o build/book-tests/book-history-backup
+build/book-tests/book-history-backup
 python3 tools/book_ui_host_test.py
 python3 tools/test_home_recent.py
 python3 tools/test_book_toc.py
@@ -16,6 +20,9 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-p
     -Itools/book_cover_auto_stubs -Imain/book -Imain/font \
     tools/book_cover_auto_host_test.c main/book/book_cover_auto.c -o build/book-tests/auto-cover
 build/book-tests/auto-cover
+cc -std=c11 -Wall -Wextra -Werror -Imain/ui \
+    tools/wallpaper_crop_host_test.c -o build/book-tests/wallpaper-crop
+build/book-tests/wallpaper-crop
 python3 tools/test_search.py
 flags=(-std=gnu11 -Wall -Wextra -Werror -Wno-deprecated-declarations -g -fsanitize=address,undefined)
 gcc "${flags[@]}" -Itools/file_tree_stubs -Imain/apps tools/file_tree_host_test.c main/apps/file_tree.c -o build/book-tests/file-tree

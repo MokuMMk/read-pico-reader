@@ -138,7 +138,13 @@ static bool epub_cache_load(const char* source, book_epub_t* book) {
              memchr(entry->title, 0, sizeof(entry->title)) != NULL &&
              memchr(entry->anchor, 0, sizeof(entry->anchor)) != NULL;
     }
-    if (!ok) { free(book->navigation); book->navigation = NULL; return false; }
+    if (!ok) {
+        // 损坏或写入中断的索引必须释放两张表；随后才重建正文目录。
+        // Release both partially loaded tables before rebuilding a damaged index.
+        free(book->navigation); book->navigation = NULL; book->navigation_capacity = 0;
+        free(book->chapters); book->chapters = NULL; book->chapter_capacity = 0;
+        return false;
+    }
     book->count = payload.count; book->total = payload.total; book->authored_count = payload.authored_count;
     book->navigation_capacity = payload.authored_count;
     book->body_scanned = payload.body_scanned != 0;

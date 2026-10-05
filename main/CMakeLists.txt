@@ -22,10 +22,12 @@ set(main_requires
     esp_driver_gpio
     esp_driver_usb_serial_jtag
     esp_app_format
+    app_update
 )
 idf_component_register(
     SRCS
         "app_main.c"
+        "ota_update.c"
         "display.c"
         "sleep.c"
         "settings.c"
@@ -51,6 +53,7 @@ idf_component_register(
         "apps/usb_storage.c"
         "book/book_store.c"
         "book/book_progress.c"
+        "book/book_history_backup.c"
         "book/book_title.c"
         "book/book_ticket.c"
         "book/book_source.c"

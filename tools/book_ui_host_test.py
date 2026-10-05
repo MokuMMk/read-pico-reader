@@ -55,8 +55,9 @@ typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE,APP_REDRAW_FULL} a
 typedef struct {int x,y,width,height;} EpdRect;
 static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;return(EpdRect){40+i*(width+12),1096,width,96};}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
-typedef struct {char name[256],author[128],path[288];uint32_t size;uint16_t chapter;bool is_flash,has_progress;uint8_t pct;uint32_t recent;bool selected,removed,search_match;} shelf_entry_t;
-#define BOOK_ROWS 9
+typedef struct {char name[256],author[128],path[288];uint32_t size;uint16_t chapter;bool is_flash,has_progress;uint8_t pct;uint32_t recent;bool selected,removed,search_match,favorite;} shelf_entry_t;
+#define BOOK_ROWS 13
+#define BOOK_GRID_ROWS 9
 #define BOOK_BULK_ROWS 6
 #define BOOKMARK_MAX 24
 typedef struct {uint16_t chapter,reserved;uint32_t byte_off,saved_s;} reader_bookmark_entry_t;
@@ -73,6 +74,14 @@ static size_t book_navigation_count(void){return (size_t)book_chapter_count();}
 static int book_toc_pages(size_t chapters){return chapters?1+(int)((chapters-1)/BOOK_TOC_ROWS):1;}
 static int s_filter;
 static bool s_recent_sort;
+static int test_shelf_style;
+static int app_settings_shelf_style(void){return test_shelf_style;}
+static bool app_settings_shelf_recent_sort(void){return s_recent_sort;}
+typedef int nvs_handle_t;
+#define NVS_READONLY 0
+static int nvs_open(const char* ns,int mode,nvs_handle_t* out){(void)ns;(void)mode;*out=1;return ESP_OK;}
+static void nvs_close(nvs_handle_t h){(void)h;}
+static int nvs_get_u8(nvs_handle_t h,const char* key,uint8_t* out){(void)h;(void)key;(void)out;return -1;}
 static shelf_entry_t* s_shelf;
 static size_t s_shelf_capacity;
 static int s_count,s_visible_count;
@@ -111,7 +120,7 @@ static char s_path[288],s_requested_open[288];
 static bool s_requested_open_home,s_reader_return_home;
 static int test_open_calls;
 static char* s_text;
-static int s_unsaved,s_px=48,s_margin=36,s_line_spacing=150;
+static int s_unsaved,s_px=48,s_margin=36,s_line_spacing=130;
 static uint32_t s_file_size=1000;
 static size_t s_chapter,s_page;
 static size_t s_jump_offset=SIZE_MAX,s_jump_page;
@@ -160,7 +169,7 @@ static void* s_prep_task,*s_prep_done,*s_draw_lock,*s_next_fb;
 static void ensure_prep(void){}
 static int app_settings_book_px(void){return 48;}
 static int app_settings_book_margin(void){return 36;}
-static int app_settings_book_line_spacing(void){return 150;}
+static int app_settings_book_line_spacing(void){return 130;}
 static int app_settings_book_paragraph_spacing(void){return 50;}
 static int app_settings_book_tracking(void){return 2;}
 static int app_settings_book_indent(void){return 2;}
@@ -177,6 +186,7 @@ static void read_pico_sd_start_probe(void){}
 typedef struct {bool present,mounted;} read_pico_sd_info_t;
 static int read_pico_sd_get_info(read_pico_sd_info_t* out){*out=(read_pico_sd_info_t){0};return 0;}
 static bool s_shelf_cache_valid,s_cache_sd_present,s_cache_sd_mounted;
+static uint8_t s_cache_shelf_style;
 static void sensor_set(app_ctx_t* ctx,bool on){(void)ctx;(void)on;}
 static void vTaskDelete(void* p){(void)p;}
 static void vSemaphoreDelete(void* p){(void)p;}
@@ -197,7 +207,7 @@ static char test_wrapped[512];
 #define UI_MARGIN 40
 #define UI_LOCK_WIDTH 684
 #define UI_LOCK_HEIGHT 1216
-#define READER_FULLSCREEN_PROGRESS_TOP (UI_LOCK_HEIGHT - 42)
+#define READER_FULLSCREEN_PROGRESS_TOP (UI_LOCK_HEIGHT - 8)
 #define UI_BAR_TOP 1096
 #define UI_BAR_H 96
 #define BOOK_MARGIN_MIN 24
@@ -209,8 +219,8 @@ static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;tex
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
 unit += function("book_layout_balanced_rect", layout_source) + "\n"
-for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "progress_rect", "copy_text", "reader_footer_strip_number", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
+for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_rows", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "scan_shelf",
+             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 unit += r'''
 int main(void) {
@@ -231,20 +241,26 @@ int main(void) {
            marks.entries[1].byte_off==400&&marks.entries[2].byte_off==500);
     bookmark_compact(&marks,(1u<<0)|(1u<<1)|(1u<<2));
     assert(marks.count==0);
-    EpdRect reading_body=reader_area(), reading_footer=progress_rect();
+    EpdRect reading_body=reader_area(), text_body=body_rect(), reading_footer=progress_rect();
     assert(reading_body.y>=160&&reading_body.y%32==0);
-    assert(reading_body.y+reading_body.height<=reading_footer.y);
+    assert(text_body.y==188&&text_body.y>=reading_body.y);
+    assert(reading_body.y+reading_body.height==UI_BAR_TOP+8);
+    assert(text_body.y+text_body.height==reading_body.y+reading_body.height);
+    assert(reading_body.y+reading_body.height<=reading_footer.y+16);
     assert(reading_footer.y==UI_BAR_TOP&&reading_footer.height==UI_BAR_H);
     assert(reading_footer.x==36&&reading_footer.width==612);
     s_reader_fullscreen=true;
     reading_body=reader_area();
+    text_body=body_rect();
     EpdRect fullscreen_progress=reader_fullscreen_progress_area();
-    assert(reading_body.y==80&&reading_body.height==UI_LOCK_HEIGHT-122);
+    assert(reading_body.y==80&&text_body.y==96);
     assert(reading_body.y+reading_body.height==fullscreen_progress.y);
-    assert(fullscreen_progress.y==UI_LOCK_HEIGHT-42&&fullscreen_progress.height==42);
+    assert(text_body.y+text_body.height==fullscreen_progress.y-2);
+    assert(fullscreen_progress.y==UI_LOCK_HEIGHT-8&&fullscreen_progress.height==8);
     test_reader_immersive=true;
     reading_body=reader_area();
-    assert(reading_body.y==0&&reading_body.height==UI_LOCK_HEIGHT-42);
+    text_body=body_rect();
+    assert(reading_body.y==0&&text_body.y==24&&text_body.y+text_body.height==fullscreen_progress.y-2);
     s_reader_fullscreen=test_reader_immersive=false;
     char footer_name[72];
     reader_footer_strip_number(footer_name,sizeof(footer_name),"第一章：海边的信");
@@ -262,6 +278,9 @@ int main(void) {
     shelf_entry_t b={.search_match=true,.name="Same.txt",.path="/sdcard/books/B/Same.txt"};
     assert(compare_books(&a,&b)<0);
     b.recent=10;s_recent_sort=true;assert(compare_books(&a,&b)>0);
+    s_recent_sort=false;a.favorite=true;
+    for(int style=1;style<=4;style++){test_shelf_style=style;assert(compare_books(&a,&b)<0);}
+    s_recent_sort=true;assert(compare_books(&a,&b)<0);s_recent_sort=false;test_shelf_style=0;
     b.is_flash=true;s_filter=1;assert(compare_books(&a,&b)<0);
     s_filter=2;assert(compare_books(&a,&b)>0);
     s_filter=0;s_recent_sort=false;
@@ -270,9 +289,16 @@ int main(void) {
     for(int i=0;i<65;i++){char path[340];snprintf(path,sizeof(path),"%s/book%03d.txt",test_roots[0].path,i);FILE* f=fopen(path,"w");assert(f);fputs("x",f);fclose(f);}
     app_ctx_t ctx={0};scan_shelf(&ctx);
     assert(s_count==65&&s_visible_count==65&&s_shelf_capacity>=65);
+    char nested[340],nested_book[380];snprintf(nested,sizeof(nested),"%s/nested",test_roots[0].path);
+    assert(mkdir(nested,0700)==0);snprintf(nested_book,sizeof(nested_book),"%s/inside.epub",nested);
+    FILE* nested_file=fopen(nested_book,"w");assert(nested_file);fputs("x",nested_file);fclose(nested_file);
+    scan_shelf(&ctx);assert(s_count==66);assert(unlink(nested_book)==0);assert(rmdir(nested)==0);scan_shelf(&ctx);
     ctx.leaf=3;s_view=MANAGE;s_clear_confirm=false;s_file_removed=false;
     EpdRect back=manage_rect(0,3);manage_action(&ctx,back.x+1,back.y+1);
     assert(s_view==SHELF&&ctx.leaf==3);
+    EpdRect circle=manage_back_rect();assert(circle.y==92&&circle.height==44);
+    EpdRect filter=bulk_filter_rect(1);assert(filter.y==216&&filter.height==70);
+    s_view=MANAGE;manage_action(&ctx,circle.x+20,circle.y+20);assert(s_view==SHELF);
     assert(!strcmp(s_shelf[0].name,"book000")&&!strcmp(s_shelf[64].name,"book064"));
     test_degraded=true;scan_shelf(&ctx);assert(s_count==65&&s_shelf_warning[0]);test_degraded=false;
     test_root_count=2;strcpy(test_roots[1].path,"/nonexistent-book-root");scan_shelf(&ctx);assert(s_count==65&&s_shelf_warning[0]);test_root_count=1;

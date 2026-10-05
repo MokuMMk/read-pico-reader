@@ -8,6 +8,7 @@ on:
       - flash/notices.html
       - flash/manifest.json
       - flash/firmware.bin
+      - flash/ota_data_initial.bin
       - flash/bootloader.bin
       - flash/partitions.bin
       - flash/vendor/**

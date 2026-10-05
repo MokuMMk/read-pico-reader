@@ -76,6 +76,11 @@ void ttf_draw_text_px_spaced(
     uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
     int tracking_px, uint8_t fg, uint8_t bg
 );
+/// 在汉字间均摊行尾余量；标点溢出时可小幅压缩字距。/ Distribute spare width across CJK gaps or slightly compress for hanging punctuation.
+void ttf_draw_text_px_fitted(
+    uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
+    int tracking_px, int target_width, uint8_t fg, uint8_t bg
+);
 /// 覆盖率过半才落墨，像素只有 fg/bg。/ Ink only when coverage is over half; pixels are fg/bg only.
 void ttf_draw_text_px_bw(
     uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
