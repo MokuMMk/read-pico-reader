@@ -91,6 +91,12 @@ void app_settings_set_reader_hide_images(bool on);
 /// 书架排序偏好重启后保持。/ Persist the shelf's recent-reading sort across restarts.
 bool app_settings_shelf_recent_sort(void);
 void app_settings_set_shelf_recent_sort(bool on);
+/// 蓝牙翻页器：启用 BLE HID 主机，好让蓝牙翻页器连上并翻页；默认关闭。
+/// 关掉会把整个 BLE 栈拆掉，把 NimBLE 占的内存还回去。
+/// Bluetooth page-turner: bring up the BLE HID host so a remote can pair and turn pages; off
+/// by default. Turning it off tears the whole stack down and returns NimBLE's memory.
+bool app_settings_ble_turner(void);
+void app_settings_set_ble_turner(bool on);
 /// 字间距档位 0..4，默认 2 居中；对应 -4/-2/0/+2/+4 像素。/ Tracking index 0..4, centered default 2; maps to -4/-2/0/+2/+4 pixels.
 uint8_t app_settings_book_tracking(void);
 void app_settings_set_book_tracking(uint8_t index);

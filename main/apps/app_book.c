@@ -62,6 +62,7 @@
 #include "app.h"
 #include "app_content_open.h"
 #include "app_registry.h"
+#include "ble_page_turner.h"
 #include "book_layout.h"
 #include "book_cover.h"
 #include "book_epub.h"
@@ -471,10 +472,17 @@ static void draw_shelf_cover(uint8_t* fb, EpdRect card, int row, const char* nam
     epd_fill_rect(image, UI_GRAY_LIGHT, fb);
     if (s_covers[row].gray) {
         const uint8_t *gray = s_covers[row].gray;
+        // 封面缓冲是 176×240、这一格是 164×214；按长边铺满 + 居中裁剪，避免被压扁。
+        // The cover buffer is 176x240 and this frame is 164x214; fill by the longer side and
+        // centre-crop so the artwork is not squashed.
+        const unsigned frame_width = (unsigned)image.width, frame_height = (unsigned)image.height;
+        const book_crop_t crop = book_cover_crop(BOOK_COVER_W, BOOK_COVER_H,
+                                                 frame_width, frame_height);
         for (int y = 0; y < image.height; ++y) {
+            const int sy = (int)(crop.y + (uint64_t)(unsigned)y * crop.height / frame_height);
             for (int x = 0; x < image.width; ++x) {
-                const uint8_t tone = ui_contrast_gray(gray[(y * BOOK_COVER_H / image.height) * BOOK_COVER_W +
-                                                            x * BOOK_COVER_W / image.width]);
+                const int sx = (int)(crop.x + (uint64_t)(unsigned)x * crop.width / frame_width);
+                const uint8_t tone = ui_contrast_gray(gray[sy * BOOK_COVER_W + sx]);
                 epd_draw_pixel(image.x + x, image.y + y,
                                ui_image_dither_gray(tone, image.x + x, image.y + y), fb);
             }
@@ -4340,6 +4348,31 @@ static bool menu_handle_enabled(app_ctx_t* ctx) {
 static app_redraw_t on_tick(app_ctx_t* ctx) {
     track_ticket_stats(ctx);
     if (ctx->consumed) return APP_REDRAW_NONE;
+    // 蓝牙翻页器：把收到的键折算成翻页，只在阅读正文里生效。同一份报告既会产生键事件、
+    // 也会产生原始边沿，两者可能同时命中，所以这里只累积一个方向、每轮最多翻一次。
+    // Bluetooth page-turner: fold received keys into page turns, only while reading. One report
+    // yields both a key event and raw edges, and both may match, so the direction is accumulated
+    // and applied at most once per tick.
+    if (s_view == READING && app_settings_ble_turner()) {
+        int ble_dir = 0;
+        ble_pt_event_t event;
+        while (ble_pt_pop_key(&event)) {
+            const ble_pt_action_t action = ble_pt_action_for_usage(event.usage, event.mods);
+            if (action == BLE_PT_ACTION_PREV) ble_dir = -1;
+            else if (action == BLE_PT_ACTION_NEXT) ble_dir = 1;
+        }
+        ble_pt_raw_t raw;
+        while (ble_pt_pop_raw(&raw)) {
+            if (!raw.pressed) continue;
+            const ble_pt_action_t action = ble_pt_action_for_raw(ble_pt_raw_code(&raw));
+            if (action == BLE_PT_ACTION_PREV) ble_dir = -1;
+            else if (action == BLE_PT_ACTION_NEXT) ble_dir = 1;
+        }
+        if (ble_dir) {
+            s_stats_activity_ms = ctx->now_ms;
+            return turn_page(ctx, ble_dir);
+        }
+    }
     if (s_reader_notice[0] && ctx->now_ms >= s_reader_notice_until) {
         s_reader_notice[0] = 0;
         if (s_view == READING) {

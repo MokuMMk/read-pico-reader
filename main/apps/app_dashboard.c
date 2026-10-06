@@ -239,10 +239,15 @@ static int home_title_px(const char *title, int width) {
 static void draw_cover(uint8_t *fb, const home_book_t *item, EpdRect box) {
     epd_fill_rect(box, UI_GRAY_LIGHT, fb);
     if (item->cover) {
+        // 封面缓冲固定 176×240，而卡片未必同比例；按长边铺满再居中裁剪，避免拉伸变形。
+        // The cover buffer is fixed at 176x240 while the card is a different shape; fill by the
+        // longer side and centre-crop so the artwork is never stretched.
+        const unsigned box_width = (unsigned)box.width, box_height = (unsigned)box.height;
+        const book_crop_t crop = book_cover_crop(BOOK_COVER_W, BOOK_COVER_H, box_width, box_height);
         for (int y = 0; y < box.height; ++y)
             for (int x = 0; x < box.width; ++x) {
-                int sx = x * BOOK_COVER_W / box.width;
-                int sy = y * BOOK_COVER_H / box.height;
+                int sx = (int)(crop.x + (uint64_t)(unsigned)x * crop.width / box_width);
+                int sy = (int)(crop.y + (uint64_t)(unsigned)y * crop.height / box_height);
                 const uint8_t gray = ui_contrast_gray(item->cover[sy * BOOK_COVER_W + sx]);
                 epd_draw_pixel(box.x + x, box.y + y,
                                ui_image_dither_gray(gray, box.x + x, box.y + y), fb);
