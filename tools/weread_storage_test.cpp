@@ -90,6 +90,11 @@ int main(int argc, char** argv) {
     assert(WeReadStore::readShelfRecord(input, 0, record) && strcmp(record.bookId, "16") == 0);
     assert(!WeReadStore::readShelfRecord(input, 17, record));
     input.close();
+    assert(WeReadStore::finalBookPath(record) == "/WeRead/中文书籍 16.epub");
+    strcpy(record.title,"夏天、烟火和我的尸体（完整版）");
+    assert(WeReadStore::finalBookPath(record) == "/WeRead/夏天、烟火和我的尸体（完整版）.epub");
+    strcpy(record.title,"unsafe/../title:1");
+    assert(WeReadStore::finalBookPath(record).find("/../") == std::string::npos);
 
     HalFile source;
     assert(Storage.openFileForWrite("test", "/.crosspoint/weread/chapter.xhtml", source));

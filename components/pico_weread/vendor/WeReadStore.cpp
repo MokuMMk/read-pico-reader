@@ -612,9 +612,9 @@ BookRecord bookRecord(const ShelfRecord& shelf) {
 }
 
 std::string finalBookPath(const BookRecord& book) {
-  const std::string title = StringUtils::sanitizeFilename(book.title, 80);
-  const std::string id = StringUtils::sanitizeFilename(book.bookId, 40);
-  return "/WeRead/" + title + "-" + id + ".epub";
+  // 文件名使用书架原名；仅替换文件系统禁用字符，不追加书号。
+  // Use the shelf title, replacing only filesystem-unsafe characters without an ID suffix.
+  return "/WeRead/" + StringUtils::sanitizeFilename(book.title, sizeof(book.title) - 1) + ".epub";
 }
 
 std::string finalBookPath(const ShelfRecord& book) { return finalBookPath(bookRecord(book)); }

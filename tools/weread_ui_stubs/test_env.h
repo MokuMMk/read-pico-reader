@@ -32,6 +32,9 @@ static weread_action_t test_action;
 static unsigned test_page,test_index;
 static weread_snapshot_t test_snapshot;
 static bool test_images;
+static char test_text[32768];
+static weread_selection_t test_selection[WEREAD_BATCH_MAX];
+static unsigned test_selection_count;
 static inline void *heap_caps_calloc(size_t a,size_t b,int flags){(void)flags;return test_alloc_fail?NULL:calloc(a,b);}
 static inline void heap_caps_free(void *p){free(p);}
 static inline void display_set_bulk_io(bool v){test_bulk=v;}
@@ -45,9 +48,9 @@ static inline bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&y>=r.y&&x<r
 static inline void ui_clear_page(uint8_t *fb){(void)fb;}
 static inline void ui_fill_round_rect(uint8_t *fb,...){(void)fb;}
 static inline void ui_draw_round_rect(uint8_t *fb,...){(void)fb;}
-static inline void ui_text(uint8_t *fb,...){(void)fb;}
-static inline void ui_text_fixed(uint8_t *fb,...){(void)fb;}
-static inline void ui_text_vc(uint8_t *fb,...){(void)fb;}
+static inline void ui_text(uint8_t *fb,int x,int y,int px,const char *s,int flags,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)flags;(void)inv;if(strlen(test_text)+strlen(s)+2<sizeof(test_text)){strcat(test_text,s);strcat(test_text,"\n");}}
+static inline void ui_text_fixed(uint8_t *fb,int x,int y,int px,const char *s,int flags,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)flags;(void)inv;if(strlen(test_text)+strlen(s)+2<sizeof(test_text)){strcat(test_text,s);strcat(test_text,"\n");}}
+static inline void ui_text_vc(uint8_t *fb,int x,int y,int px,const char *s,int flags,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)flags;(void)inv;if(strlen(test_text)+strlen(s)+2<sizeof(test_text)){strcat(test_text,s);strcat(test_text,"\n");}}
 static inline void ui_hairline(uint8_t *fb,...){(void)fb;}
 static inline void epd_fill_rect(EpdRect r,...){(void)r;}
 static inline int ui_text_fixed_width_px(int px,const char *s){int n=0;for(;*s;s++)if(((unsigned char)*s&0xc0)!=0x80)n++;return n*px;}

@@ -11,6 +11,7 @@
 extern "C" {
 #endif
 #define WEREAD_ROWS 7
+#define WEREAD_BATCH_MAX 1024
 typedef enum {
     WEREAD_IDLE, ///< 就绪 / Ready
     WEREAD_CONNECTING, ///< 联网 / Connecting
@@ -25,6 +26,7 @@ typedef enum {
     WEREAD_SYNC, ///< 联网登录与同步 / Login and sync online
     WEREAD_DOWNLOAD, ///< 下载书籍 / Download a book
     WEREAD_LOGOUT, ///< 清除会话与书架 / Clear session and shelf
+    WEREAD_BATCH, ///< 串行批量下载 / Sequential batch download
 } weread_action_t;
 typedef struct {
     char id[64]; ///< 云端书号 / Remote book ID
@@ -32,6 +34,10 @@ typedef struct {
     char author[96]; ///< 作者 / Author
     char local_path[288]; ///< 已下载路径 / Completed download path
 } weread_book_t;
+typedef struct {
+    char id[64]; ///< 稳定云端书号，跨页或重排序不串书 / Stable ID across pages or reordering
+    unsigned index; ///< 缓存索引提示 / Cached index hint
+} weread_selection_t;
 typedef enum { WEREAD_CHAPTERS, WEREAD_PREPARING, WEREAD_IMAGES, WEREAD_PACKAGING } weread_stage_t;
 typedef struct {
     weread_action_t action; ///< 当前操作 / Current operation
@@ -45,6 +51,8 @@ typedef struct {
     unsigned page; ///< 零起始页码 / Zero-based page
     unsigned count; ///< 当前页数量 / Visible count
     unsigned done, target; ///< 下载进度 / Download progress
+    unsigned batch_total, batch_current, batch_success, batch_failed; ///< 批次进度 / Batch counters
+    char batch_title[192]; ///< 当前下载书名 / Current download title
     unsigned changed; ///< 成品发布版本 / Completed-publication revision
     int error; ///< 协议或连接错误 / Protocol or connection error
     char qr[320]; ///< 登录确认网址 / Login confirmation URL
@@ -55,6 +63,9 @@ typedef struct {
 bool weread_configure(const char* cache_root, const char* books_root);
 /// 启动一次任务，成功表示已派发。/ Start one worker; true means dispatched.
 bool weread_start(weread_action_t action, unsigned page, unsigned index);
+/// 复制选择后仅启动一个后台任务，逐本下载；失败书不阻塞后续，取消停止整个队列。
+/// Copy selection into one worker; download sequentially, continue after book errors, cancel the whole queue.
+bool weread_start_batch(unsigned page, const weread_selection_t* selection, unsigned count);
 /// 线程安全读取快照。/ Copy a consistent snapshot across threads.
 void weread_snapshot(weread_snapshot_t* out);
 /// 下一次下载是否嵌入插图；仅空闲时修改。/ Set inline-image policy while idle.

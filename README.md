@@ -56,3 +56,7 @@ Please report firmware bugs in this repository, not in the MindReset upstream is
 ## Local rc76 transfer build
 
 File management groups its launchers as WiFi/hotspot, USB and WeRead transfer. WeRead uses saved internet WiFi for QR login, shelf sync and completed EPUB downloads into the SD books directory, with optional inline illustrations. The UI cancels and joins ongoing work before leaving, locking or losing SD media. Cloud progress is never uploaded. CrossMux and FreeInk SDK MIT notices accompany the native port. This is a local validation build; real account login/download and the reported hotspot reset still require device verification.
+
+### 微读书架多选下载
+
+在微信书架点「多选」，可跨页选择书籍或「全选本页」，再点「下载 N 本」进入批量下载页。每次只下载一本；取消、离页或锁屏会停止队列，已完成书籍保留。封面始终下载，正文插图可选；封面获取失败会提示重试。文件名使用微信书架的书名，仅替换文件系统禁用字符；每批最多选择 1024 本。单本详情返回微信书架，微信书架返回文件管理。

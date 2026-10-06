@@ -50,3 +50,18 @@ with tempfile.TemporaryDirectory(prefix="pico-weread-") as directory:
                     str(ROOT / "tools/weread_http_test.cpp"), str(PORT / "platform/WeReadHttpClient.cpp"),
                     "-o", str(http)], check=True, timeout=60)
     subprocess.run([str(http)], check=True, timeout=20)
+
+    client = work / "client-test"
+    subprocess.run([common[0], "-I" + str(ROOT / "tools/weread_client_stubs"), *common[1:],
+                    "-DENABLE_CHINESE_VERSION=1", "-DSIMULATOR=1",
+                    "-I" + str(ROOT / "tools/weread_http_stubs"),
+                    str(ROOT / "tools/weread_client_host_test.cpp"),
+                    *[str(x) for x in sources], str(PORT / "vendor/WeReadBrowse.cpp"),
+                    "-o", str(client)], check=True, timeout=60)
+    subprocess.run([str(client), str(work / "cover-fixture")], check=True, timeout=20)
+    with zipfile.ZipFile(work / "cover-fixture/books/测试原名书籍.epub") as archive:
+        assert archive.testzip() is None
+        assert archive.read("OEBPS/cover.png").startswith(bytes([137, 80, 78, 71]))
+        assert b'cover-image' in archive.read("OEBPS/content.opf")
+        assert "OEBPS/images/test.png" not in archive.namelist()
+    print("PASS: independent ZIP check confirms a cover even with inline images excluded")

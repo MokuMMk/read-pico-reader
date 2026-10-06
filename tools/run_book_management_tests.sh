@@ -45,3 +45,8 @@ cc -std=gnu11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -Itools/weread_ui_stubs -Icomponents/pico_weread/include \
     tools/weread_ui_host_test.c -o build/book-tests/weread-ui
 build/book-tests/weread-ui
+
+c++ -std=c++20 -Wall -Wextra -Werror -Wno-unused-parameter -fsanitize=address,undefined \
+    -Itools/weread_service_stubs -Icomponents/pico_weread/include \
+    tools/weread_service_host_test.cpp -o build/book-tests/weread-service
+build/book-tests/weread-service

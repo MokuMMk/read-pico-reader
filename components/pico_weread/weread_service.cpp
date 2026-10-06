@@ -40,7 +40,8 @@ static std::atomic<bool> s_cancel{false};
 static bool s_configured;
 static bool s_include_images = true;
 static weread_action_t s_action;
-static unsigned s_page, s_index;
+static unsigned s_page, s_index, s_queue_count;
+static weread_selection_t* s_queue;
 bool pico_weread_cancelled() { return s_cancel.load(); }
 
 static void log_memory(const char* stage) {
@@ -148,9 +149,65 @@ static void progress_callback(void* raw) {
     // 长打包循环定期让 UI 处理输入。/ Let the UI process input during long packaging loops.
     vTaskDelay(pdMS_TO_TICKS(1));
 }
+// 选择以书号校验，索引只做提示，避免同步重排序后下载错书。
+// Validate selection by ID; an index is only a hint after shelf reordering.
+static bool valid_record(const WeReadStore::ShelfRecord& record) {
+    return memchr(record.bookId, 0, sizeof(record.bookId)) && memchr(record.title, 0, sizeof(record.title)) &&
+           memchr(record.author, 0, sizeof(record.author)) && memchr(record.coverUrl, 0, sizeof(record.coverUrl));
+}
+static bool resolve_selection(unsigned index, const char* id, WeReadStore::ShelfRecord& record) {
+    HalFile shelf; uint32_t total = 0;
+    if (!WeReadStore::openShelf(shelf, total)) return false;
+    if (index < total && WeReadStore::readShelfRecord(shelf, index, record) && valid_record(record) &&
+        (!id || !strcmp(id, record.bookId))) return true;
+    if (!id) return false;
+    for (unsigned i = 0; i < total && !s_cancel.load(); ++i) {
+        if (!WeReadStore::readShelfRecord(shelf, i, record) || !valid_record(record)) return false;
+        if (!strcmp(id, record.bookId)) return true;
+    }
+    return false;
+}
+static bool run_operation(WeReadClient::Operation& op, const WeReadStore::ShelfRecord* selected) {
+    WeReadClient::DownloadOptions options;
+    options.imagePolicy = s_include_images ? WeReadStore::ImagePolicy::Embed : WeReadStore::ImagePolicy::Exclude;
+    const auto kind = selected ? WeReadClient::Operation::Kind::Download : WeReadClient::Operation::Kind::Sync;
+    if (!op.begin(kind, selected, options)) {
+        set_state(WEREAD_FAILED, static_cast<int>(op.error())); return false;
+    }
+    set_state(WEREAD_WORKING);
+    while (op.active()) {
+        if (s_cancel.load()) op.cancel();
+        const auto event = op.step(progress_callback, &op);
+        if (event == WeReadClient::Operation::Event::QrReady) {
+            lock(); snprintf(s_status.qr, sizeof(s_status.qr), "%.319s", op.qrUrl());
+            s_status.state = WEREAD_QR; ++s_status.revision; unlock();
+        } else if (event == WeReadClient::Operation::Event::Authenticated) set_state(WEREAD_WORKING);
+        lock();
+        if (s_status.done != op.progressCompleted() || s_status.target != op.progressTotal() ||
+            (int)s_status.stage != (int)op.progressStage() || s_status.skipped_images != op.skippedImageCount()) {
+            s_status.done = op.progressCompleted(); s_status.target = op.progressTotal();
+            s_status.stage = static_cast<weread_stage_t>(op.progressStage());
+            s_status.skipped_images = op.skippedImageCount(); ++s_status.revision;
+        }
+        unlock();
+        if (event == WeReadClient::Operation::Event::Complete) {
+            if (selected) {
+                lock(); snprintf(s_status.output, sizeof(s_status.output), "%s", Storage.map(op.finalPath()).c_str());
+                ++s_status.changed; unlock();
+            }
+            return true;
+        }
+        if (event == WeReadClient::Operation::Event::Failed) {
+            set_state(WEREAD_FAILED, static_cast<int>(op.error())); return false;
+        }
+        if (event == WeReadClient::Operation::Event::Cancelled) { set_state(WEREAD_CANCELLED); return false; }
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+    return false;
+}
 static void worker(void*) {
     log_memory("worker started");
-    bool online = false, owned_network = false;
+    bool owned_network = false;
     WeReadClient::Operation* op = nullptr;
     if (s_action == WEREAD_LOAD) {
         if (load_page(s_page)) set_state(WEREAD_IDLE);
@@ -159,79 +216,54 @@ static void worker(void*) {
         const bool shelf = WeReadStore::clearShelf() && WeReadBrowse::clearAllCaches();
         if (load_page(0)) set_state(session && shelf ? WEREAD_COMPLETE : WEREAD_FAILED, session && shelf ? 0 : 103);
     } else {
-        WeReadStore::ShelfRecord selected;
-        bool selection_ok = true;
-        if (s_action == WEREAD_DOWNLOAD) {
-            HalFile shelf; uint32_t total;
-            selection_ok = WeReadStore::openShelf(shelf, total) && s_index < total &&
-                WeReadStore::readShelfRecord(shelf, s_index, selected);
-        }
-        if (!selection_ok) set_state(WEREAD_FAILED, 103);
-        else {
-            set_state(WEREAD_CONNECTING);
-            online = connect_online(owned_network);
-            if (online && !s_cancel.load()) {
-                log_memory("network ready");
-                // 操作对象约 8 KiB 放 PSRAM，保留内部内存用于任务栈和 TLS。
-                // Place the roughly 8 KiB operation in PSRAM, reserving internal RAM for task stack and TLS.
-                void* memory = heap_caps_malloc(sizeof(WeReadClient::Operation), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                if (memory) op = new (memory) WeReadClient::Operation();
-                if (!op) { ESP_LOGE("weread", "operation allocation failed bytes=%u", (unsigned)sizeof(WeReadClient::Operation));
-                    set_state(WEREAD_FAILED, static_cast<int>(WeReadClient::Error::OutOfMemory)); }
-                else {
-                    WeReadClient::DownloadOptions options;
-                    options.imagePolicy = s_include_images ? WeReadStore::ImagePolicy::Embed : WeReadStore::ImagePolicy::Exclude;
-                    const auto kind = s_action == WEREAD_SYNC ? WeReadClient::Operation::Kind::Sync : WeReadClient::Operation::Kind::Download;
-                    if (!op->begin(kind, s_action == WEREAD_SYNC ? nullptr : &selected, options))
-                        set_state(WEREAD_FAILED, static_cast<int>(op->error()));
-                    else {
-                        set_state(WEREAD_WORKING);
-                        while (op->active()) {
-                            if (s_cancel.load()) op->cancel();
-                            auto event = op->step(progress_callback, op);
-                            if (event == WeReadClient::Operation::Event::QrReady) {
-                                lock();
-                                snprintf(s_status.qr, sizeof(s_status.qr), "%.319s", op->qrUrl());
-                                s_status.state = WEREAD_QR; ++s_status.revision;
-                                unlock();
-                            } else if (event == WeReadClient::Operation::Event::Authenticated) set_state(WEREAD_WORKING);
-                            lock();
-                            if (s_status.done != op->progressCompleted() || s_status.target != op->progressTotal() ||
-                                (int)s_status.stage != (int)op->progressStage() || s_status.skipped_images != op->skippedImageCount()) {
-                                s_status.done = op->progressCompleted(); s_status.target = op->progressTotal();
-                                s_status.stage = static_cast<weread_stage_t>(op->progressStage());
-                                s_status.skipped_images = op->skippedImageCount(); ++s_status.revision;
-                            }
-                            unlock();
-                            if (event == WeReadClient::Operation::Event::Complete) {
-                                if (s_action == WEREAD_DOWNLOAD) {
-                                    lock();
-                                    snprintf(s_status.output, sizeof(s_status.output), "%s", Storage.map(op->finalPath()).c_str());
-                                    ++s_status.changed;
-                                    unlock();
-                                }
-                                if (load_page(s_page)) set_state(WEREAD_COMPLETE);
-                                break;
-                            }
-                            if (event == WeReadClient::Operation::Event::Failed) { set_state(WEREAD_FAILED, static_cast<int>(op->error())); break; }
-                            if (event == WeReadClient::Operation::Event::Cancelled) { set_state(WEREAD_CANCELLED); break; }
-                            vTaskDelay(pdMS_TO_TICKS(30));
-                        }
-                    }
+        set_state(WEREAD_CONNECTING);
+        if (connect_online(owned_network) && !s_cancel.load()) {
+            // 每个批次只分配一个操作对象、一个任务栈，完成一本后释放其 TLS 再处理下一本。
+            // One operation and task stack per batch; release each book's TLS before starting the next.
+            void* memory = heap_caps_malloc(sizeof(WeReadClient::Operation), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (memory) op = new (memory) WeReadClient::Operation();
+            if (!op) set_state(WEREAD_FAILED, 10);
+            else if (s_action == WEREAD_SYNC) {
+                if (run_operation(*op, nullptr) && load_page(s_page)) set_state(WEREAD_COMPLETE);
+            } else {
+                const unsigned count = s_action == WEREAD_BATCH ? s_queue_count : 1;
+                int last_error = 0;
+                for (unsigned i = 0; i < count && !s_cancel.load(); ++i) {
+                    WeReadStore::ShelfRecord selected;
+                    const bool found = resolve_selection(s_action == WEREAD_BATCH ? s_queue[i].index : s_index,
+                                                         s_action == WEREAD_BATCH ? s_queue[i].id : nullptr, selected);
+                    lock();
+                    s_status.done = s_status.target = s_status.skipped_images = 0;
+                    s_status.stage = WEREAD_PREPARING;
+                    s_status.batch_current = s_action == WEREAD_BATCH ? i + 1 : 0;
+                    snprintf(s_status.batch_title, sizeof(s_status.batch_title), "%s", found ? selected.title : "");
+                    ++s_status.revision; unlock();
+                    if (!found) set_state(WEREAD_FAILED, 103);
+                    const bool success = found && run_operation(*op, &selected);
+                    op->reset();
+                    if (s_cancel.load()) break;
+                    lock();
+                    if (success) ++s_status.batch_success; else ++s_status.batch_failed;
+                    ++s_status.revision;
+                    const int error = s_status.error; unlock();
+                    if (!success) last_error = error;
+                    // 断网、失卡或内存不足停止队列；内容权限或单本封面错误继续下一本。
+                    // Stop on network, card or memory failure; continue past per-book permission/cover errors.
+                    if (!success && (error == 2 || error == 3 || error == 4 || error == 6 || error == 9 || error == 10 || error >= 100)) break;
                 }
+                lock(); const bool failed = s_status.batch_failed != 0;
+                unlock();
+                if (!s_cancel.load() && load_page(s_page)) set_state(failed ? WEREAD_FAILED : WEREAD_COMPLETE, failed ? last_error : 0);
             }
         }
     }
-    log_memory("worker finished");
     if (op) { op->reset(); op->~Operation(); heap_caps_free(op); }
-    // 仅清理自己创建的网络，保留配网建立的连接。
-    // Cleanup owned network only; provisioning-owned STA remains available.
+    heap_caps_free(s_queue); s_queue = nullptr; s_queue_count = 0;
     if (owned_network) read_pico_transfer_stop();
     if (s_cancel.load()) set_state(WEREAD_CANCELLED);
-    lock();
-    s_status.active = false; ++s_status.revision;
-    xSemaphoreGive(s_finished);
-    unlock();
+    log_memory("worker finished");
+    lock(); s_status.active = false; ++s_status.revision;
+    xSemaphoreGive(s_finished); unlock();
     vTaskDelete(nullptr);
 }
 extern "C" bool weread_configure(const char* cache, const char* books) {
@@ -243,27 +275,47 @@ extern "C" bool weread_configure(const char* cache, const char* books) {
     unlock();
     return true;
 }
-extern "C" bool weread_start(weread_action_t action, unsigned page, unsigned index) {
-    if (!initialize() || !s_configured || action < WEREAD_LOAD || action > WEREAD_LOGOUT) return false;
+static bool dispatch(weread_action_t action, unsigned page, unsigned index,
+                     const weread_selection_t* selection, unsigned count) {
+    if (!initialize() || !s_configured) return false;
+    weread_selection_t* queue = nullptr;
+    if (action == WEREAD_BATCH) {
+        if (!selection || !count || count > WEREAD_BATCH_MAX) return false;
+        queue = static_cast<weread_selection_t*>(heap_caps_calloc(count, sizeof(*queue), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!queue) return false;
+        for (unsigned i = 0; i < count; ++i) {
+            if (!selection[i].id[0] || !memchr(selection[i].id, 0, sizeof(selection[i].id))) {
+                heap_caps_free(queue); return false;
+            }
+            for (unsigned j = 0; j < i; ++j) if (!strcmp(selection[i].id, selection[j].id)) {
+                heap_caps_free(queue); return false;
+            }
+            queue[i] = selection[i];
+        }
+    }
     lock();
-    if (s_status.active) { unlock(); return false; }
+    if (s_status.active) { unlock(); heap_caps_free(queue); return false; }
     while (xSemaphoreTake(s_finished, 0) == pdTRUE) {}
     s_cancel.store(false);
-    s_action = action; s_page = page; s_index = index;
-    s_status.action = action;
-    s_status.active = true; s_status.qr[0] = 0; s_status.output[0] = 0;
+    s_action = action; s_page = page; s_index = index; s_queue = queue; s_queue_count = count;
+    s_status.action = action; s_status.active = true; s_status.qr[0] = s_status.output[0] = s_status.batch_title[0] = 0;
     s_status.done = s_status.target = s_status.skipped_images = 0; s_status.error = 0;
-    s_status.stage = WEREAD_CHAPTERS;
-    s_status.state = WEREAD_WORKING; ++s_status.revision;
-    unlock();
-    log_memory("dispatch");
+    s_status.batch_total = count; s_status.batch_current = s_status.batch_success = s_status.batch_failed = 0;
+    s_status.stage = WEREAD_CHAPTERS; s_status.state = WEREAD_WORKING; ++s_status.revision;
+    unlock(); log_memory("dispatch");
     if (xTaskCreate(worker, "weread", 16384, nullptr, 3, nullptr) != pdPASS) {
-        ESP_LOGE("weread", "worker stack allocation failed bytes=16384");
+        heap_caps_free(s_queue); s_queue = nullptr; s_queue_count = 0;
         lock(); s_status.active = false; s_status.state = WEREAD_FAILED;
-        s_status.error = static_cast<int>(WeReadClient::Error::OutOfMemory); ++s_status.revision; unlock();
-        return false;
+        s_status.error = 10; ++s_status.revision; unlock(); return false;
     }
     return true;
+}
+extern "C" bool weread_start(weread_action_t action, unsigned page, unsigned index) {
+    if (action < WEREAD_LOAD || action > WEREAD_LOGOUT) return false;
+    return dispatch(action, page, index, nullptr, 0);
+}
+extern "C" bool weread_start_batch(unsigned page, const weread_selection_t* selection, unsigned count) {
+    return dispatch(WEREAD_BATCH, page, 0, selection, count);
 }
 extern "C" void weread_snapshot(weread_snapshot_t* out) {
     if (!out) return;

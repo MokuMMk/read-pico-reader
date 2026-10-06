@@ -1863,6 +1863,7 @@ bool Operation::active() const {
     case Phase::FetchCover:
     case Phase::ConvertCover:
     case Phase::PrepareDownload:
+    case Phase::PrepareDownloadCover:
     case Phase::FetchToc:
     case Phase::PrepareProgressSync:
     case Phase::FetchProgress:
@@ -2011,7 +2012,7 @@ bool Operation::begin(const Kind kind, const WeReadStore::ShelfRecord* book, con
       return false;
     }
     book_ = WeReadStore::bookRecord(*book);
-    if (kind == Kind::Detail && book->coverUrl[0]) {
+    if ((kind == Kind::Detail || kind == Kind::Download) && book->coverUrl[0]) {
       if (!shelfCoverUrl_) {
         shelfCoverUrl_ = makeUniqueNoThrow<char[]>(kUrlSize);
         if (!shelfCoverUrl_) {
@@ -2545,6 +2546,7 @@ Operation::Event Operation::stepShelfCovers() {
         case Error::Unavailable:
         case Error::Clock:
         case Error::WholeBookOnly:
+        case Error::CoverUnavailable:
           break;
       }
       cleanupDetailTransient(bookDir_);
@@ -2595,6 +2597,7 @@ Operation::Event Operation::stepShelfCovers() {
         case Error::Unavailable:
         case Error::Clock:
         case Error::WholeBookOnly:
+        case Error::CoverUnavailable:
           ++workSkipped_;
           advanceShelfCoverItem();
           return Event::None;
@@ -3685,12 +3688,13 @@ Operation::Event Operation::step(const WeReadStore::WorkCallback callback, void*
       if (error != Error::Ok) return handleRequestError(error, Phase::FetchDetail);
       requestSucceeded();
       if (!url_[0] || coverType_ == WeReadProtocol::ImageType::None) {
+        if (kind_ == Kind::Download) return fail(Error::CoverUnavailable);
         phase_ = Phase::Complete;
         logJobComplete();
         return detailCompletionEvent(false);
       }
       phase_ = Phase::FetchCover;
-      return detailCompletionEvent(true);
+      return kind_ == Kind::Download ? Event::None : detailCompletionEvent(true);
     }
 
     case Phase::PrepareBrowseCache:
@@ -3724,9 +3728,10 @@ Operation::Event Operation::step(const WeReadStore::WorkCallback callback, void*
         case CoverWorkResult::Pending:
           return Event::None;
         case CoverWorkResult::Complete:
-          phase_ = Phase::ConvertCover;
+          phase_ = kind_ == Kind::Download ? Phase::FetchToc : Phase::ConvertCover;
           return Event::None;
         case CoverWorkResult::Skipped:
+          if (kind_ == Kind::Download) return fail(Error::CoverUnavailable);
           phase_ = Phase::Complete;
           logMemory("cover skipped");
           logJobComplete();
@@ -3751,7 +3756,25 @@ Operation::Event Operation::step(const WeReadStore::WorkCallback callback, void*
     case Phase::PrepareDownload: {
       if (!preparePaths()) return fail(Error::SdCard);
       LOG_INF("WR", "download cache mode: refresh=%u", static_cast<unsigned>(Storage.exists(outputPath_.c_str())));
-      phase_ = Phase::FetchToc;
+      // 封面独立于正文插图开关，先获取原图再读取正文。
+      // Fetch the original cover before content, independently of the inline-image policy.
+      phase_ = Phase::PrepareDownloadCover;
+      progressStage_ = ProgressStage::Preparing;
+      return Event::None;
+    }
+
+    case Phase::PrepareDownloadCover: {
+      std::string source;
+      if (findCoverSource(bookDir_, source) != WeReadProtocol::ImageType::None) {
+        phase_ = Phase::FetchToc;
+        return Event::None;
+      }
+      WeReadStore::BookDetailHeader cached;
+      HalFile detail;
+      const bool hasDetail = WeReadStore::openBookDetail(bookDir_, cached, detail);
+      coverType_ = selectCoverUrl(hasDetail ? cached.coverUrl : "",
+                                  shelfCoverUrl_ ? shelfCoverUrl_.get() : "", url_, sizeof(url_));
+      phase_ = url_[0] ? Phase::FetchCover : Phase::FetchDetail;
       return Event::None;
     }
 

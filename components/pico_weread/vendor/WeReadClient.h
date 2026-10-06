@@ -27,6 +27,7 @@ enum class Error {
   Clock,
   OutOfMemory,
   WholeBookOnly,
+  CoverUnavailable, ///< 封面获取失败 / Cover could not be retrieved
 };
 
 struct DownloadOptions {
@@ -167,6 +168,7 @@ class Operation {
     FetchCover,
     ConvertCover,
     PrepareDownload,
+    PrepareDownloadCover,
     FetchToc,
     PrepareProgressSync,
     FetchProgress,
