@@ -155,6 +155,42 @@ int main(void) {
     assert(book_layout_build_blocks("IMG", 3, illustrated_blocks, 1, illustrated_rect, 10));
     assert(book_layout_page_count() == 1 && book_layout_page_image(0) == 0);
     book_layout_set_images_visible(true);
+    // 真实 HTML 的换行、分页空白、全角及零宽占位不应在插图前后产生额外页面。
+    // Real HTML line/page-break whitespace and fullwidth/zero-width spacers must not create image-adjacent pages.
+    const char *image_html = "<p>甲</p><p>&#10;&#12;&nbsp;</p><p>　</p>"
+        "<br/><img src='image.png'/><br/><p>　&#x200b;&#xfeff;</p><p id='after'>乙<br/>丙</p>";
+    html_text_t parsed = {0};size_t image_anchor = 0;
+    assert(html_to_blocks_with_css_anchor(image_html, strlen(image_html), NULL, 0,
+                                          "after", &image_anchor, &parsed) == ESP_OK);
+    assert(parsed.count == 6 && parsed.image_count == 1);
+    size_t after_image = parsed.blocks[4].offset;
+    assert(image_anchor == after_image);
+    assert(book_layout_build_blocks(parsed.utf8, parsed.len, parsed.blocks, parsed.count,
+                                    illustrated_rect, 10));
+    assert(book_layout_page_count() == 3 && book_layout_page_image(1) == 0);
+    assert(book_layout_page_start_offset(2) == after_image && book_layout_page_for_offset(image_anchor) == 2);
+    drawn[0] = 0;
+    for(size_t p=0;p<3;p++)book_layout_draw_page(&fb,p,illustrated_rect,10);
+    assert(!strcmp(drawn,"甲乙丙"));
+    book_layout_set_images_visible(false);
+    assert(book_layout_build_blocks(parsed.utf8, parsed.len, parsed.blocks, parsed.count,
+                                    illustrated_rect, 10));
+    assert(book_layout_page_count() == 1 && book_layout_page_image(0) < 0);
+    drawn[0]=0;book_layout_draw_page(&fb,0,illustrated_rect,10);assert(!strcmp(drawn,"甲乙丙"));
+    book_layout_free();html_text_free(&parsed);
+    const char *only_image = "<p>　&#x200b;</p><img src='image.png'/><p>　</p>";
+    assert(html_to_blocks(only_image,strlen(only_image),&parsed)==ESP_OK);
+    assert(book_layout_build_blocks(parsed.utf8,parsed.len,parsed.blocks,parsed.count,illustrated_rect,10));
+    assert(book_layout_page_count()==1&&book_layout_page_image(0)==0);
+    book_layout_set_images_visible(true);
+    assert(book_layout_build_blocks(parsed.utf8,parsed.len,parsed.blocks,parsed.count,illustrated_rect,10));
+    assert(book_layout_page_count()==1&&book_layout_page_image(0)==0);
+    book_layout_free();html_text_free(&parsed);
+    const char *text_spacer="<p>甲</p><p>　</p><p>乙</p>";
+    assert(html_to_blocks(text_spacer,strlen(text_spacer),&parsed)==ESP_OK);
+    assert(book_layout_build_blocks(parsed.utf8,parsed.len,parsed.blocks,parsed.count,(EpdRect){0,0,100,20},10));
+    assert(book_layout_page_count()==3);
+    book_layout_free();html_text_free(&parsed);
     EpdRect balanced = book_layout_balanced_rect((EpdRect){36, 0, 612, 100}, 48, 0);
     assert(balanced.x == 54 && balanced.width == 576);
     assert(balanced.x == 684 - balanced.x - balanced.width);

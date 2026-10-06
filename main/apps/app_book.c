@@ -1246,6 +1246,17 @@ static void save_progress(void) {
 }
 static void invalidate_prep(void) { s_next_page = s_prep_page = -1; }
 
+// 目录使用系统字体；切换前等待预渲染结束，回正文时恢复阅读字体与字形缓存。
+// The directory uses the system face; join painting before switching and restore the reader face on return.
+static void set_reader_view(book_view_t view) {
+    lock_draw();
+    invalidate_prep();
+    if (view == READING) app_font_activate_reading();
+    else app_font_activate_system();
+    s_view = view;
+    unlock_draw();
+}
+
 /* ---- 阅读工具层 / Reader overlays ---- */
 typedef struct {
     uint32_t magic, file_size, byte_off;
@@ -2967,7 +2978,7 @@ static app_redraw_t turn_page(app_ctx_t* ctx, int dir) {
     else if (dir > 0 && s_chapter + 1 < book_chapter_count()) { save_progress(); changed = load_chapter(ctx, s_chapter + 1, 0, false); }
     else if (dir < 0 && s_chapter) { save_progress(); changed = load_chapter(ctx, s_chapter - 1, 0, true); }
     else return APP_REDRAW_NONE;
-    if (!changed) { s_view = s_text ? TOC : SHELF; ctx->leaf = s_text ? s_chapter / BOOK_TOC_ROWS : 0; return APP_REDRAW_PAGE; }
+    if (!changed) { set_reader_view(s_text ? TOC : SHELF); ctx->leaf = s_text ? s_chapter / BOOK_TOC_ROWS : 0; return APP_REDRAW_PAGE; }
     skip_hidden_image_pages(ctx, dir);
     if (!s_text) { s_view = SHELF; return APP_REDRAW_PAGE; }
     s_jump_offset = SIZE_MAX;
@@ -3240,7 +3251,7 @@ static app_redraw_t reader_panel_action(app_ctx_t* ctx, uint16_t x, uint16_t y) 
             invalidate_prep();
             if (i == 0) {
                 save_progress();
-                s_view = TOC;
+                set_reader_view(TOC);
                 s_message[0] = 0;
                 s_toc_jump_open = s_toc_jump_drag = false;
                 s_reader_panel = READER_PANEL_NONE;
@@ -3768,7 +3779,7 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
         int target = book_toc_hit(x, y, ctx->leaf, book_navigation_count());
         if (target == BOOK_TOC_BACK) {
             s_message[0] = 0;
-            s_view = READING;
+            set_reader_view(READING);
             s_reader_panel = READER_PANEL_NONE;
             return APP_REDRAW_PAGE;
         }
@@ -3790,6 +3801,7 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
             size_t chapter = book_navigation_chapter((size_t)target);
             if (chapter >= book_chapter_count()) return APP_REDRAW_NONE;
             save_progress();
+            set_reader_view(READING);
             if (load_chapter_at(ctx, chapter, 0, false, book_navigation_anchor((size_t)target),
                                 book_navigation_source_offset((size_t)target))) {
                 s_selected_toc = (size_t)target;
@@ -3799,7 +3811,7 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
                 s_view = READING;
                 s_reader_panel = READER_PANEL_NONE;
                 save_progress();
-            }
+            } else set_reader_view(s_text ? TOC : SHELF);
             return APP_REDRAW_PAGE;
         }
         return APP_REDRAW_NONE;
@@ -4202,7 +4214,7 @@ static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) 
         }
         if (s_view == READING && !s_toolbar && !s_clear_confirm && ui_rect_hit(body_rect(), ev->x0, ev->y0)) {
             save_progress();
-            s_view = TOC;
+            set_reader_view(TOC);
             s_message[0] = 0;
             size_t toc = current_toc_position();
             ctx->leaf = toc == SIZE_MAX ? 0 : (int)(toc / BOOK_TOC_ROWS);
@@ -4274,7 +4286,7 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
             s_reader_panel = s_reader_panel == READER_PANEL_TOOLS ? READER_PANEL_NONE : READER_PANEL_TOOLS;
             invalidate_prep();
         } else if (s_view == TOC) {
-            s_view = s_text ? READING : SHELF;
+            set_reader_view(s_text ? READING : SHELF);
             s_reader_panel = READER_PANEL_NONE;
         } else {
             ctx->request_menu = true;
@@ -4317,7 +4329,7 @@ static app_redraw_t on_key_long(app_ctx_t* ctx, int key) {
         return APP_REDRAW_PAGE;
     }
     s_message[0] = 0;
-    s_view = s_text ? READING : SHELF;
+    set_reader_view(s_text ? READING : SHELF);
     s_reader_panel = READER_PANEL_NONE;
     return APP_REDRAW_PAGE;
 }
@@ -4372,7 +4384,8 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
             return APP_REDRAW_AREA;
         }
     }
-    if (s_text && strcmp(s_font_path, ttf_font_path())) {
+    // 目录暂借系统字体，不应把正文按系统字体重新分页。/ The directory borrows the system face without repaginating the reader.
+    if (s_view == READING && s_text && strcmp(s_font_path, ttf_font_path())) {
         size_t off = book_layout_page_start_offset(s_page);
         save_progress();
         lock_draw();

@@ -1,6 +1,6 @@
 {
   "name": "小纸 Pico 阅读固件",
-  "version": "0.3.3-rc76",
+  "version": "0.3.3-rc77",
   "new_install_prompt_erase": false,
   "builds": [
     {

@@ -187,6 +187,11 @@ static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
 typedef enum {SHELF,SETTINGS,READING,TOC,MANAGE,BULK,IMPORT,SEARCH,EDIT} book_view_t;
 static book_view_t s_view,s_search_parent;
+static bool test_draw_locked,test_system_face=true;
+static void lock_draw(void){assert(!test_draw_locked);test_draw_locked=true;}
+static void unlock_draw(void){assert(test_draw_locked);test_draw_locked=false;}
+static bool app_font_activate_system(void){assert(test_draw_locked);test_system_face=true;return true;}
+static bool app_font_activate_reading(void){assert(test_draw_locked);test_system_face=false;return true;}
 static bool s_toc_jump_open,s_toc_jump_drag;
 static int s_toc_jump_percent;
 typedef enum {READER_PANEL_NONE,READER_PANEL_TOOLS} reader_panel_t;
@@ -270,6 +275,7 @@ static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;tex
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
 unit += function("book_layout_balanced_rect", layout_source) + "\n"
+unit += function("set_reader_view") + "\n"
 for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_hidden_key", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_rows", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
              "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
@@ -508,6 +514,14 @@ int main(void) {
     assert(on_key(&ctx,UI_KEY_1)==APP_REDRAW_PAGE&&s_toc_jump_percent==45);
     assert(on_key(&ctx,UI_KEY_3)==APP_REDRAW_PAGE&&s_toc_jump_percent==50);
     assert(on_key(&ctx,UI_KEY_2)==APP_REDRAW_PAGE&&!s_toc_jump_open);
+    // 目录统一切系统字形；返回正文与长按返回都恢复阅读字形。
+    // TOC switches to the system face; both return paths restore the reader face.
+    s_text="body";set_reader_view(TOC);assert(test_system_face&&!test_draw_locked);
+    assert(on_key(&ctx,UI_KEY_2)==APP_REDRAW_PAGE&&s_view==READING&&!test_system_face);
+    set_reader_view(TOC);
+    assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_PAGE&&s_view==READING&&!test_system_face);
+    s_text=NULL;set_reader_view(TOC);
+    assert(on_key(&ctx,UI_KEY_2)==APP_REDRAW_PAGE&&s_view==SHELF&&test_system_face);
     free(s_shelf);
     while(s_pending)pending_discard(s_pending->path);
     for(int i=0;i<65;i++){char path[340];snprintf(path,sizeof(path),"%s/book%03d.txt",test_roots[0].path,i);unlink(path);}rmdir(test_roots[0].path);

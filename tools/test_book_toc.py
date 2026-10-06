@@ -51,7 +51,7 @@ HARNESS = r'''
 #include "book_toc.c"
 static int cards;
 static int labels;
-static int large_titles,skip_labels,jump_summary;
+static int large_titles,skip_labels,jump_summary,borders,pager_labels,jump_labels;
 static size_t nav_shift,seen_sources[8];
 static int seen_count;
 void epd_fill_rect(EpdRect rect,uint8_t color,uint8_t *fb){(void)rect;(void)color;(void)fb;}
@@ -59,16 +59,18 @@ void epd_fill_circle(int x,int y,int radius,uint8_t color,uint8_t *fb){(void)x;(
 void epd_draw_circle(int x,int y,int radius,uint8_t color,uint8_t *fb){(void)x;(void)y;(void)radius;(void)color;(void)fb;}
 void ui_clear_page(uint8_t *fb){(void)fb;}
 void ui_fill_round_rect(uint8_t *fb,EpdRect r,int radius,uint8_t gray){(void)fb;(void)r;(void)radius;(void)gray;cards++;}
-void ui_draw_round_rect(uint8_t *fb,EpdRect r,int radius,uint8_t gray){(void)fb;(void)r;(void)radius;(void)gray;}
+void ui_draw_round_rect(uint8_t *fb,EpdRect r,int radius,uint8_t gray){(void)fb;(void)r;(void)radius;assert(gray<=0x60);borders++;}
 void ui_text_fixed(uint8_t *fb,int x,int y,int px,const char *text,enum EpdFontFlags align,bool inverse){
     (void)fb;(void)x;(void)y;(void)px;(void)align;(void)inverse;
     assert(!strchr(text,'\n') && !strchr(text,'\r') && !strchr(text,'\t'));
     if(px==30) large_titles++;
-    if(strstr(text,"10页")) skip_labels++;
+    if(strstr(text,"10页")){assert(px>=24);skip_labels++;}
+    if(strstr(text,"上页")||strstr(text,"下页")){assert(px>=26);pager_labels++;}
+    if(strstr(text,"按百分比跳转")){assert(px>=28);jump_labels++;}
     if(strstr(text,"第 99～105 节")) jump_summary++;
     labels++;
 }
-int ui_text_fixed_width_px(int px,const char *text){(void)px;return (int)strlen(text)*9;}
+int ui_text_fixed_width_px(int px,const char *text){int width=0;for(;*text;text++)if(((unsigned char)*text&0xc0)!=0x80)width+=((unsigned char)*text<128?px/2:px);return width;}
 bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
 void ui_hairline(uint8_t *fb,int y,int x,int width,uint8_t gray){(void)fb;(void)y;(void)x;(void)width;(void)gray;}
 void ui_nav_status(uint8_t *fb){(void)fb;}
@@ -107,6 +109,7 @@ int main(void){
     uint8_t fb=0;
     book_toc_render(&fb,"书名\n下一行",8,1,0,"");
     assert(cards==13 && labels>=17 && large_titles==7 && skip_labels==2);
+    assert(borders==26 && pager_labels==2 && jump_labels==1);
     book_toc_render_jump(&fb,168,60);
     assert(jump_summary==1);
     nav_shift=1;seen_count=0;book_toc_render(&fb,"目录",4,1,0,"");

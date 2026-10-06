@@ -72,6 +72,49 @@ static uint32_t codepoint_value(const char* text, size_t n) {
     return cp;
 }
 
+// 插图容器常带全角空白、零宽字符和换行实体；它们不是可阅读的独立段落。
+// Image wrappers often contain fullwidth spaces, zero-width characters and line-break entities, not readable paragraphs.
+static bool image_spacing_block(const blk_t* block) {
+    if (!block || block->image >= 0) return false;
+    size_t end = block->offset + block->len;
+    for (size_t at = block->offset; at < end;) {
+        size_t n = codepoint_size(s_text + at, end - at);
+        if (!n) return false;
+        uint32_t cp = codepoint_value(s_text + at, n);
+        bool space = cp == ' ' || (cp >= '\t' && cp <= '\r') || cp == 0x85 || cp == 0xa0 ||
+                     cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200b) || cp == 0x2028 ||
+                     cp == 0x2029 || cp == 0x202f || cp == 0x205f || cp == 0x2060 ||
+                     cp == 0x3000 || cp == 0xfeff;
+        if (!space) return false;
+        at += n;
+    }
+    return true;
+}
+
+// 只跳过插图相邻的空白块，保留原文字节位置、正文段落与 TXT 的手动空行。
+// Skip only image-adjacent spacer blocks; keep source offsets, text paragraphs and manual TXT blank lines.
+static size_t skip_image_spacing(size_t off) {
+    while (off < s_len && s_block_count) {
+        const blk_t* block = block_at(off);
+        if (block->offset != off) break;
+        size_t end = block->offset + block->len;
+        if (block->image >= 0) {
+            if (s_images_visible) break;
+        } else {
+            if (!image_spacing_block(block)) break;
+            size_t first = (size_t)(block - s_blocks), last = first + 1;
+            while (last < s_block_count && image_spacing_block(&s_blocks[last])) ++last;
+            bool adjacent = (first > 0 && s_blocks[first - 1].image >= 0) ||
+                            (last < s_block_count && s_blocks[last].image >= 0);
+            if (!adjacent) break;
+            end = s_blocks[last - 1].offset + s_blocks[last - 1].len;
+        }
+        off = end;
+        if (off < s_len && s_text[off] == '\n') ++off;
+    }
+    return off;
+}
+
 // 中文排版禁则：右标点不得出现在行首，左标点不得停在行尾。
 // CJK kinsoku: closing punctuation may not start a line; opening punctuation may not end one.
 static bool prohibited_line_start(uint32_t cp) {
@@ -328,28 +371,21 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
     s_line = heap_caps_malloc(len + 1, PSRAM_CAPS);
     size_t off = s_lead_skip;
     if (!s_line) goto fail;
-    if (!s_images_visible) {
-        size_t visible_off = off;
-        while (visible_off < len) {
-            const blk_t* block = block_at(visible_off);
-            if (!block || block->image < 0 || block->offset != visible_off) break;
-            visible_off = block->offset + block->len;
-            if (visible_off < len && utf8[visible_off] == '\n') ++visible_off;
-        }
-        // An image-only chapter keeps one page so the existing chapter-skip path can advance.
-        // 纯插图章节仍保留可跳过的一页；有正文时直接从第一段正文开始。
-        if (visible_off < len) off = visible_off;
+    size_t visible_off = skip_image_spacing(off);
+    if (visible_off < len) off = visible_off;
+    else if (!s_images_visible) {
+        // 纯插图章节仍保留可检测的插图页，让跨章跳过逻辑继续前进。
+        // Image-only chapters keep a detectable image page for the chapter-skip path.
+        for (size_t i = 0; i < count; ++i)
+            if (blocks[i].image >= 0 && blocks[i].offset >= off) { off = blocks[i].offset; break; }
     }
     if (!append_page(off)) goto fail;
     int64_t used = s_lead_height;
     while (off < len) {
+        size_t visible = skip_image_spacing(off);
+        if (visible != off) { off = visible; continue; }
         const blk_t* block = block_at(off);
         if (block && block->image >= 0 && off == block->offset) {
-            if (!s_images_visible) {
-                off = block->offset + block->len;
-                if (off < len && utf8[off] == '\n') ++off;
-                continue;
-            }
             if (used && !append_page(off)) goto fail;
             used = rect.height;
             off = block->offset + block->len;
@@ -406,12 +442,8 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
     size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
     int64_t used = page == 0 ? s_lead_height : 0;
     while (off < end) {
-        const blk_t* block = block_at(off);
-        if (!s_images_visible && block && block->image >= 0 && off == block->offset) {
-            off = block->offset + block->len;
-            if (off < end && s_text[off] == '\n') ++off;
-            continue;
-        }
+        size_t visible = skip_image_spacing(off);
+        if (visible != off) { off = visible; continue; }
         size_t next;
         bool paragraph_end, heading;
         int line_px, line_width, indent, margin_before, margin_after;
