@@ -20,12 +20,14 @@
 #include "esp_log.h"
 #include "ota_update.h"
 #include "pmu_selftest.h"
+#include "soc/rtc_cntl_reg.h"
 #include "read_pico_board.h"
 #include "read_pico_init.h"
 #include "read_pico_pmu.h"
 #include "read_pico_pmu_protocol.h"
 #include "settings.h"
 #include "ttf_font.h"
+#include "usb_storage.h"
 #include "app_font_context.h"
 #include "ui_kit.h"
 #include "vcom_setup.h"
@@ -79,6 +81,23 @@ static bool images_match_panel(void) {
 }
 
 void app_main(void) {
+    // 最早做：上一次会话若在共享 TF 卡时结束，内部 PHY 可能还留在 OTG 上，那样接下来既没有
+    // 串口日志、也刷不进固件。先把它拿回串口/JTAG 再往下走。
+    // First thing: if the last session ended while the SD card was shared, the internal PHY may
+    // still be muxed to OTG, which costs us both the serial log and any chance of flashing. Take
+    // it back for Serial/JTAG before anything else runs.
+    usb_storage_phy_init();
+
+    // 应用已经跑起来了，说明"强制下载"这一次没有生效（或已经用完）。它在 RTC 域，CPU 复位
+    // 不会清掉，而全仓只写不清；留着会让之后每一次复位都被 ROM 判成下载模式，设备看起来
+    // 就是烧完不启动。到这里就把它清掉，让下一次复位是普通启动。
+    // The app is running, so the forced-download bit either did not take effect this time or has
+    // already served its purpose. It lives in the RTC domain, survives a CPU reset, and is only
+    // ever written in this tree, never cleared; left set it makes every later reset land in ROM
+    // download mode, which looks exactly like a device that flashes fine and then never boots.
+    // Clear it here so the next reset is an ordinary boot.
+    REG_CLR_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+
     read_pico_handle_t hw;
     if (read_pico_init(&hw) != ESP_OK) return;
     if (hw.pmu_ready) restore_time_from_pmu();

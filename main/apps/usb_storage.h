@@ -12,3 +12,8 @@ esp_err_t usb_storage_start(void);
 esp_err_t usb_storage_stop(void);
 bool usb_storage_active(void);
 bool usb_storage_connected(void);
+
+/// 开机调用一次，把共用的内部 PHY 从 OTG 拿回串口/JTAG。
+/// / Call once at boot to take the shared internal PHY back from OTG for Serial/JTAG.
+void usb_storage_phy_init(void);
+

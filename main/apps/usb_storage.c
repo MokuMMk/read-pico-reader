@@ -49,6 +49,18 @@ static void release_serial_phy(void) {
 bool usb_storage_active(void) { return s_active; }
 bool usb_storage_connected(void) { return s_active && tud_mounted(); }
 
+/// 开机回收 PHY：S3 上 USB-OTG 与 USB-Serial-JTAG 共用内部 PHY，复用位在 RTC 域，
+/// 软复位不一定清掉。上一次会话若在共享 TF 卡时退出（崩溃、复位、直接断电），
+/// 复用位可能还指向 OTG，于是开机就没有串口、也刷不进固件。启动时主动拿回一次即可解开。
+/// / Reclaim the PHY at boot. On the S3 the USB-OTG and USB-Serial-JTAG share the internal PHY,
+/// and the mux bit lives in the RTC domain, so a soft reset does not necessarily clear it. If the
+/// last session ended while the SD card was shared -- a crash, a reset, a power cut -- the mux can
+/// still point at OTG, and the device then boots with no serial port and cannot be flashed.
+/// Taking the PHY back once at startup unsticks that.
+void usb_storage_phy_init(void) {
+    restore_serial_phy();
+}
+
 static void release_card(void) {
     if (s_card) { free(s_card); s_card = NULL; }
     if (s_host_ready) { sdmmc_host_deinit(); s_host_ready = false; }
@@ -130,22 +142,34 @@ esp_err_t usb_storage_stop(void) {
     for (int attempt = 0; s_storage && attempt < 20; ++attempt) {
         err = tinyusb_msc_delete_storage(s_storage);
         if (err == ESP_OK) { s_storage = NULL; break; }
-        if (err != ESP_ERR_INVALID_STATE) return err;
+        if (err != ESP_ERR_INVALID_STATE) goto cleanup;
         vTaskDelay(pdMS_TO_TICKS(50));
     }
-    if (s_storage) return err;
+    if (s_storage) goto cleanup;
     if (s_usb_ready) {
-        err = tinyusb_driver_uninstall();
-        if (err != ESP_OK) return err;
+        esp_err_t uerr = tinyusb_driver_uninstall();
+        if (uerr != ESP_OK) { err = uerr; goto cleanup; }
         s_usb_ready = false;
     }
+
+cleanup:
+    // PHY 必须在所有退出路径上归还。以前这里的失败分支直接 return，PHY 就留在 TinyUSB 手里：
+    // 串口消失、电脑认不到调试口，只能手动进下载模式才能再刷。
+    // The PHY has to go back on every exit path. These failure branches used to return straight
+    // away, which left the PHY with TinyUSB: the serial port disappeared, the host could not see
+    // the debug port, and the only way back in was to force download mode by hand.
     restore_serial_phy();
     if (s_msc_ready) {
-        err = tinyusb_msc_uninstall_driver();
-        if (err != ESP_OK) return err;
-        s_msc_ready = false;
+        esp_err_t merr = tinyusb_msc_uninstall_driver();
+        if (merr == ESP_OK) s_msc_ready = false;
+        else if (err == ESP_OK) err = merr;
     }
+    // 无论成败共享都已结束：卡交还本机，状态位不能一直挂着，否则主循环会一直以为 U 盘模式还在，
+    // 电源键轮询等路径全部让路。
+    // Either way the share is over: the card is back with the firmware, and the status flag must
+    // not stay set or the loop keeps believing MSC is active and yields on paths such as the
+    // power-key poll.
     s_active = false;
     restore_local();
-    return ESP_OK;
+    return err;
 }
