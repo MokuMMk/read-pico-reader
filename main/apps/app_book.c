@@ -631,7 +631,13 @@ static void fit_fixed_text(char* text, int px, int width) {
 static void reader_footer_strip_number(char *dst, size_t cap, const char *source) {
     char title[128];
     copy_text(title, sizeof(title), source ? source : "");
-    char *name = title;
+// name 只被读取，但下面会把字符串字面量赋给它。CI 的 sdkconfig.ci 开了
+// CONFIG_COMPILER_WARN_WRITE_STRINGS，字面量因此是 const char[]，赋给 char* 会丢 const 并在
+// -Werror 下报错。声明成 const 指针即可。
+// name is only read from, but it is assigned a string literal below. CI's sdkconfig.ci enables
+// CONFIG_COMPILER_WARN_WRITE_STRINGS, which makes literals const char[], so assigning one to a
+// char* discards the qualifier and fails under -Werror. A const pointer is enough.
+    const char *name = title;
     while (*name == ' ' || *name == '\t') ++name;
     char *chapter_mark = !strncmp(name, "第", strlen("第")) ? strstr(name, "章") : NULL;
     if (chapter_mark && chapter_mark - name < 24) {

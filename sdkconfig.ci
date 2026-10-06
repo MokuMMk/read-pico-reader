@@ -54,3 +54,13 @@ CONFIG_BT_NIMBLE_ATT_MAX_PREP_ENTRIES=4
 CONFIG_BT_CTRL_BLE_MAX_ACT=3
 CONFIG_BT_CTRL_BLE_ADV_REPORT_FLOW_CTRL_NUM=50
 CONFIG_BT_CTRL_ADV_DUP_FILT_MAX=10
+
+# TF 卡共享走 TinyUSB MSC，产品配置里有、CI 漏了：main/apps/usb_storage.c 会引用
+# tinyusb_msc_*，缺了链接期直接报 undefined reference。
+# The TF card share uses TinyUSB MSC. The product config has it and CI did not, so
+# main/apps/usb_storage.c referenced tinyusb_msc_* with nothing behind it and the link
+# failed. Keep these in step with sdkconfig.defaults.
+CONFIG_TINYUSB_MSC_ENABLED=y
+CONFIG_TINYUSB_MSC_BUFSIZE=8192
+CONFIG_TINYUSB_DESC_PRODUCT_STRING="Read Pico SD"
+CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="MindReset"
