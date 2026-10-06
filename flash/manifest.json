@@ -32,5 +32,6 @@
     "minimum_base_version": "0.3.3-rc72",
     "online_ota_base_version": "0.3.3-rc79",
     "rollback": true
-  }
+  },
+  "updated_at": "2026-10-06T18:07:23+08:00"
 }

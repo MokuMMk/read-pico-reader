@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """中文：从同一次编译生成基础包、TF 升级包与 OTA 清单。/ English: Stage base, TF and OTA from one build."""
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import hashlib, json, shutil, sys
 from verify_flash_bundle import check
 ROOT=Path(__file__).resolve().parents[1]
@@ -13,6 +15,7 @@ def package(build: Path, output: Path):
     assert b'PICO_HTTPS_OTA_V1' in data, 'base package lacks online OTA support'
     manifest=json.loads((ROOT/'flash/manifest.json').read_text())
     manifest['version']=version
+    manifest['updated_at']=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(timespec='seconds')
     manifest['pico_ota']={'layout':'pico-dual-4m-v1','base_version':version,
         'minimum_base_version':'0.3.3-rc72','online_ota_base_version':'0.3.3-rc79','rollback':True}
     output.mkdir(parents=True,exist_ok=True)
