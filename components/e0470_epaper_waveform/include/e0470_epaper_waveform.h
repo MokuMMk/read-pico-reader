@@ -28,6 +28,37 @@
 
 #include <stdint.h>
 
+// Metalio 板用厂商示例固件的 epdiy 与波形表，本仓库这套波形类型在那块板上不参与编译。
+// 上层引的是这个头，所以在这里把"跟随／灰阶／全刷"三档都映射到厂商那一份 MY_WAVEFORM：
+// 画面正常，只是少了跟手专用的短波形（本仓库 fork 的优化）。
+// The Metalio board uses the vendor demo firmware's epdiy and waveform tables, and this repo's
+// waveform types are not compiled there. Callers include this header, so the follow, gray and
+// full selections all map to the vendor's single MY_WAVEFORM: the picture is correct, only the
+// dedicated short follow waveform (a local optimisation of this fork) is missing.
+#if defined(PICO_BOARD_METALIO_EINK4_PLUS)
+
+#include "my_waveform.h"
+
+#define E0470_WAVEFORM MY_WAVEFORM
+#define E0470_FULL_WAVEFORM MY_WAVEFORM
+#define E0470_FOLLOW_WAVEFORM MY_WAVEFORM
+
+// 行几何计算要的帧数与帧周期。厂商默认表是 GC16/GL16 完整 48 相；帧周期沿用本仓库
+// 在 Read Pico 上标定的值，两板同面板同 pclk 区间。
+// Frame counts and the frame period the line geometry needs. The vendor's default table is a
+// full 48-phase GC16/GL16; the period reuses what this repo characterised on Read Pico, since
+// both boards drive the same panel over the same pixel-clock range.
+#define E0470_GC16_FRAMES 48
+#define E0470_GL16_FRAMES 48
+#define E0470_WAVEFORM_FRAME_US 11090
+
+/// 本板上波形表由厂商的 my_waveform_init() 装配，这里给个空壳避免上层漏改。
+/// / On this board the vendor's my_waveform_init() builds the tables; this stub keeps callers
+/// unchanged.
+static inline void e0470_waveform_init(void) {}
+
+#else
+
 #include "epd_waveform.h"
 
 #ifdef __cplusplus
@@ -103,3 +134,5 @@ void e0470_waveform_init(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif  // PICO_BOARD_METALIO_EINK4_PLUS

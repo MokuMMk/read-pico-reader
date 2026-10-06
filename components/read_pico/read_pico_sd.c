@@ -23,9 +23,14 @@
 #include "sdmmc_cmd.h"
 
 #define SD_MOUNT_POINT "/sdcard"
-#define SD_PIN_CLK GPIO_NUM_38
-#define SD_PIN_CMD GPIO_NUM_42
-#define SD_PIN_D0 GPIO_NUM_44
+// 接线来自板级头：两块板的总线宽度与引脚都不同。
+// Wiring comes from the board header: the two boards differ in both pins and bus width.
+#define SD_PIN_CLK ((gpio_num_t)READ_PICO_SD_CLK)
+#define SD_PIN_CMD ((gpio_num_t)READ_PICO_SD_CMD)
+#define SD_PIN_D0 ((gpio_num_t)READ_PICO_SD_D0)
+#define SD_PIN_D1 ((gpio_num_t)READ_PICO_SD_D1)
+#define SD_PIN_D2 ((gpio_num_t)READ_PICO_SD_D2)
+#define SD_PIN_D3 ((gpio_num_t)READ_PICO_SD_D3)
 
 static const char* TAG = "sd_card";
 static sdmmc_card_t* card;
@@ -110,13 +115,13 @@ static esp_err_t mount_card(bool format_if_failed) {
     host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
 
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot.width = 1;
+    slot.width = READ_PICO_SD_WIDTH;
     slot.clk = SD_PIN_CLK;
     slot.cmd = SD_PIN_CMD;
     slot.d0 = SD_PIN_D0;
-    slot.d1 = GPIO_NUM_NC;
-    slot.d2 = GPIO_NUM_NC;
-    slot.d3 = GPIO_NUM_NC;
+    slot.d1 = SD_PIN_D1;
+    slot.d2 = SD_PIN_D2;
+    slot.d3 = SD_PIN_D3;
     slot.cd = GPIO_NUM_NC;
     slot.wp = GPIO_NUM_NC;
     slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;

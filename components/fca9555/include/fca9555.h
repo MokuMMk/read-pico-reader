@@ -128,6 +128,14 @@ void fca9555_get_dir_cache(fca9555_handle_t h, uint16_t* invert, uint16_t* confi
 esp_err_t fca9555_set_config(fca9555_handle_t h, int port, uint8_t value);
 esp_err_t fca9555_set_inversion(fca9555_handle_t h, int port, uint8_t value);
 
+// 板级层建好句柄后登记一次；别的层（如电源层）用 fca9555_default() 取用，避免在同一地址上
+// 重复建句柄，也避免组件之间成环。没有登记过时 fca9555_default() 返回 NULL。
+// The board layer registers its handle once; other layers (the power layer, say) pick it up with
+// fca9555_default(). That avoids a second handle on the same address and avoids a component
+// dependency cycle. Returns NULL when nothing was registered.
+void fca9555_set_default(fca9555_handle_t h);
+fca9555_handle_t fca9555_default(void);
+
 #ifdef __cplusplus
 }
 #endif

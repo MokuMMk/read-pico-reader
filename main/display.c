@@ -14,7 +14,14 @@
 #include <stdint.h>
 
 #include "app_config.h"
+#if defined(PICO_BOARD_METALIO_EINK4_PLUS)
+// 本板用厂商 epdiy 的波形表，本仓库那份波形头不引；缺的几个函数声明由 compat 提供。
+// This board uses the vendor epdiy's waveform tables instead of this repo's, and the few
+// functions it does not define are declared in compat.
+#include "epdiy_extras.h"
+#else
 #include "e0470_epaper_waveform.h"
+#endif
 #include "esp_log.h"
 #include "esp_timer.h"
 

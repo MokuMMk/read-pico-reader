@@ -2581,7 +2581,16 @@ static void scan_shelf_dir(const char *root, bool is_flash, nvs_handle_t favorit
     if (!frames) { *truncated = true; return; }
     frames[0].dir = opendir(root);
     if (!frames[0].dir) { *unreadable = true; free(frames); return; }
-    snprintf(frames[0].path, sizeof(frames[0].path), "%s", root);
+    // root 可能比 path 长（调用方传的是 roots[i].path），这里本来就要有意截断；
+    // 写成显式的定长拷贝，避免 -Wformat-truncation 在 RISC-V 上直接判错。
+    // root can be longer than path (callers pass roots[i].path) and truncation is intended here,
+    // so it is written as an explicit bounded copy rather than tripping -Wformat-truncation,
+    // which the RISC-V compiler turns into an error.
+    {
+        const size_t root_len = strnlen(root, sizeof(frames[0].path) - 1);
+        memcpy(frames[0].path, root, root_len);
+        frames[0].path[root_len] = '\0';
+    }
     int depth = 0;
     while (depth >= 0 && !*truncated) {
         errno = 0;
