@@ -133,6 +133,7 @@ typedef enum {
     READER_PANEL_BOOKMARKS,
     READER_PANEL_STATS_RECENT,
     READER_PANEL_REFRESH_SETTINGS,
+    READER_PANEL_TURN_SETTINGS,
 } reader_panel_t;
 typedef struct {
     char name[256];
@@ -1735,44 +1736,93 @@ static void draw_reading_toggle(uint8_t *fb, int index, const char *title,
 }
 
 static void draw_reading_settings(uint8_t* fb) {
-    draw_sheet(fb, 270, "阅读设置");
-    EpdRect manual = {36, 370, 612, 96};
+    draw_sheet(fb, 170, "阅读设置");
+    EpdRect manual = {36, 270, 612, 96};
     ui_fill_round_rect(fb, manual, 22, 0xf0);
     ui_draw_round_rect(fb, manual, 22, 0x68);
-    ui_text(fb, 58, 386, 28, "手动全刷", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, 58, 431, 20, "清除整块屏幕的残影", EPD_DRAW_ALIGN_LEFT, false);
-    ui_draw_button(fb, (EpdRect){520, 389, 107, 58}, "全刷", true);
+    ui_text(fb, 58, 286, 28, "手动全刷", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 58, 331, 20, "清除整块屏幕的残影", EPD_DRAW_ALIGN_LEFT, false);
+    ui_draw_button(fb, (EpdRect){520, 289, 107, 58}, "全刷", true);
 
-    ui_text(fb, 42, 481, 27, "自动全刷 · 阅读翻页", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 42, 381, 27, "自动全刷 · 阅读翻页", EPD_DRAW_ALIGN_LEFT, false);
     const int options[] = {5, 10, 15, 30, 0};
     for (int i = 0; i < 5; ++i) {
-        EpdRect rect = {36 + i * 124, 520, 116, 68};
+        EpdRect rect = {36 + i * 124, 420, 116, 68};
         bool selected = app_settings_reader_full_pages() == options[i];
         ui_fill_round_rect(fb, rect, 20, selected ? 0xd8 : UI_GRAY_WHITE);
         ui_draw_round_rect(fb, rect, 20, selected ? 0x48 : 0x68);
         char label[16];
         if (options[i]) snprintf(label, sizeof(label), "%d 页", options[i]);
         else snprintf(label, sizeof(label), "不强制");
-        ui_text_vc(fb, rect.x + rect.width / 2, 554, options[i] ? 26 : 22, label,
+        ui_text_vc(fb, rect.x + rect.width / 2, 454, options[i] ? 26 : 22, label,
                    EPD_DRAW_ALIGN_CENTER, false);
-        if (selected) epd_fill_circle(rect.x + rect.width - 15, 533, 5, UI_GRAY_BLACK, fb);
+        if (selected) epd_fill_circle(rect.x + rect.width - 15, 433, 5, UI_GRAY_BLACK, fb);
     }
-    ui_text(fb, 42, 610, 27, "翻页效果", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 42, 510, 27, "翻页效果", EPD_DRAW_ALIGN_LEFT, false);
     static const char* effects[] = {"默认效果", "水波纹效果"};
     for (int i = 0; i < 2; ++i) {
-        EpdRect rect = {36 + i * 312, 648, 300, 68};
+        EpdRect rect = {36 + i * 312, 548, 300, 68};
         bool selected = app_settings_reader_turn_effect() == i;
         ui_fill_round_rect(fb, rect, 20, selected ? 0xd8 : UI_GRAY_WHITE);
         ui_draw_round_rect(fb, rect, 20, selected ? 0x48 : 0x68);
-        ui_text_vc(fb, rect.x + rect.width / 2, 682, 28, effects[i], EPD_DRAW_ALIGN_CENTER, false);
-        if (selected) epd_fill_circle(rect.x + rect.width - 20, 664, 5, UI_GRAY_BLACK, fb);
+        ui_text_vc(fb, rect.x + rect.width / 2, 582, 28, effects[i], EPD_DRAW_ALIGN_CENTER, false);
+        if (selected) epd_fill_circle(rect.x + rect.width - 20, 564, 5, UI_GRAY_BLACK, fb);
     }
+
+    EpdRect mode={36,636,612,84};
+    ui_fill_round_rect(fb,mode,20,0xf0);ui_draw_round_rect(fb,mode,20,0x68);
+    ui_text(fb,58,649,25,"翻页模式",EPD_DRAW_ALIGN_LEFT,false);
+    ui_text(fb,58,688,19,"选择轻点翻页的区域",EPD_DRAW_ALIGN_LEFT,false);
+    ui_text_vc(fb,600,678,25,app_settings_reader_vertical_turn()?"上下翻页":"左右翻页",EPD_DRAW_ALIGN_RIGHT,false);
+    ui_draw_icon(fb,624,678,28,UI_ICON_CHEVRON_RIGHT,0x38);
     draw_reading_toggle(fb, 0, "电源键翻页", "短按下一页，长按锁屏", app_settings_reader_power_turn());
     draw_reading_toggle(fb, 1, "全屏沉浸", "全屏时隐藏状态栏", app_settings_reader_immersive());
     draw_reading_toggle(fb, 2, "关闭书内图片", "跳过正文插图，保留原书文件", app_settings_reader_hide_images());
     draw_reading_toggle(fb, 3, "长按圆圈键全刷",
                         app_settings_reader_hold_refresh() ? "当前：长按手动全刷" : "当前：长按返回首页",
                         app_settings_reader_hold_refresh());
+    ui_fill_round_rect(fb, (EpdRect){36, 1141, 612, 58}, 20, UI_GRAY_BLACK);
+    ui_text_vc(fb, 342, 1170, 26, "完成", EPD_DRAW_ALIGN_CENTER, true);
+}
+
+static void draw_turn_settings(uint8_t *fb) {
+    draw_sheet(fb, 270, "翻页模式");
+    draw_sheet_back(fb, 270);
+    bool vertical = app_settings_reader_vertical_turn();
+    for (int i = 0; i < 2; ++i) {
+        int y = 370 + i * 322;
+        bool selected = vertical == (i != 0);
+        EpdRect card = {36, y, 612, 292};
+        ui_fill_round_rect(fb, card, 22, selected ? 0xe0 : 0xf0);
+        ui_draw_round_rect(fb, card, 22, 0x50);
+        ui_draw_round_rect(fb, (EpdRect){37, y + 1, 610, 290}, 21, 0x50);
+        EpdRect diagram = {64, y + 37, 182, 220};
+        ui_fill_round_rect(fb, diagram, 12, UI_GRAY_WHITE);
+        ui_draw_round_rect(fb, diagram, 12, 0x58);
+        if (i) {
+            ui_hairline(fb, diagram.y + 73, 65, 180, 0x58);
+            ui_hairline(fb, diagram.y + 146, 65, 180, 0x58);
+            ui_text_vc(fb, 155, diagram.y + 36, 21, "上一页", EPD_DRAW_ALIGN_CENTER, false);
+            ui_text_vc(fb, 155, diagram.y + 110, 21, "全屏", EPD_DRAW_ALIGN_CENTER, false);
+            ui_text_vc(fb, 155, diagram.y + 183, 21, "下一页", EPD_DRAW_ALIGN_CENTER, false);
+        } else {
+            epd_fill_rect((EpdRect){119, diagram.y + 1, 1, 218}, 0x58, fb);
+            epd_fill_rect((EpdRect){190, diagram.y + 1, 1, 218}, 0x58, fb);
+            const char *labels[] = {"上", "全", "下", "页", "屏", "页"};
+            const int centers[] = {91, 155, 217};
+            for (int j = 0; j < 3; ++j) {
+                ui_text_vc(fb, centers[j], y + 123, 19, labels[j], EPD_DRAW_ALIGN_CENTER, false);
+                ui_text_vc(fb, centers[j], y + 153, 19, labels[j + 3], EPD_DRAW_ALIGN_CENTER, false);
+            }
+        }
+        ui_text(fb, 274, y + 43, 32, i ? "上下翻页" : "左右翻页", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 274, y + 112, 23, i ? "上 1/3：上一页" : "左侧：上一页", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 274, y + 158, 23, i ? "中 1/3：切换全屏" : "中间：切换全屏", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 274, y + 204, 23, i ? "下 1/3：下一页" : "右侧：下一页", EPD_DRAW_ALIGN_LEFT, false);
+        epd_draw_circle(610, y + 61, 12, 0x38, fb);
+        if (selected) epd_fill_circle(610, y + 61, 7, UI_GRAY_BLACK, fb);
+    }
+    ui_text_vc(fb, 342, 1051, 21, "单击圆圈键打开阅读设置", EPD_DRAW_ALIGN_CENTER, false);
     ui_fill_round_rect(fb, (EpdRect){36, 1141, 612, 58}, 20, UI_GRAY_BLACK);
     ui_text_vc(fb, 342, 1170, 26, "完成", EPD_DRAW_ALIGN_CENTER, true);
 }
@@ -1968,6 +2018,7 @@ static void draw_reader_panel(uint8_t* fb) {
     else if (s_reader_panel == READER_PANEL_BOOKMARKS) draw_reader_bookmarks(fb);
     else if (s_reader_panel == READER_PANEL_STATS_RECENT) draw_reader_stats_recent(fb);
     else if (s_reader_panel == READER_PANEL_REFRESH_SETTINGS) draw_reading_settings(fb);
+    else if (s_reader_panel == READER_PANEL_TURN_SETTINGS) draw_turn_settings(fb);
 }
 
 /* ---- 绘制与预渲染 / Drawing and preparation ---- */
@@ -3457,28 +3508,45 @@ static app_redraw_t reader_panel_action(app_ctx_t* ctx, uint16_t x, uint16_t y) 
         return APP_REDRAW_PAGE;
     }
     if (s_reader_panel == READER_PANEL_REFRESH_SETTINGS) {
-        if (y < 270) s_reader_panel = READER_PANEL_NONE;
-        else if (ui_rect_hit((EpdRect){36, 370, 612, 96}, x, y)) return reader_manual_refresh(ctx);
-        else if (y >= 520 && y < 588) {
+        if (y < 170) s_reader_panel = READER_PANEL_NONE;
+        else if (ui_rect_hit((EpdRect){36, 270, 612, 96}, x, y)) return reader_manual_refresh(ctx);
+        else if (y >= 420 && y < 488) {
             static const uint8_t options[] = {5, 10, 15, 30, 0};
             for (int i = 0; i < 5; ++i) {
-                if (!ui_rect_hit((EpdRect){36 + i * 124, 520, 116, 68}, x, y)) continue;
+                if (!ui_rect_hit((EpdRect){36 + i * 124, 420, 116, 68}, x, y)) continue;
                 app_settings_set_reader_full_pages(options[i]);
                 s_turns = 0;
                 return APP_REDRAW_PAGE;
             }
             return APP_REDRAW_NONE;
-        } else if (y >= 648 && y < 716) {
+        } else if (y >= 548 && y < 616) {
             for (int i = 0; i < 2; ++i) {
-                if (!ui_rect_hit((EpdRect){36 + i * 312, 648, 300, 68}, x, y)) continue;
+                if (!ui_rect_hit((EpdRect){36 + i * 312, 548, 300, 68}, x, y)) continue;
                 app_settings_set_reader_turn_effect((uint8_t)i);
                 return APP_REDRAW_PAGE;
             }
             return APP_REDRAW_NONE;
-        } else if (ui_rect_hit((EpdRect){36, 1141, 612, 58}, x, y)) s_reader_panel = READER_PANEL_NONE;
+        } else if (ui_rect_hit((EpdRect){36, 636, 612, 84}, x, y)) s_reader_panel = READER_PANEL_TURN_SETTINGS;
+        else if (ui_rect_hit((EpdRect){36, 1141, 612, 58}, x, y)) s_reader_panel = READER_PANEL_NONE;
         else {
             for (int i = 0; i < 4; ++i)
                 if (ui_rect_hit(reading_toggle_rect(i), x, y)) return apply_reader_option(ctx, i);
+            return APP_REDRAW_NONE;
+        }
+        invalidate_prep();
+        return APP_REDRAW_PAGE;
+    }
+    if (s_reader_panel == READER_PANEL_TURN_SETTINGS) {
+        if (y < 270) s_reader_panel = READER_PANEL_NONE;
+        else if (ui_rect_hit((EpdRect){36, 299, 56, 56}, x, y)) s_reader_panel = READER_PANEL_REFRESH_SETTINGS;
+        else if (ui_rect_hit((EpdRect){36, 1141, 612, 58}, x, y)) s_reader_panel = READER_PANEL_REFRESH_SETTINGS;
+        else {
+            for (int i = 0; i < 2; ++i) {
+                if (!ui_rect_hit((EpdRect){36, 370 + i * 322, 612, 292}, x, y)) continue;
+                app_settings_set_reader_vertical_turn(i != 0);
+                invalidate_prep();
+                return APP_REDRAW_PAGE;
+            }
             return APP_REDRAW_NONE;
         }
         invalidate_prep();
@@ -3851,6 +3919,13 @@ static app_redraw_t batch_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     }
     return APP_REDRAW_NONE;
 }
+// 正文高度三等分；页眉、页脚保留各自操作。/ Split the body into thirds, keeping header/footer actions separate.
+static int reader_vertical_tap(EpdRect body, int y) {
+    if (y < body.y || y >= body.y + body.height || body.height <= 0) return 2;
+    int zone = (y - body.y) * 3 / body.height;
+    return zone == 0 ? -1 : zone == 2 ? 1 : 0;
+}
+
 static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     if (s_view == IMPORT) {
         if (y < 160 && x < 120) { s_view = SHELF; return APP_REDRAW_PAGE; }
@@ -3961,6 +4036,12 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
             s_area = (EpdRect){584, 76, 64, 70};
             s_mode = MODE_GL16;
             return APP_REDRAW_AREA;
+        }
+        if (app_settings_reader_vertical_turn()) {
+            int target = reader_vertical_tap(body_rect(), y);
+            if (target == -1 || target == 1) return turn_page(ctx, target);
+            if (target == 0) return toggle_reader_fullscreen(ctx);
+            return APP_REDRAW_NONE;
         }
         if (x < UI_LOCK_WIDTH * 3 / 10) return turn_page(ctx, -1);
         if (x >= UI_LOCK_WIDTH * 7 / 10) return turn_page(ctx, 1);
@@ -4368,8 +4449,9 @@ static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) 
     }
     if (!s_clear_confirm && !s_scan_pending) {
         if (s_view == READING && !s_toolbar && ui_rect_hit(body_rect(), ev->x0, ev->y0)) {
-            if (ev->type == UI_GESTURE_SWIPE_L) return turn_page(ctx, 1);
-            if (ev->type == UI_GESTURE_SWIPE_R) return turn_page(ctx, -1);
+            bool vertical = app_settings_reader_vertical_turn();
+            if (ev->type == (vertical ? UI_GESTURE_SWIPE_U : UI_GESTURE_SWIPE_L)) return turn_page(ctx, 1);
+            if (ev->type == (vertical ? UI_GESTURE_SWIPE_D : UI_GESTURE_SWIPE_R)) return turn_page(ctx, -1);
         } else if (s_view == SHELF && (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R)) {
             app_redraw_t result = shelf_turn_page(ctx, ev->type == UI_GESTURE_SWIPE_L ? 1 : -1);
             if (result != APP_REDRAW_NONE) return result;

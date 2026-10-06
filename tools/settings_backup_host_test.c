@@ -96,6 +96,8 @@ int main(void) {
     s_home_full_refresh = true;
     s_ble_turner = true;
     s_reader_hold_refresh = true;
+    app_settings_set_reader_vertical_turn(true);
+    assert(app_settings_reader_vertical_turn());
     strlcpy(s_device_name, "Kiiko Pico", sizeof(s_device_name));
     strlcpy(s_status_signature, "今天也要读书", sizeof(s_status_signature));
     strlcpy(s_avatar, "/sdcard/pictures/missing-avatar.jpg", sizeof(s_avatar));
@@ -143,6 +145,7 @@ int main(void) {
     s_home_full_refresh = false;
     s_ble_turner = false;
     s_reader_hold_refresh = false;
+    app_settings_set_reader_vertical_turn(false);
     strlcpy(s_device_name, "Pico", sizeof(s_device_name));
     s_status_signature[0] = 0;
     s_avatar[0] = 0;
@@ -159,12 +162,13 @@ int main(void) {
     assert(s_staged_shutdown);
     assert(s_ble_turner);
     assert(s_reader_hold_refresh);
+    assert(app_settings_reader_vertical_turn());
     assert(s_home_full_refresh && !strcmp(s_device_name, "Kiiko Pico") &&
            !strcmp(s_status_signature, "今天也要读书"));
     assert(!s_avatar[0]); /* Missing avatar falls back to the default mark. */
     assert(!s_font[0]); /* Missing external font falls back to built-in. */
     assert(s_lock_style == 0 && !s_wallpaper[0]); /* Missing wallpaper uses ticket. */
-    assert(commit_count == 1); /* All restored values use one NVS commit. */
+    assert(commit_count == 3); /* Two mode changes and one restore commit. */
     app_settings_set_reader_full_pages(30);
     assert(s_reader_full_pages == 30);
     app_settings_set_reader_full_pages(0);
@@ -225,6 +229,7 @@ int main(void) {
     assert(fclose(file) == 0);
     s_book_rule_offset = 0;
     assert(app_settings_backup_restore() == ESP_OK && s_book_rule_offset == 4 && !s_reader_hold_refresh);
+    assert(!app_settings_reader_vertical_turn());
 
     /* Existing PICOSET1 backups remain readable and use the two-em default. */
     file = fopen(BACKUP_FILE, "rb");

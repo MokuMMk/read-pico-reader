@@ -25,7 +25,7 @@ def package(build: Path, output: Path):
     release={'schema':1,'version':version,'project':'Read_Pico','board':'RDP-G01-W','layout':'pico-dual-4m-v1',
         'minimum_base_version':'0.3.3-rc72','url':f'https://wegooo-cell.github.io/read-pico-reader/{name}',
         'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),
-        'notes':'修复 WiFi/热点选择页无法进入传输的问题；状态栏图标加深缩小，圆形返回键外圈加深；书架点击抽出反馈、页码翻页箭头及蓝牙上下键翻页。'}
+        'notes':'修复传输入口；WiFi 页增加断开；新增上中下三分区翻页、书架箭头与蓝牙上下键翻页；图标和返回键外圈加深。'}
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
     (output/'update.json').write_text(json.dumps(release,ensure_ascii=False,indent=2)+'\n')
     check(output)

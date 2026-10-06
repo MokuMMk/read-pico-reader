@@ -173,7 +173,7 @@ static void prepare_qr(void) {
 }
 
 typedef enum { TRANSFER_METHODS, TRANSFER_HOME, TRANSFER_NETWORKS, TRANSFER_PASSWORD } transfer_view_t;
-#define NETWORK_ROWS 5
+#define NETWORK_ROWS 4
 #define PASSWORD_MAX 64
 static transfer_view_t s_view;
 static read_pico_transfer_network_t s_networks[READ_PICO_TRANSFER_SCAN_MAX], s_selected;
@@ -185,6 +185,7 @@ static esp_err_t s_scan_error;
 
 static void render(app_ctx_t* ctx, uint8_t* fb);
 static void stop_session(void);
+static bool stop_upload_if_idle(void);
 
 static void transfer_header(uint8_t *fb, const char *title, const char *subtitle) {
     ui_nav_status(fb);
@@ -250,13 +251,14 @@ static void clear_password(void) {
 }
 
 static EpdRect network_control_rect(int id) {
-    if (id < NETWORK_ROWS) return (EpdRect){36, 397 + id * 74, 612, 74};
-    if (id == 6) return (EpdRect){510, 235, 107, 55};
-    if (id == 11) return s_forget_confirm ? ui_row_rect(0, 2, 600, UI_BTN_H) : (EpdRect){420, 275, 76, 38};
+    if (id >= 0 && id < NETWORK_ROWS) return (EpdRect){36, 465 + id * 95, 612, 95};
+    if (id == 6) return (EpdRect){501, 244, 123, 56};
+    if (id == 11) return s_forget_confirm ? ui_row_rect(0, 2, 600, UI_BTN_H) : (EpdRect){501, 315, 123, 52};
     if (id == 12) return ui_row_rect(1, 2, 600, UI_BTN_H);
-    if (id == 7) return (EpdRect){36, 797, 90, 74};
-    if (id == 8) return (EpdRect){136, 797, 412, 74};
-    if (id == 9) return (EpdRect){558, 797, 90, 74};
+    bool paged = s_network_count > NETWORK_ROWS;
+    if (id == 7) return paged ? (EpdRect){36, 873, 64, 66} : (EpdRect){0};
+    if (id == 8) return paged ? (EpdRect){112, 873, 460, 66} : (EpdRect){36, 873, 612, 66};
+    if (id == 9) return paged ? (EpdRect){584, 873, 64, 66} : (EpdRect){0};
     return (EpdRect){0};
 }
 
@@ -284,8 +286,22 @@ static void provisioning_button(uint8_t* fb, EpdRect rect, const char* text, int
     ui_draw_button(fb, rect, text, false);
 }
 
+static void network_border(uint8_t *fb, EpdRect rect, int radius) {
+    ui_draw_round_rect(fb, rect, radius, 0x50);
+    ui_draw_round_rect(fb, (EpdRect){rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2}, radius - 1, 0x50);
+}
+
+static void network_button(uint8_t *fb, int id, const char *label, bool dark) {
+    EpdRect rect = network_control_rect(id);
+    ui_fill_round_rect(fb, rect, 16, s_pressed == id ? 0xb0 : dark ? UI_GRAY_BLACK : UI_GRAY_WHITE);
+    if (!dark) network_border(fb, rect, 16);
+    ui_text_vc(fb, rect.x + rect.width / 2, rect.y + rect.height / 2, 24, label,
+               EPD_DRAW_ALIGN_CENTER, dark && s_pressed != id);
+}
+
 static void draw_networks(uint8_t* fb) {
     ui_clear_page(fb);
+    epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, 0xe0, fb);
     if (s_forget_confirm) {
         transfer_header(fb, "遗忘网络", "仅清除 WiFi 连接信息，不影响图书");
         char name[33];
@@ -299,57 +315,73 @@ static void draw_networks(uint8_t* fb) {
         return;
     }
     transfer_header(fb, "无线网络", NULL);
-    ui_text(fb, 42, 181, 20, "当前网络", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 42, 182, 24, "当前网络", EPD_DRAW_ALIGN_LEFT, false);
+    EpdRect current = {36, 224, 612, 154};
+    ui_fill_round_rect(fb, current, 22, UI_GRAY_WHITE);
+    network_border(fb, current, 22);
     if (s_saved_configured) {
-        ui_fill_round_rect(fb, (EpdRect){36, 211, 612, 110}, 22, UI_GRAY_WHITE);
-        char saved[40]; snprintf(saved, sizeof(saved), "%s", s_saved_ssid); fit_label(saved, 28, 360);
-        ui_text(fb, 70, 230, 28, saved, EPD_DRAW_ALIGN_LEFT, false);
+        char saved[40]; snprintf(saved, sizeof(saved), "%s", s_saved_ssid); fit_label(saved, 29, 375);
+        ui_nav_wifi_icon(fb, 74, 265, 28, UI_GRAY_BLACK);
+        ui_text(fb, 104, 243, 29, saved, EPD_DRAW_ALIGN_LEFT, false);
         const char *state = s_status.network_ready ? "已连接" :
             s_network_connect_pending || s_status.state == READ_PICO_TRANSFER_STARTING ? "正在连接…" : "已保存 · 尚未连接";
-        ui_text(fb, 70, 274, 19, state, EPD_DRAW_ALIGN_LEFT, false);
-        provisioning_button(fb, network_control_rect(6), s_status.network_ready ? "已连接" : "连接", 6);
-        ui_text(fb, 496, 280, 17, "遗忘", EPD_DRAW_ALIGN_RIGHT, false);
+        ui_text(fb, 64, 297, 23, state, EPD_DRAW_ALIGN_LEFT, false);
+        char address[80];
+        const char *url = !strncmp(s_status.url, "http://", 7) ? s_status.url + 7 : s_status.url;
+        snprintf(address, sizeof(address), "%.79s", s_status.network_ready ? url[0] ? url : "已连接，可传书和对时" : "连接后可传书和对时");
+        fit_label(address, 21, 419);
+        ui_text(fb, 64, 336, 21, address, EPD_DRAW_ALIGN_LEFT, false);
+        network_button(fb, 6, s_status.network_ready ? "断开" : "连接", !s_status.network_ready);
+        if (s_pressed == 11) ui_draw_pressed_round_rect(fb, network_control_rect(11), 14);
+        ui_text_vc(fb, 563, 341, 21, "遗忘网络", EPD_DRAW_ALIGN_CENTER, false);
     } else {
-        ui_fill_round_rect(fb, (EpdRect){36, 211, 612, 110}, 22, UI_GRAY_WHITE);
-        ui_text(fb, 70, 244, 25, "尚未保存网络", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 70, 282, 19, "请从下方列表选择 2.4 GHz WiFi", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 64, 253, 29, "尚未保存网络", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 64, 312, 23, "请从下方列表选择 2.4 GHz WiFi", EPD_DRAW_ALIGN_LEFT, false);
     }
     char count[64];
-    snprintf(count, sizeof(count), "附近网络  ·  %u 个 · %u/%u 页", (unsigned)s_network_count,
+    snprintf(count, sizeof(count), "%u 个 · %u/%u 页", (unsigned)s_network_count,
              (unsigned)s_network_page + 1, (unsigned)(s_network_count ? (s_network_count + NETWORK_ROWS - 1) / NETWORK_ROWS : 1));
-    ui_text(fb, 42, 365, 21,
-            s_scan_pending ? "正在查找附近网络…" : s_network_message[0] ? s_network_message : count,
-            EPD_DRAW_ALIGN_LEFT, false);
-    ui_fill_round_rect(fb, (EpdRect){36, 397, 612, 370}, 22, UI_GRAY_WHITE);
+    ui_text(fb, 42, 418, 24, "附近网络", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 642, 420, 21, count, EPD_DRAW_ALIGN_RIGHT, false);
+    EpdRect list = {36, 465, 612, 380};
+    ui_fill_round_rect(fb, list, 22, UI_GRAY_WHITE);
     if (s_scan_pending) {
-        ui_text_vc(fb, 342, 582, 23, "正在扫描 2.4 GHz WiFi", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 342, 655, 25, "正在扫描 2.4 GHz WiFi", EPD_DRAW_ALIGN_CENTER, false);
     } else if (!s_network_count) {
-        ui_text_vc(fb, 342, 560, 25, s_scan_error == ESP_OK ? "没有发现可用网络" : "扫描没有完成",
+        ui_text_vc(fb, 342, 620, 27, s_scan_error == ESP_OK ? "没有发现可用网络" : "扫描没有完成",
                    EPD_DRAW_ALIGN_CENTER, false);
-        ui_text_vc(fb, 342, 608, 18, s_scan_error == ESP_OK ? "请靠近路由器后重新扫描" : "点下方按钮自动重试",
+        ui_text_vc(fb, 342, 678, 22, s_scan_error == ESP_OK ? "请靠近路由器后重新扫描" : "点下方按钮自动重试",
                    EPD_DRAW_ALIGN_CENTER, false);
     }
-    for (int row = 0; row < NETWORK_ROWS; ++row) {
+    for (int row = 0; !s_scan_pending && row < NETWORK_ROWS; ++row) {
         size_t index = s_network_page * NETWORK_ROWS + row;
         if (index >= s_network_count) break;
         const read_pico_transfer_network_t* network = &s_networks[index];
         EpdRect rect = network_control_rect(row);
         if (s_pressed == row) ui_draw_pressed_round_rect(fb, rect, 0);
-        if (row) ui_hairline(fb, rect.y, 70, 548, 0xd0);
+        if (row) epd_fill_rect((EpdRect){64, rect.y, 556, 2}, 0x70, fb);
         char name[33], detail[64];
         snprintf(name, sizeof(name), "%s", network->ssid);
-        fit_label(name, 26, 390);
-        ui_text(fb, 70, rect.y + 10, 26, name, EPD_DRAW_ALIGN_LEFT, false);
+        fit_label(name, 28, 520);
+        ui_text(fb, 64, rect.y + 16, 28, name, EPD_DRAW_ALIGN_LEFT, false);
         snprintf(detail, sizeof(detail), "%s · %s", network->rssi > -60 ? "信号强" : network->rssi > -75 ? "信号良好" : "信号一般",
                  !network->supported ? "暂不支持" : network->requires_password ? "需要密码" : "开放网络");
-        ui_text(fb, 70, rect.y + 45, 18, detail, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text_vc(fb, 618, rect.y + 37, 26, "›", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text(fb, 64, rect.y + 59, 21, detail, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_vc(fb, 615, rect.y + 47, 27, "›", EPD_DRAW_ALIGN_CENTER, false);
     }
-    provisioning_button(fb, network_control_rect(7), "‹", 7);
-    provisioning_button(fb, network_control_rect(8), s_scan_error == ESP_OK ? "重新扫描" : "重试扫描", 8);
-    provisioning_button(fb, network_control_rect(9), "›", 9);
-    ui_text(fb, 42, 919, 20, "支持 2.4 GHz WiFi（信道 1–13）", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, 42, 961, 18, "连接信息仅保存在本机；已连接 WiFi 会保持在线。", EPD_DRAW_ALIGN_LEFT, false);
+    network_border(fb, list, 22);
+    if (s_network_count > NETWORK_ROWS) {
+        network_button(fb, 7, "‹", false);
+        network_button(fb, 9, "›", false);
+    }
+    network_button(fb, 8, s_scan_error == ESP_OK ? "重新扫描" : "重试扫描", false);
+    if (s_network_count <= NETWORK_ROWS) ui_draw_icon(fb, 597, 906, 32, UI_ICON_ROTATE_CW, UI_GRAY_BLACK);
+    ui_text(fb, 42, 976, 21, "支持 2.4 GHz WiFi（信道 1–13）", EPD_DRAW_ALIGN_LEFT, false);
+    char message[96];
+    snprintf(message, sizeof(message), "%s", s_network_message[0] ? s_network_message :
+             s_status.network_ready ? "退出此页后，WiFi 仍保持连接。" : "连接后，可退出此页继续使用。");
+    fit_label(message, 21, 600);
+    ui_text(fb, 42, 1014, 21, message, EPD_DRAW_ALIGN_LEFT, false);
     ui_nav_draw(fb, 3);
 }
 
@@ -535,7 +567,16 @@ static app_redraw_t provisioning_action(int id) {
             s_network_message[0] = 0;
             s_keyboard_mode = 0;
             s_view = TRANSFER_PASSWORD;
-        } else if (id == 6 && !s_status.network_ready) queue_network_start(READ_PICO_TRANSFER_MODE_STA);
+        } else if (id == 6) {
+            if (s_status.network_ready) {
+                if (!stop_upload_if_idle()) {
+                    snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再断开");
+                    return APP_REDRAW_PAGE;
+                }
+                s_network_connect_pending = false;
+                snprintf(s_network_message, sizeof(s_network_message), "已断开，连接信息保留");
+            } else queue_network_start(READ_PICO_TRANSFER_MODE_STA);
+        }
         else if (id == 7 && s_network_page) --s_network_page;
         else if (id == 8) {
             if (s_session_started) stop_session();

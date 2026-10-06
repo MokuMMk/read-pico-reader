@@ -49,6 +49,7 @@
 #define NVS_KEY_IMMERSIVE "rd_immersive"
 #define NVS_KEY_HIDE_IMAGES "rd_no_image"
 #define NVS_KEY_HOLD_REFRESH "rd_hold_full"
+#define NVS_KEY_VERTICAL_TURN "rd_vertical"
 #define NVS_KEY_BLE_TURNER "ble_turn"
 #define NVS_KEY_SHELF_RECENT "shelf_recent"
 #define NVS_KEY_BOOK_LINE "bk_line"
@@ -89,6 +90,7 @@ static bool s_reader_power_turn;
 static bool s_reader_immersive;
 static bool s_reader_hide_images;
 static bool s_reader_hold_refresh;
+static bool s_reader_vertical_turn;
 static bool s_ble_turner;
 static bool s_shelf_recent_sort;
 static uint8_t s_book_tracking = 2, s_book_reading_line, s_book_rule_offset = 4;
@@ -220,6 +222,8 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_IMMERSIVE, &immersive) == ESP_OK) s_reader_immersive = immersive == 1;
     uint8_t hold_refresh = 0;
     if (nvs_get_u8(h, NVS_KEY_HOLD_REFRESH, &hold_refresh) == ESP_OK) s_reader_hold_refresh = hold_refresh == 1;
+    uint8_t vertical_turn = 0;
+    if (nvs_get_u8(h, NVS_KEY_VERTICAL_TURN, &vertical_turn) == ESP_OK) s_reader_vertical_turn = vertical_turn == 1;
     uint8_t hide_images = 0, recent_sort = 0, ble_turner = 0;
     if (nvs_get_u8(h, NVS_KEY_HIDE_IMAGES, &hide_images) == ESP_OK) s_reader_hide_images = hide_images == 1;
     if (nvs_get_u8(h, NVS_KEY_BLE_TURNER, &ble_turner) == ESP_OK) s_ble_turner = ble_turner == 1;
@@ -481,6 +485,12 @@ void app_settings_set_reader_hide_images(bool on) {
 }
 bool app_settings_ble_turner(void) { return s_ble_turner; }
 bool app_settings_reader_hold_refresh(void) { return s_reader_hold_refresh; }
+bool app_settings_reader_vertical_turn(void) { return s_reader_vertical_turn; }
+void app_settings_set_reader_vertical_turn(bool on) {
+    if (s_reader_vertical_turn == on) return;
+    s_reader_vertical_turn = on;
+    nvs_put_u8(NVS_KEY_VERTICAL_TURN, on ? 1 : 0);
+}
 void app_settings_set_reader_hold_refresh(bool on) {
     if (s_reader_hold_refresh == on) return;
     s_reader_hold_refresh = on;
@@ -707,7 +717,8 @@ esp_err_t app_settings_backup_save(void) {
                                 (s_reader_hide_images ? 2 : 0) |
                                 (s_shelf_recent_sort ? 4 : 0) |
                                 (s_ble_turner ? 8 : 0) |
-                                (s_reader_hold_refresh ? 16 : 0);
+                                (s_reader_hold_refresh ? 16 : 0) |
+                                (s_reader_vertical_turn ? 32 : 0);
     uint32_t profile_hash = backup_profile_checksum(&backup, extension[0], extension[1], extension[2], &profile);
     for (int i = 0; i < 4; ++i) profile.checksum[i] = (uint8_t)(profile_hash >> (i * 8));
 
@@ -843,7 +854,7 @@ esp_err_t app_settings_backup_restore(void) {
                      strnlen(profile.device_name, sizeof(profile.device_name)) < sizeof(profile.device_name) &&
                      profile.device_name[0] &&
                      strnlen(profile.status_signature, sizeof(profile.status_signature)) < sizeof(profile.status_signature) &&
-                     profile.home_full_refresh <= 31 &&
+                     profile.home_full_refresh <= 63 &&
                      backup_path_valid(profile.avatar, sizeof(profile.avatar));
             }
         }
@@ -885,6 +896,7 @@ esp_err_t app_settings_backup_restore(void) {
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHUTDOWN_MODE, staged_shutdown);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BLE_TURNER, (profile.home_full_refresh & 8) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HOLD_REFRESH, (profile.home_full_refresh & 16) != 0);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_VERTICAL_TURN, (profile.home_full_refresh & 32) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HOME_FULL, profile.home_full_refresh & 1);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HIDE_IMAGES, (profile.home_full_refresh & 2) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHELF_RECENT, (profile.home_full_refresh & 4) != 0);
@@ -926,6 +938,7 @@ esp_err_t app_settings_backup_restore(void) {
     s_staged_shutdown = staged_shutdown != 0;
     s_ble_turner = (profile.home_full_refresh & 8) != 0;
     s_reader_hold_refresh = (profile.home_full_refresh & 16) != 0;
+    s_reader_vertical_turn = (profile.home_full_refresh & 32) != 0;
     s_home_full_refresh = (profile.home_full_refresh & 1) != 0;
     s_reader_hide_images = (profile.home_full_refresh & 2) != 0;
     s_shelf_recent_sort = (profile.home_full_refresh & 4) != 0;

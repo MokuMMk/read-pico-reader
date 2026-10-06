@@ -92,6 +92,9 @@ void app_settings_set_reader_hide_images(bool on);
 /// Refresh the entire screen on a reader middle-key hold; off returns Home, default off.
 bool app_settings_reader_hold_refresh(void);
 void app_settings_set_reader_hold_refresh(bool on);
+/// 上中下轻点分区；默认左右翻页。/ Top/middle/bottom tap regions; defaults to horizontal.
+bool app_settings_reader_vertical_turn(void);
+void app_settings_set_reader_vertical_turn(bool on);
 /// 书架排序偏好重启后保持。/ Persist the shelf's recent-reading sort across restarts.
 bool app_settings_shelf_recent_sort(void);
 void app_settings_set_shelf_recent_sort(bool on);

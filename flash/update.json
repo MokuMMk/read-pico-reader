@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.3.3-rc80",
+  "version": "0.3.3-rc81",
   "project": "Read_Pico",
   "board": "RDP-G01-W",
   "layout": "pico-dual-4m-v1",
   "minimum_base_version": "0.3.3-rc72",
-  "url": "https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc80.bin",
-  "size": 3733200,
-  "sha256": "634835df9ce84b5c876a8de4418c351c3f03ddfd12657c64f7f5e78c1a6d1b3b",
-  "notes": "蓝牙状态栏图标与按键学习反馈、WiFi/BLE 内存保护；阅读设置集中开关及长按全刷，普通阅读返回键，首行缩进与段首标点对齐修正。"
+  "url": "https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc81.bin",
+  "size": 3738384,
+  "sha256": "3e50f32385662bb38015c77d6b8fede2f6c3914503e6f1d21df1165cdcd61e27",
+  "notes": "修复传输入口；WiFi 页增加断开；新增上中下三分区翻页、书架箭头与蓝牙上下键翻页；图标和返回键外圈加深。"
 }

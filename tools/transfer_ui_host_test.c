@@ -143,6 +143,27 @@ int main(void) {
     assert(s_network_page == 1);
     tap(&ctx, network_control_rect(7));
     assert(s_network_page == 0);
+    // 断开保留凭据，上传期间拒绝断开，之后仍可重连。
+    // Disconnect keeps credentials, refuses an active upload and allows reconnecting.
+    test_status.network_ready = s_status.network_ready = true;
+    s_session_started = true;
+    test_busy = true;
+    int stops = test_stop_count;
+    tap(&ctx, network_control_rect(6));
+    assert(test_stop_count == stops && s_status.network_ready);
+    test_busy = false;
+    tap(&ctx, network_control_rect(6));
+    assert(test_stop_count > stops && !s_session_started && s_saved_configured && test_configured);
+    assert(!s_start_pending && !s_network_connect_pending && test_forget_count == 2);
+    test_status.network_ready = s_status.network_ready = false;
+    tap(&ctx, network_control_rect(6));
+    assert(s_start_pending && s_mode == READ_PICO_TRANSFER_MODE_STA);
+    s_start_pending = false; s_view = TRANSFER_NETWORKS;
+    tap(&ctx, network_control_rect(9));
+    assert(s_network_page == 1);
+    tap(&ctx, network_control_rect(3));
+    assert(s_view == TRANSFER_PASSWORD && !strcmp(s_selected.ssid, "network7"));
+    s_view = TRANSFER_NETWORKS; s_network_page = 0;
     tap(&ctx, network_control_rect(0));
     assert(s_view == TRANSFER_PASSWORD && !s_password[0]);
     tap(&ctx, password_control_rect(46));

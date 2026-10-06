@@ -317,10 +317,22 @@ unit += function("ble_pt_action_for_usage", source.parents[2] / "components/ble_
 for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_hidden_key", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_rows", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
              "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "reader_manual_refresh", "apply_reader_option", "reader_return", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
-for name in ("book_remote_direction", "shelf_turn_page", "shelf_page_arrow_rect"):
+for name in ("book_remote_direction", "shelf_turn_page", "shelf_page_arrow_rect", "reader_vertical_tap"):
     unit += function(name) + "\n"
 unit += r'''
 int main(void) {
+    // 普通与沉浸正文的三分区及边界。/ Thirds and boundaries in normal and immersive bodies.
+    const EpdRect bodies[] = {{36,180,612,900},{24,24,636,1182},{36,170,612,901}};
+    for(size_t i=0;i<sizeof(bodies)/sizeof(bodies[0]);++i){
+        EpdRect body=bodies[i];
+        assert(reader_vertical_tap(body,body.y-1)==2);
+        assert(reader_vertical_tap(body,body.y+body.height)==2);
+        for(int y=body.y;y<body.y+body.height;++y){
+            int third=(y-body.y)*3/body.height;
+            assert(reader_vertical_tap(body,y)==(third==0?-1:third==1?0:1));
+        }
+    }
+    assert(reader_vertical_tap((EpdRect){0},0)==2);
     test_remote_keys[0]=(ble_pt_event_t){.usage=0x52};test_remote_key_count=1;
     assert(book_remote_direction()==-1);
     test_remote_keys[0]=(ble_pt_event_t){.usage=0x51};test_remote_key_count=1;
