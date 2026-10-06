@@ -3,6 +3,10 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-05 · DeepSeek Harness
+
+- 界面图标统一到 Lucide（未发布版本）：底栏四栏、返回箭头、菜单把手、充电闪电、阅读工具栏五个图标，以及设置页的对比度、关机睡眠、状态栏签名、首页强刷、保存与恢复五项，从手绘线段改为 Lucide 原图；WiFi、书签等原有图标也走同一条路径，线宽与灰度统一。新增 `main/assets/ui_icons.h` 与 `ui_draw_icon()`：48 像素 4bpp alpha 掩模，按实际像素做透明度合成，所以同一个图标能落在任意底色上。新增 `tools/gen_ui_icons.py`，从仓库内 `tools/icons/lucide/*.svg` 可复现地生成该头文件，不依赖 `previews/`；随之删除三份依赖已缺失 `previews/` 目录、无法复跑的旧图标生成器及其资产（`gen_app_icons.py`、`gen_wifi_glyph.py`、`gen_reader_refresh_icon.py`、`test_wifi_glyph.py`、`main/assets/app_icons.h`、`wifi_glyph.h`、`reader_refresh_icon.h`，其中 80×80 的应用图标数组此前已无任何调用点）。仅通过 CI 同款编译检查，图标观感尚待实机验收。
+
 ## 2026-10-05 · Codex
 
 - 固件 0.3.3-rc72：修复部分 EPUB 兼容性。

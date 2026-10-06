@@ -47,6 +47,6 @@ EPUB metadata is allocated for the actual book size. ZIP entries and chapters ea
 
 ## Licenses and credit
 
-The fork retains the upstream **Apache-2.0** license and notices. CrossPoint Reader icon artwork is credited under its **MIT** license; Lucide's **ISC** notice is retained. The modified epdiy driver uses **LGPL-3.0-or-later**, and pypinyin dictionary data uses **MIT**. See [Third-party notices](THIRD_PARTY_NOTICES.md) and component directories for the exact scope. The CrossPoint MIT notice does not change the license of the entire firmware.
+The fork retains the upstream **Apache-2.0** license and notices. The UI icon set comes from **Lucide** under its **ISC** notice. The modified epdiy driver uses **LGPL-3.0-or-later**, and pypinyin dictionary data uses **MIT**. See [Third-party notices](THIRD_PARTY_NOTICES.md) and component directories for the exact scope; a component license does not change the license of the entire firmware.
 
 Please report firmware bugs in this repository, not in the MindReset upstream issue tracker. Hardware purchasing and repair remain matters for the [official support channels](https://dot.mindreset.tech/docs/contact).

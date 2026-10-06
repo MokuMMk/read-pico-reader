@@ -16,6 +16,7 @@
 
 #include "epdiy.h"
 #include "fallback.h"
+#include "assets/ui_icons.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -132,6 +133,17 @@ void ui_text_vc(
 );
 void ui_blit_bmp(
     uint8_t* framebuffer, int x, int y, const ui_fallback_bmp_t* bmp
+);
+
+/// 把 Lucide 图标掩模按 alpha 混进画面，中心落在 (cx, cy)，边长 size 像素。
+/// 透明处保留原像素，所以同一个图标能落在任意底色上，包括电池内部那种深浅两段的底。
+/// gray 是实心部分的灰度；图标来自 ui_icons.h，样式与出处见 THIRD_PARTY_NOTICES.md。
+/// Blend a Lucide icon mask into the frame, centered on (cx, cy) with the given
+/// pixel size. Transparent pixels keep their current value, so one icon works on
+/// any background, including the two-tone fill inside the battery. gray is the ink
+/// level of the solid part; icons come from ui_icons.h.
+void ui_draw_icon(
+    uint8_t* framebuffer, int cx, int cy, int size, ui_icon_t icon, uint8_t gray
 );
 
 void ui_draw_round_rect(

@@ -51,6 +51,6 @@ TXT 或没有有效内嵌封面的 EPUB 会按书籍路径稳定生成灰阶封�
 
 ## 许可与致谢
 
-本项目保留官方示例固件的 **Apache-2.0** 许可与原有版权声明。图标设计引用 CrossPoint Reader，保留其 **MIT** 许可和相关 Lucide **ISC** 声明；epdiy 驱动适用 **LGPL-3.0-or-later**，拼音字典数据适用 **MIT**。各许可分别适用于对应材料，不能把整个固件简称为 MIT 项目。细节见 [第三方许可说明](THIRD_PARTY_NOTICES.md)。
+本项目保留官方示例固件的 **Apache-2.0** 许可与原有版权声明。界面图标来自 **Lucide**，保留其 **ISC** 声明；epdiy 驱动适用 **LGPL-3.0-or-later**，拼音字典数据适用 **MIT**。各许可分别适用于对应材料，不能把整个固件简称为其中某一个组件的许可。细节见 [第三方许可说明](THIRD_PARTY_NOTICES.md)。
 
 固件问题请在本仓库反馈；设备购买和维修请联系 [MindReset 官方渠道](https://dot.mindreset.tech/docs/contact)。

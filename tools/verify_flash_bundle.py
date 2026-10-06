@@ -38,7 +38,6 @@ def check(folder: Path) -> None:
     assert seen == set(EXPECTED)
     assert (folder / "index.html").is_file()
     assert (folder / "vendor/web/install-button.js").is_file()
-    assert (folder / "licenses/CROSSPOINT-MIT.txt").is_file()
     assert (folder / "licenses/LUCIDE-ISC.txt").is_file()
 
 

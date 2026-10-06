@@ -18,4 +18,4 @@ EPUB と TXT の読書、読書位置の保存、TF カードのファイル管�
 
 ビルドには ESP-IDF v6.1 が必要です。ファームウェアには Noto Sans SC Medium のサブセットのみを内蔵し、追加のフォントや書籍は配布しません。
 
-本体の上流コードは Apache-2.0、参照した CrossPoint Reader のアイコンは MIT、関連する Lucide アイコンは ISC、epdiy は LGPL-3.0-or-later、内蔵フォントは SIL OFL 1.1 に従います。適用範囲は [第三者ライセンス一覧](THIRD_PARTY_NOTICES.md)をご覧ください。
+本体の上流コードは Apache-2.0、UI アイコンは Lucide（ISC）、epdiy は LGPL-3.0-or-later、内蔵フォントは SIL OFL 1.1 に従います。適用範囲は [第三者ライセンス一覧](THIRD_PARTY_NOTICES.md)をご覧ください。
