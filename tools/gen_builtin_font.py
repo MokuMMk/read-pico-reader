@@ -21,6 +21,8 @@ SCAN_DIRS = [
     ROOT / "main/display.c",
     ROOT / "main/sleep.c",
     ROOT / "main/settings.c",
+    ROOT / "main/ota_update.c",
+    ROOT / "main/ota_online.c",
     ROOT / "components/sy7636a",
     ROOT / "components/sc7a20h",
     ROOT / "components/read_pico",

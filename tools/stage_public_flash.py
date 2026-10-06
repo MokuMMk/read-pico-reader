@@ -6,6 +6,7 @@ from __future__ import annotations
 from html.parser import HTMLParser
 from pathlib import Path
 import shutil
+import json
 import sys
 from urllib.parse import urlparse
 
@@ -31,12 +32,15 @@ def stage(output: Path) -> None:
     check(FLASH)
     output.mkdir(parents=True, exist_ok=True)
     for name in ("index.html", "notices.html", "manifest.json", "transfer-preview.png", "toc-preview.png", "weread-preview.png", "firmware.bin",
-                 "bootloader.bin", "partitions.bin", "ota_data_initial.bin"):
+                 "bootloader.bin", "partitions.bin", "ota_data_initial.bin", "Pico-update.bin", "update.json"):
         shutil.copy2(FLASH / name, output / name)
+    version = json.loads((FLASH / "manifest.json").read_text())["version"]
+    shutil.copy2(FLASH / f"Pico-update-{version}.bin", output / f"Pico-update-{version}.bin")
     shutil.copytree(FLASH / "vendor/web", output / "vendor/web", dirs_exist_ok=True)
     shutil.copy2(FLASH / "vendor/LICENSE", output / "vendor/LICENSE")
     licenses = {
         FLASH / "licenses/LUCIDE-ISC.txt": "LUCIDE-ISC.txt",
+        ROOT / "components/jpegdec/LICENSE": "JPEGDEC-APACHE-2.0.txt",
         ROOT / "licenses/LGPL-3.0.txt": "LGPL-3.0.txt",
         ROOT / "licenses/GPL-3.0.txt": "GPL-3.0.txt",
         ROOT / "components/read_pico_search/LICENSE.pypinyin": "PYPINYIN-MIT.txt",

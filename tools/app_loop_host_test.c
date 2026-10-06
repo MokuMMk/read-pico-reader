@@ -263,3 +263,9 @@ int main(void) {
     puts("app_loop: 42 scheduler scenarios passed");
     return 0;
 }
+
+/* 中文：硬件 BLE 与联网任务替身。/ English: Hardware BLE and online worker shims. */
+const app_desc_t app_weread = { .title = "WeRead test" };
+void ble_pt_sync(bool enabled) { (void)enabled; }
+void ble_pt_poll(void) {}
+bool pico_online_busy(void) { return false; }

@@ -92,12 +92,11 @@ void ui_nav_status(uint8_t *fb) {
     ui_draw_round_rect(fb, battery, 6, UI_GRAY_BLACK);
     ui_fill_round_rect(fb, (EpdRect){648, status_center_y - 4, 5, 8}, 2, UI_GRAY_BLACK);
     char percent[8] = "--%";
-    bool charging = pmu && pmu->status_ok &&
-        (pmu->flags & (PMU_STATUS_CHARGING_ACTIVE | PMU_STATUS_CHARGE_PIN_HIGH));
-    if (pmu && pmu->soc_permille <= 1000) {
-        snprintf(percent, sizeof(percent), "%u%%", (unsigned)(pmu->soc_permille + 5) / 10);
-        int width = (31 * (int)pmu->soc_permille + 500) / 1000;
-        if (pmu->soc_permille == 1000) width = 31;
+    bool charging = pmu_battery_charging(pmu);
+    int gauge_percent = pmu_battery_percent(pmu);
+    if (gauge_percent >= 0) {
+        snprintf(percent, sizeof(percent), "%u%%", (unsigned)gauge_percent);
+        int width = (31 * gauge_percent + 50) / 100;
         if (width > 0) ui_fill_round_rect(fb, (EpdRect){610, status_center_y - 7, width, 14}, 4, UI_GRAY_BLACK);
     }
     if (charging) {

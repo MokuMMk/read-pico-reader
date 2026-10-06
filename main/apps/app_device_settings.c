@@ -32,13 +32,22 @@
 #include "ui_wallpaper.h"
 #include "read_pico_search.h"
 #include "book_store.h"
+#include "ota_update.h"
+#include "ota_online.h"
+#include "esp_app_desc.h"
+#include "esp_attr.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "pmu_selftest.h"
+#include "soc/rtc_cntl_reg.h"
 
+static void fit_value(char *value, int width);
 static char s_notice[96];
 typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_TIME_EDIT, SETTINGS_SHELF_STYLE, SETTINGS_SYSTEM_FONT,
                SETTINGS_SYSTEM_SIZE, SETTINGS_SYSTEM_CONTRAST, SETTINGS_LOCK_STYLE,
                SETTINGS_WALLPAPER, SETTINGS_WALLPAPER_PREVIEW,
-               SETTINGS_READING, SETTINGS_CONFIG,
+               SETTINGS_READING, SETTINGS_CONFIG, SETTINGS_UPGRADE, SETTINGS_BOOT,
                SETTINGS_POWER_SLEEP, SETTINGS_PROFILE, SETTINGS_AVATAR,
                SETTINGS_BLUETOOTH, SETTINGS_BLE_SCAN,
                SETTINGS_TEXT_EDIT } settings_page_t;
@@ -52,6 +61,20 @@ static char s_ble_notice[64];
 static int s_font_page, s_wallpaper_page;
 static bool s_sync_pending;
 static bool s_config_confirm;
+static bool s_boot_pending;
+static bool s_upgrade_confirm, s_upgrade_online, s_local_pending, s_upgrade_restart;
+static pico_ota_info_t s_local_update;
+static EXT_RAM_BSS_ATTR pico_update_status_t s_update;
+static char s_upgrade_notice[96];
+static uint32_t s_update_drawn_percent, s_update_drawn_at;
+static pico_update_state_t s_update_drawn_state;
+static void upgrade_open(void) {
+    (void)pico_ota_inspect(PICO_OTA_UPDATE_PATH, &s_local_update);
+    pico_online_get_status(&s_update);
+    s_upgrade_confirm = s_local_pending = s_upgrade_restart = false;
+    s_upgrade_notice[0] = 0;
+    s_page = SETTINGS_UPGRADE;
+}
 static const char *const TAG = "device_settings";
 #define SETTINGS_WIRELESS_Y 315
 #define SETTINGS_DISPLAY_Y 427
@@ -62,7 +85,8 @@ static const char *const TAG = "device_settings";
 // Row count of the 阅读与设备 group. The scroll limit is derived from it: the last main-page row
 // must be able to sit fully inside the tappable band above the bottom nav (UI_NAV_TOP), or it
 // can never be revealed or tapped.
-#define SETTINGS_DEVICE_ROWS 6
+#define SETTINGS_DEVICE_ROWS 5
+#define SETTINGS_MAINTENANCE_Y (SETTINGS_DEVICE_Y + SETTINGS_DEVICE_ROWS * SETTINGS_ROW_H + 66)
 // 设置行图标：32 像素盒，在行高 68 里垂直居中；墨色统一，避免一行一个灰度。
 // Setting row icons: a 32 px box centred in the 68 px row with one shared ink level.
 #define SETTINGS_ICON_PX 32
@@ -71,7 +95,7 @@ static const char *const TAG = "device_settings";
 // Main-page scroll limit: just enough to bring the last row of the last group above the nav bar,
 // with 8 px to spare.
 #define SETTINGS_SCROLL_MAX \
-    (SETTINGS_DEVICE_Y + SETTINGS_DEVICE_ROWS * SETTINGS_ROW_H - UI_NAV_TOP + 8)
+    (SETTINGS_MAINTENANCE_Y + 3 * SETTINGS_ROW_H - UI_NAV_TOP + 12)
 static char s_editor[96], s_editor_pinyin[24], s_editor_notice[80];
 static bool s_editor_chinese;
 static bool s_editor_uppercase;
@@ -274,12 +298,12 @@ static void section(uint8_t *fb, int y, const char *title) {
 
 // 行高比 setting_group 的 68 略大，因为这一页每行右侧常常要放一个按钮。
 // Rows are a little taller than setting_group's 68 because these rows often carry a button.
-#define BLE_ROW_H 76
+#define BLE_ROW_H 84
 // 按钮右缘与 row() 的值右缘对齐；值文字右端再让出按钮宽度，两者不重叠。
 // The button's right edge aligns with row()'s value edge; the value text then stops short of the
 // button, so the two never overlap.
-#define BLE_BTN_W 140
-#define BLE_BTN_RIGHT 627
+#define BLE_BTN_W 118
+#define BLE_BTN_RIGHT 624
 #define BLE_VALUE_RIGHT (BLE_BTN_RIGHT - BLE_BTN_W - 17)
 
 // 渲染和命中测试都调这个函数，两边看到的是同一份坐标——否则会出现「按钮画在这儿、
@@ -304,29 +328,26 @@ typedef struct {
 static ble_layout_t ble_layout(void) {
     ble_layout_t l;
     memset(&l, 0, sizeof(l));
-    int y = 196 - s_ble_scroll;
+    int y = 202 - s_ble_scroll;
     l.toggle_top = s_ble_learning ? -1 : y;
-    if (!s_ble_learning) y += 126;
-    y += 38;
+    y += 126 + 38;
     l.status_top = y;
-    y += 84;
-    l.notice_top = s_ble_notice[0] ? y - 20 : -1;
-    if (s_ble_notice[0]) y += 34;
+    y += BLE_ROW_H + 20;
+    l.notice_top = s_ble_notice[0] ? y : -1;
+    if (s_ble_notice[0]) y += 38;
+    l.bonds_title_top = y;
     y += 38;
-    l.bonds_title_top = y - 38;
     l.bond_rows = (int)ble_pt_bond_count();
     for (int i = 0; i < BLE_PT_MAX_BONDS; ++i)
         l.bond_top[i] = i < l.bond_rows ? y + i * BLE_ROW_H : -1;
-    y += l.bond_rows ? l.bond_rows * BLE_ROW_H : 68;
-    l.scan_entry_top = y;
-    y += BLE_ROW_H;
-    y += 38;
-    l.learn_title_top = y - 38;
-    l.learn_top[0] = y;
-    l.learn_top[1] = y + BLE_ROW_H;
-    y += 2 * BLE_ROW_H + 40;
-    l.footer_top = y - 36;
-    l.content_bottom = y;
+    y += (l.bond_rows ? l.bond_rows : 1) * BLE_ROW_H;
+    l.scan_entry_top = y + 16;
+    y = l.scan_entry_top + BLE_ROW_H + 30;
+    l.learn_title_top = y;
+    l.learn_top[0] = y + 38;
+    l.learn_top[1] = l.learn_top[0] + BLE_ROW_H;
+    l.footer_top = l.learn_top[1] + BLE_ROW_H + 25;
+    l.content_bottom = l.footer_top + 66;
     return l;
 }
 
@@ -334,15 +355,21 @@ static ble_layout_t ble_layout(void) {
 // A row's left label plus a right value that stops short of the button, with the usual divider.
 // Same height as row(), but the value never runs under the button.
 static void ble_row(uint8_t *fb, int y, const char *label, const char *value) {
-    ui_text(fb, 54, y + 17, 27, label, EPD_DRAW_ALIGN_LEFT, false);
-    if (value && value[0]) ui_text(fb, BLE_VALUE_RIGHT, y + 20, 21, value, EPD_DRAW_ALIGN_RIGHT, false);
-    settings_divider(fb, y + 68, 54, 575);
+    if (y + BLE_ROW_H < 190 || y >= UI_NAV_TOP) return;
+    settings_card(fb, (EpdRect){36, y, 612, BLE_ROW_H - 8}, 18, UI_GRAY_WHITE, 0x70);
+    char name[96]; snprintf(name, sizeof(name), "%s", label);
+    fit_value(name, 290);
+    ui_text_vc(fb, 60, y + 38, 26, name, EPD_DRAW_ALIGN_LEFT, false);
+    if (value && value[0]) {
+        char shown[96]; snprintf(shown, sizeof(shown), "%s", value); fit_value(shown, 140);
+        ui_text_vc(fb, BLE_VALUE_RIGHT, y + 38, 21, shown, EPD_DRAW_ALIGN_RIGHT, false);
+    }
 }
 
 // 行右侧的按钮。竖直居中于该行，右缘与值文字对齐。
 // The button on a row's right: vertically centred in the row, right edge aligned with the value.
 static EpdRect ble_button_rect(int row_top) {
-    return (EpdRect){BLE_BTN_RIGHT - BLE_BTN_W, row_top + 6, BLE_BTN_W, 60};
+    return (EpdRect){BLE_BTN_RIGHT - BLE_BTN_W, row_top + 10, BLE_BTN_W, 56};
 }
 
 // 三级页：进页即持续扫描，选中一台连上就退回二级页。列表长了也不影响二级页。
@@ -795,6 +822,59 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
+    if (s_page == SETTINGS_BOOT) {
+        back_header(fb, "电脑刷机");
+        settings_card(fb, (EpdRect){36, 254, 612, 298}, 22, UI_GRAY_WHITE, 0x70);
+        ui_text(fb, 60, 288, 29, "进入 BOOT 模式", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 350, 22, "用于官网完整刷机或故障恢复", EPD_DRAW_ALIGN_LEFT, false);
+        ui_draw_button(fb, (EpdRect){60, 438, 564, 78}, s_boot_pending ? "正在进入" : "进入 BOOT 模式", false);
+        ui_text(fb, 48, 620, 22, "请用 USB 连接电脑，再打开官网刷机页", EPD_DRAW_ALIGN_LEFT, false);
+        ui_nav_draw(fb, 3); return;
+    }
+    if (s_page == SETTINGS_UPGRADE) {
+        back_header(fb, "系统升级");
+        settings_card(fb, (EpdRect){36, 202, 612, 120}, 22, UI_GRAY_WHITE, 0x70);
+        ui_text(fb, 60, 224, 22, "当前版本", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 264, 29, esp_app_get_description()->version, EPD_DRAW_ALIGN_LEFT, false);
+        if (s_upgrade_confirm) {
+            settings_card(fb, (EpdRect){36, 356, 612, 344}, 22, UI_GRAY_WHITE, 0x70);
+            ui_text(fb, 60, 383, 29, s_upgrade_online ? "确认联网升级" : "确认 TF 卡升级", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 60, 447, 26, s_upgrade_online ? s_update.release.version : s_local_update.candidate_version,
+                    EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 60, 513, 22, "升级期间请保持供电", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 60, 560, 21, "设置、阅读记录与 TF 卡文件保留", EPD_DRAW_ALIGN_LEFT, false);
+            ui_draw_button(fb, (EpdRect){60, 613, 260, 64}, "取消", false);
+            ui_draw_button(fb, (EpdRect){364, 613, 260, 64}, "确认升级", true);
+        } else {
+            settings_card(fb, (EpdRect){36, 356, 612, 278}, 22, UI_GRAY_WHITE, 0x70);
+            ui_text(fb, 60, 383, 29, "联网 OTA", EPD_DRAW_ALIGN_LEFT, false);
+            char detail[96];
+            snprintf(detail, sizeof(detail), "%s", s_update.message[0] ? s_update.message : "连接 WiFi，检查官网发布的新版本");
+            fit_value(detail, 540);
+            ui_text(fb, 60, 436, 21, detail, EPD_DRAW_ALIGN_LEFT, false);
+            if (s_update.state == PICO_UPDATE_AVAILABLE)
+                ui_text(fb, 60, 477, 24, s_update.release.version, EPD_DRAW_ALIGN_LEFT, false);
+            if (s_update.state == PICO_UPDATE_DOWNLOADING) {
+                unsigned percent = s_update.release.size ? (uint64_t)s_update.received * 100 / s_update.release.size : 0;
+                char progress[32]; snprintf(progress, sizeof(progress), "%u%%", percent);
+                ui_text(fb, 624, 477, 26, progress, EPD_DRAW_ALIGN_RIGHT, false);
+                ui_fill_round_rect(fb, (EpdRect){60, 519, 564, 8}, 4, 0xc0);
+                ui_fill_round_rect(fb, (EpdRect){60, 519, (int)(564 * percent / 100), 8}, 4, 0x30);
+            }
+            ui_draw_button(fb, (EpdRect){60, 550, 564, 62}, s_update.busy ? "取消联网更新" :
+                s_update.state == PICO_UPDATE_AVAILABLE ? "下载并安装" : "检查更新", s_update.state == PICO_UPDATE_AVAILABLE);
+            settings_card(fb, (EpdRect){36, 662, 612, 262}, 22, UI_GRAY_WHITE, 0x70);
+            ui_text(fb, 60, 689, 29, "TF 卡升级", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 60, 739, 23, "根目录：Pico-update.bin", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 60, 786, 21, s_local_update.ready ? s_local_update.candidate_version : "把官网升级包放入 TF 卡根目录", EPD_DRAW_ALIGN_LEFT, false);
+            ui_draw_button(fb, (EpdRect){60, 840, 564, 62}, s_local_pending ? "正在安装，请勿断电" :
+                s_local_update.ready ? "安装 TF 卡升级包" : "重新检查 TF 卡", s_local_update.ready);
+        }
+        if (s_upgrade_notice[0]) ui_text(fb, 48, 957, 21, s_upgrade_notice, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 1010, 20, "首次安装或修复，请通过官网完整刷机", EPD_DRAW_ALIGN_LEFT, false);
+        ui_nav_draw(fb, 3);
+        return;
+    }
     if (s_page == SETTINGS_CONFIG) {
         back_header(fb, "保存与恢复配置");
         section(fb, 248, "换机或刷机后，快速恢复个性化设置");
@@ -832,8 +912,10 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 164, profile_y + 62, 19, "Pico reader by Kiiko", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 618, profile_y + 62, 19, "编辑  ›", EPD_DRAW_ALIGN_RIGHT, false);
         const pmu_snapshot_t *pmu = read_pico_pmu_get();
-        if (pmu && pmu->soc_permille <= 1000) {
-            char battery[12]; snprintf(battery, sizeof(battery), "%u%%", (unsigned)pmu->soc_permille / 10);
+        {
+            char battery[12] = "--%";
+            int percent = pmu_battery_percent(pmu);
+            if (percent >= 0) snprintf(battery, sizeof(battery), "%u%%", (unsigned)percent);
             // 电量和“编辑”从同一左边界起排，避免数字较短时看起来偏右。
             // Start the percentage at the edit label's left edge so short numbers do not appear offset.
             int edit_left = 618 - ui_text_fixed_width_px(ui_text_effective_px(19), "编辑  ›");
@@ -862,11 +944,20 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             char value[44];
             snprintf(value, sizeof(value), "%d dBm%s%s", dev->rssi, dev->hid ? " · HID" : "",
                      dev->bonded ? " · 已配对" : "");
-            ble_row(fb, l.devices_top - scroll + i * BLE_ROW_H, label, value);
+            int top = l.devices_top - scroll + i * BLE_ROW_H;
+            if (top + BLE_ROW_H >= 190 && top < UI_NAV_TOP) {
+                settings_card(fb, (EpdRect){36, top, 612, BLE_ROW_H - 8}, 18, UI_GRAY_WHITE, 0x70);
+                ui_text(fb, 60, top + 12, 25, label, EPD_DRAW_ALIGN_LEFT, false);
+                ui_text(fb, 60, top + 45, 19, value, EPD_DRAW_ALIGN_LEFT, false);
+                ui_text_vc(fb, 624, top + 38, 26, "›", EPD_DRAW_ALIGN_RIGHT, false);
+            }
         }
         if (!l.device_rows)
             ui_text(fb, 44, l.devices_top - scroll + 18, 23, "附近还没有发现设备",
                     EPD_DRAW_ALIGN_LEFT, false);
+        epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, 190}, UI_GRAY_WHITE, fb);
+        ui_nav_status(fb);
+        back_header(fb, "扫描设备");
         ui_nav_draw(fb, 3);
         return;
     }
@@ -878,8 +969,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         // 学习按键时把提示顶到最上面，用户不用滚回去看。
         // While learning, the prompt is pinned to the top so the user need not scroll back.
         if (s_ble_learning) {
-            settings_card(fb, (EpdRect){36, 156, 612, 74}, 14, 0xd0, 0x58);
-            ui_text_vc(fb, 342, 193, 24,
+            settings_card(fb, (EpdRect){36, 202 - s_ble_scroll, 612, 126}, 22, 0xd0, 0x58);
+            ui_text_vc(fb, 342, 265 - s_ble_scroll, 24,
                        s_ble_learning == 1 ? "请按翻页器上「上一页」要用的键"
                                            : "请按翻页器上「下一页」要用的键",
                        EPD_DRAW_ALIGN_CENTER, false);
@@ -891,7 +982,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         section(fb, l.status_top - 38, "状态");
         char ble_status[80];
         if (!app_settings_ble_turner()) snprintf(ble_status, sizeof(ble_status), "已关闭");
-        else if (!ble_pt_running()) snprintf(ble_status, sizeof(ble_status), "启动中…");
+        else if (!ble_pt_running()) {
+            read_pico_transfer_status_t network;
+            read_pico_transfer_get_status(&network);
+            snprintf(ble_status, sizeof(ble_status), network.state != READ_PICO_TRANSFER_STOPPED ? "WiFi 使用中，蓝牙暂停" : "启动中…");
+        }
         else if (ble_pt_connected()) snprintf(ble_status, sizeof(ble_status), "已连接 %s", ble_pt_connected_name());
         else if (ble_pt_connecting()) snprintf(ble_status, sizeof(ble_status), "连接中…");
         else snprintf(ble_status, sizeof(ble_status), "未连接");
@@ -901,7 +996,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         // 已配对：点行连接，右侧按钮删除。/ Bonded peers: the row connects, the button forgets.
         section(fb, l.bonds_title_top, "已配对");
         if (!l.bond_rows)
-            ui_text(fb, 44, l.bonds_title_top + 56, 23, "还没有配对过设备", EPD_DRAW_ALIGN_LEFT, false);
+            ble_row(fb, l.bonds_title_top + 38, "暂无已配对设备", "");
         for (int i = 0; i < l.bond_rows && i < BLE_PT_MAX_BONDS; ++i) {
             const ble_pt_bond_t *bond = ble_pt_bond((uint8_t)i);
             if (!bond) continue;
@@ -913,8 +1008,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_draw_button(fb, ble_button_rect(l.bond_top[i]), "删除", false);
         }
 
-        section(fb, l.scan_entry_top - 38, "设备");
-        ble_row(fb, l.scan_entry_top, "扫描设备", "搜索并连接  ›");
+        ble_row(fb, l.scan_entry_top, "添加翻页器", "扫描设备");
+        ui_text_vc(fb, 624, l.scan_entry_top + 38, 26, "›", EPD_DRAW_ALIGN_RIGHT, false);
 
         section(fb, l.learn_title_top, "按键映射");
         static const char *const learn_names[] = {"上一页", "下一页"};
@@ -923,8 +1018,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ble_row(fb, l.learn_top[i], learn_names[i], bound[i] ? "自定义按键" : "内置按键");
             ui_draw_button(fb, ble_button_rect(l.learn_top[i]), "学习", false);
         }
-        ui_text(fb, 36, l.footer_top, 21, "内置：上下、左右、PageUp/PageDown 直接翻页",
-                EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, l.footer_top, 20, "上下、左右及 PageUp / PageDown 均可翻页", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, l.footer_top + 34, 20, "仅支持 BLE 翻页器，按键只在阅读时生效", EPD_DRAW_ALIGN_LEFT, false);
+        epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, 190}, UI_GRAY_WHITE, fb);
+        ui_nav_status(fb);
+        back_header(fb, "蓝牙翻页器");
         ui_nav_draw(fb, 3);
         return;
     }
@@ -952,14 +1050,19 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     static const int reading_icons[] = {2, 3, 7, 4, 10, 11};
     setting_group(fb, 397, "显示", SETTINGS_DISPLAY_Y,
                   reading_icons, reading_labels, reading_values, 6);
-    const char *display_labels[] = {"锁屏样式", "关机睡眠", "阅读操作", "日期与时间", "保存与恢复", "蓝牙翻页器"};
+    const char *display_labels[] = {"锁屏样式", "关机睡眠", "阅读操作", "日期与时间", "蓝牙翻页器"};
     const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›",
                                     app_settings_staged_shutdown() ? "先浅后深  ›" : "彻底断电  ›",
-                                    "设置  ›", "设置  ›", "配置  ›",
+                                    "设置  ›", "设置  ›",
                                     app_settings_ble_turner() ? "已开启  ›" : "已关闭  ›"};
-    static const int display_icons[] = {5, 9, 2, 6, 8, 0};
+    static const int display_icons[] = {5, 9, 2, 6, 1};
     setting_group(fb, 842, "阅读与设备", SETTINGS_DEVICE_Y,
                   display_icons, display_labels, display_values, SETTINGS_DEVICE_ROWS);
+    static const char *const maintenance_labels[] = {"系统升级", "保存与恢复", "BOOT 刷机"};
+    static const char *const maintenance_values[] = {"OTA / TF 卡  ›", "配置  ›", "电脑刷机  ›"};
+    static const int maintenance_icons[] = {11, 8, 11};
+    setting_group(fb, SETTINGS_MAINTENANCE_Y - 34, "升级和恢复", SETTINGS_MAINTENANCE_Y,
+                  maintenance_icons, maintenance_labels, maintenance_values, 3);
     epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, 160}, 0xe0, fb);
     ui_nav_status(fb);
     ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
@@ -975,6 +1078,7 @@ static void on_enter(app_ctx_t *ctx) {
     s_wallpaper_confirm = s_wallpaper_preview_ok = false;
     s_sync_pending = false;
     s_config_confirm = false;
+    s_boot_pending = s_local_pending = s_upgrade_restart = false;
 }
 
 static app_redraw_t on_tick(app_ctx_t *ctx) {
@@ -1009,6 +1113,36 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
     }
 
     (void)ctx;
+    if (s_boot_pending) {
+        s_boot_pending = false;
+        pmu_selftest_prepare_powerdown();
+        uint8_t req[2] = {0, 0};
+        esp_err_t error = read_pico_pmu_cmd(PMU_CMD_HOST_REQUEST_RESET, req, sizeof(req));
+        if (error != ESP_OK) ESP_LOGW(TAG, "BOOT PMU notice: %s", esp_err_to_name(error));
+        REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+        esp_restart(); return APP_REDRAW_NONE;
+    }
+    if (s_upgrade_restart) { s_upgrade_restart = false; esp_restart(); return APP_REDRAW_NONE; }
+    if (s_page == SETTINGS_UPGRADE) {
+        if (s_local_pending) {
+            s_local_pending = false;
+            esp_err_t error = pico_ota_install(PICO_OTA_UPDATE_PATH, s_upgrade_notice, sizeof(s_upgrade_notice));
+            s_upgrade_restart = error == ESP_OK;
+            return APP_REDRAW_PAGE;
+        }
+        pico_online_get_status(&s_update);
+        if (s_update.state == PICO_UPDATE_READY && !s_update.busy) {
+            if (pico_online_commit() == ESP_OK) { esp_restart(); return APP_REDRAW_NONE; }
+            pico_online_get_status(&s_update);
+        }
+        uint32_t percent = s_update.release.size ? (uint64_t)s_update.received * 100 / s_update.release.size : 0;
+        uint32_t now = esp_timer_get_time() / 1000;
+        if (s_update.state != s_update_drawn_state || (percent != s_update_drawn_percent && now - s_update_drawn_at >= 1000)) {
+            s_update_drawn_state = s_update.state; s_update_drawn_percent = percent; s_update_drawn_at = now;
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
     if (!s_sync_pending) return APP_REDRAW_NONE;
     s_sync_pending = false;
     uint32_t utc = 0;
@@ -1122,6 +1256,54 @@ save_text:
 }
 
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (s_page == SETTINGS_BOOT) {
+        if (ev->type != UI_GESTURE_TAP || s_boot_pending) return APP_REDRAW_NONE;
+        if (ev->y0 < 190 && ev->x0 < 170) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
+        if (ui_rect_hit((EpdRect){60, 438, 564, 78}, ev->x0, ev->y0)) { s_boot_pending = true; return APP_REDRAW_PAGE; }
+        int tab = ui_nav_hit(ev->x0, ev->y0);
+        if (tab >= 0) ui_nav_request(ctx, tab);
+        return APP_REDRAW_NONE;
+    }
+    if (s_page == SETTINGS_UPGRADE) {
+        if (ev->type != UI_GESTURE_TAP || s_local_pending || s_upgrade_restart) return APP_REDRAW_NONE;
+        int y = ev->y0;
+        if (y < 190 && ev->x0 < 170) {
+            if (s_upgrade_confirm) s_upgrade_confirm = false;
+            else { pico_online_cancel_join(); s_page = SETTINGS_MAIN; }
+            return APP_REDRAW_PAGE;
+        }
+        int tab = ui_nav_hit(ev->x0, y);
+        if (tab >= 0) { pico_online_cancel_join(); ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
+        if (s_upgrade_confirm) {
+            if (y >= 613 && y < 677) {
+                s_upgrade_confirm = false;
+                if (ev->x0 >= 364 && ev->x0 < 624) {
+                    if (s_upgrade_online) {
+                        if (pico_online_download() != ESP_OK) snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "无法开始升级，请重新检查");
+                        pico_online_get_status(&s_update);
+                    } else s_local_pending = true;
+                }
+                return APP_REDRAW_PAGE;
+            }
+            return APP_REDRAW_NONE;
+        }
+        if (ev->x0 < 60 || ev->x0 >= 624) return APP_REDRAW_NONE;
+        if (y >= 550 && y < 612) {
+            s_upgrade_notice[0] = 0;
+            if (s_update.busy) pico_online_cancel_join();
+            else if (s_update.state == PICO_UPDATE_AVAILABLE) { s_upgrade_confirm = true; s_upgrade_online = true; }
+            else if (pico_online_check() != ESP_OK) snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "无法检查更新，请退出传书后重试");
+            pico_online_get_status(&s_update);
+            return APP_REDRAW_PAGE;
+        }
+        if (y >= 840 && y < 902 && !s_update.busy) {
+            (void)pico_ota_inspect(PICO_OTA_UPDATE_PATH, &s_local_update);
+            if (s_local_update.ready) { s_upgrade_confirm = true; s_upgrade_online = false; }
+            else snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "%s", s_local_update.message);
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
     if (s_page == SETTINGS_TEXT_EDIT) return profile_editor_gesture(ev);
     if (s_page == SETTINGS_MAIN &&
         (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
@@ -1161,6 +1343,18 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         int pages = count > 0 ? (count + 7) / 8 : 1;
         if (ev->type == UI_GESTURE_SWIPE_U && *page + 1 < pages) ++*page;
         if (ev->type == UI_GESTURE_SWIPE_D && *page > 0) --*page;
+        return APP_REDRAW_PAGE;
+    }
+    if ((s_page == SETTINGS_BLUETOOTH || s_page == SETTINGS_BLE_SCAN) &&
+        (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
+        int bottom = s_page == SETTINGS_BLUETOOTH ? ble_layout().content_bottom + s_ble_scroll : ble_scan_layout().content_bottom;
+        int limit = bottom - UI_NAV_TOP + 12;
+        if (limit < 0) limit = 0;
+        int next = s_ble_scroll + (ev->type == UI_GESTURE_SWIPE_U ? 80 : -80);
+        if (next < 0) next = 0;
+        if (next > limit) next = limit;
+        if (next == s_ble_scroll) return APP_REDRAW_NONE;
+        s_ble_scroll = next;
         return APP_REDRAW_PAGE;
     }
     if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
@@ -1235,6 +1429,9 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             }
         }
         return APP_REDRAW_NONE;
+    }
+    if (s_page == SETTINGS_BLE_SCAN && y < 190) {
+        ble_pt_scan_stop(); s_page = SETTINGS_BLUETOOTH; s_ble_scroll = 0; return APP_REDRAW_PAGE;
     }
     if (s_page != SETTINGS_MAIN && y < 190) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
     if (s_page == SETTINGS_WIFI) {
@@ -1420,6 +1617,9 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             return APP_REDRAW_PAGE;
         }
         if (ty >= l.scan_entry_top && ty < l.scan_entry_top + BLE_ROW_H) {
+            if (!app_settings_ble_turner() || !ble_pt_running()) {
+                snprintf(s_ble_notice, sizeof(s_ble_notice), "请先开启蓝牙翻页器"); return APP_REDRAW_PAGE;
+            }
             // 进扫描页就开持续扫描，离页时停掉。/ Scan continuously while the page is open.
             ble_pt_scan_start(BLE_PT_SCAN_FOREVER);
             s_ble_scroll = 0;
@@ -1548,12 +1748,6 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         s_page = SETTINGS_TIME;
         return APP_REDRAW_PAGE;
     }
-    if (y >= SETTINGS_DEVICE_Y + 4 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 5 * SETTINGS_ROW_H) {
-        s_page = SETTINGS_CONFIG;
-        s_config_confirm = false;
-        s_notice[0] = 0;
-        return APP_REDRAW_PAGE;
-    }
     if (y >= SETTINGS_DEVICE_Y + (SETTINGS_DEVICE_ROWS - 1) * SETTINGS_ROW_H &&
         y < SETTINGS_DEVICE_Y + SETTINGS_DEVICE_ROWS * SETTINGS_ROW_H) {
         s_page = SETTINGS_BLUETOOTH;
@@ -1562,9 +1756,26 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         s_ble_notice[0] = 0;
         return APP_REDRAW_PAGE;
     }
+    if (y >= SETTINGS_MAINTENANCE_Y && y < SETTINGS_MAINTENANCE_Y + SETTINGS_ROW_H) {
+        upgrade_open(); return APP_REDRAW_PAGE;
+    }
+    if (y >= SETTINGS_MAINTENANCE_Y + SETTINGS_ROW_H && y < SETTINGS_MAINTENANCE_Y + 3 * SETTINGS_ROW_H) {
+        s_page = SETTINGS_CONFIG; s_config_confirm = false; s_notice[0] = 0; return APP_REDRAW_PAGE;
+    }
+    if (y >= SETTINGS_MAINTENANCE_Y + 2 * SETTINGS_ROW_H && y < SETTINGS_MAINTENANCE_Y + 3 * SETTINGS_ROW_H) {
+        s_boot_pending = false; s_page = SETTINGS_BOOT; return APP_REDRAW_PAGE;
+    }
     return APP_REDRAW_NONE;
 }
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
+    if (s_page == SETTINGS_UPGRADE) {
+        if (s_local_pending || s_upgrade_restart) return APP_REDRAW_NONE;
+        pico_online_cancel_join(); s_upgrade_confirm = false;
+    }
+    if (s_page == SETTINGS_BLE_SCAN) {
+        ble_pt_scan_stop();
+        if (key != 1) { s_page = SETTINGS_BLUETOOTH; s_ble_scroll = 0; return APP_REDRAW_PAGE; }
+    }
     if (key == 1) { ui_nav_request(ctx, 0); return APP_REDRAW_NONE; }
     if (s_page == SETTINGS_WALLPAPER_PREVIEW) {
         if (s_wallpaper_confirm) s_wallpaper_confirm = false;
@@ -1580,10 +1791,17 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     ui_nav_request(ctx, 0);
     return APP_REDRAW_NONE;
 }
+static void settings_exit(app_ctx_t *ctx) {
+    (void)ctx; pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
+}
+static void on_before_lock(app_ctx_t *ctx) {
+    (void)ctx; pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
+    (void)ble_pt_stop(2000);
+}
 static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
 
 const app_desc_t app_device_settings = {
     .title = "设置 Settings", .detail = "显示、连接与设备", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
-    .on_enter = on_enter, .render = render, .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key,
+    .on_enter = on_enter, .on_exit = settings_exit, .on_before_lock = on_before_lock, .render = render, .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key,
 };

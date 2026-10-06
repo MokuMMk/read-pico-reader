@@ -101,6 +101,7 @@ typedef struct {
     uint16_t diag_host_rst;
     uint16_t diag_adc;
 
+    bool quick_ok;
     uint16_t qb_mv;
     uint16_t qb_soc;
     uint8_t qb_charge;
@@ -123,6 +124,25 @@ typedef struct {
     esp_err_t last_err;
 
 } pmu_snapshot_t;
+
+/// 软件油量表：优先采用带 CRC、有效位的轻量快照；未知返回 -1。
+/// / Software fuel gauge: prefer the CRC-checked valid quick snapshot; unknown returns -1.
+static inline int pmu_battery_percent(const pmu_snapshot_t *p) {
+    if (!p || !p->present) return -1;
+    uint16_t soc;
+    if (p->quick_ok) {
+        if ((p->qb_flags & 3) != 3) return -1;
+        soc = p->qb_soc;
+    } else {
+        if (!p->status_ok || !(p->flags & PMU_STATUS_BATTERY_VALID)) return -1;
+        soc = p->soc_permille;
+    }
+    return soc <= 1000 ? (soc + 5) / 10 : -1;
+}
+static inline bool pmu_battery_charging(const pmu_snapshot_t *p) {
+    return p && p->present && (p->quick_ok ? (p->qb_flags & 4) != 0 :
+        p->status_ok && (p->flags & PMU_STATUS_CHARGING_ACTIVE) != 0);
+}
 
 #ifndef READ_PICO_PMU_I2C_HZ_DEFAULT
 #define READ_PICO_PMU_I2C_HZ_DEFAULT 400000

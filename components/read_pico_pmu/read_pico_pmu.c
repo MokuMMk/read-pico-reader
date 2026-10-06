@@ -165,6 +165,7 @@ static void parse_quick(const uint8_t* raw) {
     s_snap.qb_soc = rd16(&raw[2]);
     s_snap.qb_charge = raw[4];
     s_snap.qb_flags = raw[5];
+    s_snap.quick_ok = true;
 }
 
 static void parse_event(const uint8_t* raw) {
@@ -576,6 +577,7 @@ esp_err_t read_pico_pmu_action(uint8_t action, uint16_t delay_ms, uint16_t reaso
 // full：身份/状态/诊断/配置/时间/闹钟。否则只刷状态、快照电池和事件计数。
 // full: identity, status, diag, config, time, alarm. Else status, quick battery, event count.
 static esp_err_t refresh_core(bool full) {
+    s_snap.quick_ok = false;
     if (s_dev == NULL) return ESP_ERR_INVALID_STATE;
 
     uint8_t ident[PMU_IDENTITY_SIZE];

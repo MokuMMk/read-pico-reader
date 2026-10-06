@@ -34,11 +34,16 @@ set(main_requires
     esp_driver_usb_serial_jtag
     esp_app_format
     app_update
+    esp_http_client
+    mbedtls
+    espressif__cjson
 )
 idf_component_register(
     SRCS
         "app_main.c"
         "ota_update.c"
+        "ota_online.c"
+        "ota_release.c"
         "display.c"
         "sleep.c"
         "settings.c"

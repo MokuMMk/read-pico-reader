@@ -39,7 +39,7 @@ constexpr const char* kUserAgent =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 "
     "Safari/537.36 Edg/135.0.0.0";
-constexpr int kRequestTimeoutMs = 20000;
+constexpr int kRequestTimeoutMs = 45000;
 constexpr unsigned long kLoginTimeoutMs = 240000;
 constexpr unsigned long kLoginPollMs = 2000;
 constexpr unsigned long kClockSyncTimeoutMs = 12000;
@@ -2192,7 +2192,6 @@ Operation::Event Operation::fail(const Error error) {
 }
 
 Operation::Event Operation::handleRequestError(const Error error, const Phase retryPhase) {
-  if (error == Error::Network && !WeReadHttpClient::networkReady()) return fail(error);
   if (error == Error::Network && requestAttempt_ < kMaxRequestAttempts - 1) {
     ++requestAttempt_;
     const unsigned long delayMs = kNetworkRetryBaseMs * requestAttempt_;

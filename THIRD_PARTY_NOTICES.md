@@ -28,3 +28,5 @@ Apache-2.0 license does not replace those component licenses.
 The firmware bundles only the embedded Noto Sans SC subset; users may supply
 their own fonts on a TF card. The repository and flashing site do not provide
 additional font packages.
+
+BLE 蓝牙翻页器的报告解析与按键映射参考 CrossMux 的 BleKeyboardHost，保留组件头部来源说明与 CrossMux MIT 许可。JPEGDEC 使用 BitBank Apache-2.0，具体适配与修正见 `components/jpegdec/FORK.md`。

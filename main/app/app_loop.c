@@ -30,6 +30,8 @@
 #include "app_registry.h"
 #include "app_content_open.h"
 #include "ble_page_turner.h"
+#include "ota_online.h"
+extern const app_desc_t app_weread;
 #include "continuous_du.h"
 #include "display.h"
 #include "e0470_epaper_waveform.h"
@@ -604,7 +606,8 @@ void app_loop_run(const app_loop_config_t* config) {
         // returns on its own once WiFi stops, because the setting itself is unchanged.
         read_pico_transfer_status_t transfer;
         read_pico_transfer_get_status(&transfer);
-        const bool wifi_busy = transfer.state != READ_PICO_TRANSFER_STOPPED;
+        const bool wifi_busy = transfer.state != READ_PICO_TRANSFER_STOPPED ||
+            current == &app_weread || pico_online_busy();
         ble_pt_sync(app_settings_ble_turner() && !wifi_busy);
         ble_pt_poll();
         if (!power_dialog_open && !menu_open && !ctx.request_app && !ctx.request_menu && !ctx.request_return && current->on_tick != NULL) {

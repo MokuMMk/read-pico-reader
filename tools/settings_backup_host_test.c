@@ -94,6 +94,7 @@ int main(void) {
     s_shelf_style = 3;
     s_staged_shutdown = true;
     s_home_full_refresh = true;
+    s_ble_turner = true;
     strlcpy(s_device_name, "Kiiko Pico", sizeof(s_device_name));
     strlcpy(s_status_signature, "今天也要读书", sizeof(s_status_signature));
     strlcpy(s_avatar, "/sdcard/pictures/missing-avatar.jpg", sizeof(s_avatar));
@@ -139,6 +140,7 @@ int main(void) {
     s_shelf_style = 2;
     s_staged_shutdown = false;
     s_home_full_refresh = false;
+    s_ble_turner = false;
     strlcpy(s_device_name, "Pico", sizeof(s_device_name));
     s_status_signature[0] = 0;
     s_avatar[0] = 0;
@@ -153,6 +155,7 @@ int main(void) {
            s_book_rule_offset == 7 && s_reader_full_pages == 5);
     assert(s_reader_turn_effect == 1 && s_reader_power_turn && s_reader_immersive && s_shelf_style == 3);
     assert(s_staged_shutdown);
+    assert(s_ble_turner);
     assert(s_home_full_refresh && !strcmp(s_device_name, "Kiiko Pico") &&
            !strcmp(s_status_signature, "今天也要读书"));
     assert(!s_avatar[0]); /* Missing avatar falls back to the default mark. */

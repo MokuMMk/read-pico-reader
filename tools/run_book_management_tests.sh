@@ -50,3 +50,12 @@ c++ -std=c++20 -Wall -Wextra -Werror -Wno-unused-parameter -fsanitize=address,un
     -Itools/weread_service_stubs -Icomponents/pico_weread/include \
     tools/weread_service_host_test.cpp -o build/book-tests/weread-service
 build/book-tests/weread-service
+
+python3 tools/test_pmu_battery.py
+for test in ota_release ota_online; do
+    cc -std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations -fsanitize=address,undefined \
+        -Itools/ota_stubs -Imain -Imanaged_components/espressif__cjson/cJSON \
+        "tools/${test}_host_test.c" main/ota_release.c managed_components/espressif__cjson/cJSON/cJSON.c \
+        -lm -o "build/book-tests/${test}"
+    "build/book-tests/${test}"
+done

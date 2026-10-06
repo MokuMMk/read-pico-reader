@@ -64,6 +64,7 @@ class Session {
 #else
   esp_http_client_handle_t client_ = nullptr;
 #endif
+  bool complete_ = false;
   char host_[128] = {};
   uint32_t newConnections_ = 0;
   uint32_t reusedRequests_ = 0;

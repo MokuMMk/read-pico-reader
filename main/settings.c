@@ -695,7 +695,8 @@ esp_err_t app_settings_backup_save(void) {
     // V5+ use reserved bits here; v7 appends WiFi and reading records afterward.
     profile.home_full_refresh = (s_home_full_refresh ? 1 : 0) |
                                 (s_reader_hide_images ? 2 : 0) |
-                                (s_shelf_recent_sort ? 4 : 0);
+                                (s_shelf_recent_sort ? 4 : 0) |
+                                (s_ble_turner ? 8 : 0);
     uint32_t profile_hash = backup_profile_checksum(&backup, extension[0], extension[1], extension[2], &profile);
     for (int i = 0; i < 4; ++i) profile.checksum[i] = (uint8_t)(profile_hash >> (i * 8));
 
@@ -831,7 +832,7 @@ esp_err_t app_settings_backup_restore(void) {
                      strnlen(profile.device_name, sizeof(profile.device_name)) < sizeof(profile.device_name) &&
                      profile.device_name[0] &&
                      strnlen(profile.status_signature, sizeof(profile.status_signature)) < sizeof(profile.status_signature) &&
-                     profile.home_full_refresh <= 7 &&
+                     profile.home_full_refresh <= 15 &&
                      backup_path_valid(profile.avatar, sizeof(profile.avatar));
             }
         }
@@ -871,6 +872,7 @@ esp_err_t app_settings_backup_restore(void) {
 #define BACKUP_SET_STR(key, value) do { if (err == ESP_OK) err = nvs_set_str(h, key, value); } while (0)
     BACKUP_SET_U8(NVS_KEY_SLEEP, BK_SLEEP);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHUTDOWN_MODE, staged_shutdown);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BLE_TURNER, (profile.home_full_refresh & 8) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HOME_FULL, profile.home_full_refresh & 1);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HIDE_IMAGES, (profile.home_full_refresh & 2) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHELF_RECENT, (profile.home_full_refresh & 4) != 0);
@@ -910,6 +912,7 @@ esp_err_t app_settings_backup_restore(void) {
     const uint8_t *f = backup.flags;
     s_sleep = (app_sleep_mode_t)f[BK_SLEEP];
     s_staged_shutdown = staged_shutdown != 0;
+    s_ble_turner = (profile.home_full_refresh & 8) != 0;
     s_home_full_refresh = (profile.home_full_refresh & 1) != 0;
     s_reader_hide_images = (profile.home_full_refresh & 2) != 0;
     s_shelf_recent_sort = (profile.home_full_refresh & 4) != 0;
