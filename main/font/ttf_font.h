@@ -90,6 +90,9 @@ void ttf_draw_text_px_bw(
 void ttf_measure_line(int size, const char* text, int* above, int* below);
 void ttf_measure_line_px(int pixel_height, const char* text, int* above, int* below);
 int ttf_text_width_px(int pixel_height, const char* text);
+/// 首字符左侧留白，不生成位图；用于段首开标点的视觉对齐。
+/// First-glyph left bearing without rasterizing; used for paragraph-opening punctuation alignment.
+int ttf_text_left_bearing_px(int pixel_height, const char* text);
 void ttf_set_weight(int wght);
 int ttf_get_weight(void);
 

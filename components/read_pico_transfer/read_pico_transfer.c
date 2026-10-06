@@ -354,6 +354,8 @@ static int list_books(const char *root, const char *query, size_t page, transfer
 
 #ifndef READ_PICO_TRANSFER_HOST_TEST
 #include "read_pico_transfer.h"
+#include "ble_page_turner.h"
+static bool s_ble_network_reserved;
 #include "transfer_policy.h"
 #include "transfer_credentials_store.h"
 #include "esp_event.h"
@@ -527,6 +529,8 @@ esp_err_t read_pico_transfer_sync_time(uint32_t *utc_seconds) {
         clear_secret(&saved, sizeof(saved)); release_config();
         return err == ESP_OK ? ESP_ERR_NOT_FOUND : err;
     }
+    err = ble_pt_network_acquire();
+    if (err != ESP_OK) { clear_secret(&saved, sizeof(saved)); release_config(); return err; }
     bool loop_owned = false, wifi_initialized = false, wifi_started = false, sntp_started = false;
     esp_netif_t *netif = NULL;
     esp_event_handler_instance_t wifi_handler = NULL, ip_handler = NULL;
@@ -540,7 +544,7 @@ esp_err_t read_pico_transfer_sync_time(uint32_t *utc_seconds) {
     wifi.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     clear_secret(&saved, sizeof(saved));
     s_time_events = xEventGroupCreate();
-    if (!s_time_events) { clear_secret(&wifi, sizeof(wifi)); release_config(); return ESP_ERR_NO_MEM; }
+    if (!s_time_events) { clear_secret(&wifi, sizeof(wifi)); ble_pt_network_release(); release_config(); return ESP_ERR_NO_MEM; }
     err = esp_netif_init();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) goto time_cleanup;
     err = esp_event_loop_create_default();
@@ -585,6 +589,7 @@ time_cleanup:
     if (loop_owned) esp_event_loop_delete_default();
     vEventGroupDelete(s_time_events); s_time_events = NULL;
     clear_secret(&wifi, sizeof(wifi));
+    ble_pt_network_release();
     release_config();
     return err;
 }
@@ -616,6 +621,8 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
     read_pico_transfer_get_status(&status);
     if (s_wifi || s_http || s_netif || status.state != READ_PICO_TRANSFER_STOPPED) return ESP_ERR_INVALID_STATE;
     if (!claim_config()) return ESP_ERR_INVALID_STATE;
+    esp_err_t err = ble_pt_network_acquire();
+    if (err != ESP_OK) { release_config(); return err; }
     bool initialized = false, started = false;
     esp_netif_t *scan_netif = NULL;
     const char *stage = "netif";
@@ -624,7 +631,7 @@ esp_err_t read_pico_transfer_scan_wifi(read_pico_transfer_network_t out[READ_PIC
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    esp_err_t err = esp_netif_init();
+    err = esp_netif_init();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) goto cleanup;
     stage = "event-loop";
     err = esp_event_loop_create_default();
@@ -722,6 +729,7 @@ cleanup:
     // deleting and recreating it around every scan caused stale hosted events.
     if (err != ESP_OK) { memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0; }
     ESP_LOGI("transfer", "wifi scan result=%s count=%u", esp_err_to_name(err), (unsigned)*count);
+    ble_pt_network_release();
     release_config();
     return err;
 }
@@ -1701,6 +1709,7 @@ void read_pico_transfer_stop(void) {
     if (s_netif) { esp_netif_destroy_default_wifi(s_netif); s_netif = NULL; }
     if (s_loop_owned) { esp_event_loop_delete_default(); s_loop_owned = false; }
     free(s_buffer); s_buffer = NULL;
+    if (s_ble_network_reserved) { s_ble_network_reserved = false; ble_pt_network_release(); }
     portENTER_CRITICAL(&s_lock);
     s_status.state = READ_PICO_TRANSFER_STOPPED; s_status.sta_count = 0;
     s_status.network_ready = false; s_status.url[0] = 0;
@@ -1715,6 +1724,10 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         (cfg->root_dir && strlen(cfg->root_dir) >= sizeof(s_root)) ||
         (cfg->mode != READ_PICO_TRANSFER_MODE_AP && cfg->mode != READ_PICO_TRANSFER_MODE_STA)) return ESP_ERR_INVALID_ARG;
     if (s_wifi || s_netif || s_http) return ESP_ERR_INVALID_STATE;
+    // 先回收 BLE 内存，再创建 WiFi/HTTP；失败不半途启动。/ Reclaim BLE before WiFi/HTTP allocation; never start partially on a failed stop.
+    const esp_err_t reserve = ble_pt_network_acquire();
+    if (reserve != ESP_OK) return reserve;
+    s_ble_network_reserved = true;
     s_cfg = *cfg;
     if (cfg->root_dir) strcpy(s_root, cfg->root_dir);
     else s_root[0] = 0;

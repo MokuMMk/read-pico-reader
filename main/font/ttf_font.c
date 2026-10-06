@@ -2033,6 +2033,19 @@ int ttf_text_width_px(int pixel_height, const char* text) {
     return measure_width(clamp_px(pixel_height), text);
 }
 
+int ttf_text_left_bearing_px(int pixel_height, const char* text) {
+    if (!font_ready || !text || !*text) return 0;
+    pixel_height = clamp_px(pixel_height);
+    const char *cursor = text;
+    uint32_t cp = decode_utf8(&cursor);
+    const glyph_entry_t *glyph = cache_lookup(cp, pixel_height);
+    if (glyph) return glyph->left;
+    int advance, lsb;
+    int gid = stbtt_FindGlyphIndex(&font_info, (int)cp);
+    stbtt_GetGlyphHMetrics(&font_info, gid, &advance, &lsb);
+    return (int)floorf(lsb * stbtt_ScaleForPixelHeight(&font_info, (float)pixel_height));
+}
+
 // 线性抗锯齿的中间灰在这块屏上偏亮。按 TTF_COVER_GAMMA 抬覆盖率，半透明边缘更深。
 static uint8_t s_cover[256];
 

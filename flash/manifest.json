@@ -1,6 +1,6 @@
 {
   "name": "小纸 Pico 阅读固件",
-  "version": "0.3.3-rc79",
+  "version": "0.3.3-rc80",
   "new_install_prompt_erase": false,
   "builds": [
     {
@@ -28,7 +28,7 @@
   ],
   "pico_ota": {
     "layout": "pico-dual-4m-v1",
-    "base_version": "0.3.3-rc79",
+    "base_version": "0.3.3-rc80",
     "minimum_base_version": "0.3.3-rc72",
     "online_ota_base_version": "0.3.3-rc79",
     "rollback": true

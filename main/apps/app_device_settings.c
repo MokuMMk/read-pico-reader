@@ -47,7 +47,7 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_TIME_EDIT, SETTINGS_SHELF_STYLE, SETTINGS_SYSTEM_FONT,
                SETTINGS_SYSTEM_SIZE, SETTINGS_SYSTEM_CONTRAST, SETTINGS_LOCK_STYLE,
                SETTINGS_WALLPAPER, SETTINGS_WALLPAPER_PREVIEW,
-               SETTINGS_READING, SETTINGS_CONFIG, SETTINGS_UPGRADE, SETTINGS_BOOT,
+               SETTINGS_CONFIG, SETTINGS_UPGRADE, SETTINGS_BOOT,
                SETTINGS_POWER_SLEEP, SETTINGS_PROFILE, SETTINGS_AVATAR,
                SETTINGS_BLUETOOTH, SETTINGS_BLE_SCAN,
                SETTINGS_TEXT_EDIT } settings_page_t;
@@ -58,6 +58,7 @@ static int s_style_scroll, s_main_scroll;
 // and a notice line.
 static int s_ble_scroll, s_ble_learning;
 static char s_ble_notice[64];
+static char s_ble_feedback[64];
 static int s_font_page, s_wallpaper_page;
 static bool s_sync_pending;
 static bool s_config_confirm;
@@ -77,15 +78,15 @@ static void upgrade_open(void) {
 }
 static const char *const TAG = "device_settings";
 #define SETTINGS_WIRELESS_Y 315
-#define SETTINGS_DISPLAY_Y 427
-#define SETTINGS_DEVICE_Y 876
+#define SETTINGS_DISPLAY_Y 495
+#define SETTINGS_DEVICE_Y 944
 #define SETTINGS_ROW_H 68
 // 「阅读与设备」组的行数。滚动上限由它推导：主页面最后一行必须能完整落在
 // 底部导航栏（UI_NAV_TOP）之上的可点区里，否则最后一行永远露不出来，也点不到。
 // Row count of the 阅读与设备 group. The scroll limit is derived from it: the last main-page row
 // must be able to sit fully inside the tappable band above the bottom nav (UI_NAV_TOP), or it
 // can never be revealed or tapped.
-#define SETTINGS_DEVICE_ROWS 5
+#define SETTINGS_DEVICE_ROWS 3
 #define SETTINGS_MAINTENANCE_Y (SETTINGS_DEVICE_Y + SETTINGS_DEVICE_ROWS * SETTINGS_ROW_H + 66)
 // 设置行图标：32 像素盒，在行高 68 里垂直居中；墨色统一，避免一行一个灰度。
 // Setting row icons: a 32 px box centred in the 68 px row with one shared ink level.
@@ -329,7 +330,7 @@ static ble_layout_t ble_layout(void) {
     ble_layout_t l;
     memset(&l, 0, sizeof(l));
     int y = 202 - s_ble_scroll;
-    l.toggle_top = s_ble_learning ? -1 : y;
+    l.toggle_top = s_ble_learning || s_ble_feedback[0] ? -1 : y;
     y += 126 + 38;
     l.status_top = y;
     y += BLE_ROW_H + 20;
@@ -792,17 +793,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
-    if (s_page == SETTINGS_READING) {
-        back_header(fb, "阅读操作");
-        section(fb, 240, "阅读正文");
-        setting_toggle(fb, 281, "电源键翻页", "短按下一页，长按锁屏", app_settings_reader_power_turn());
-        setting_toggle(fb, 431, "全屏沉浸", "全屏时隐藏状态栏，让正文延伸至顶部", app_settings_reader_immersive());
-        setting_toggle(fb, 581, "关闭书内图片", "阅读时跳过插图，保留原书文件", app_settings_reader_hide_images());
-        ui_text(fb, 50, 765, 20, "轻点正文中央切换全屏；中间触控键打开阅读设置。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 50, 806, 19, "关闭按键翻页时，电源键仍按原有锁屏逻辑工作。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_nav_draw(fb, 3);
-        return;
-    }
     if (s_page == SETTINGS_POWER_SLEEP) {
         back_header(fb, "关机睡眠");
         section(fb, 248, "选择电源菜单中“关机”的方式");
@@ -968,12 +958,15 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
 
         // 学习按键时把提示顶到最上面，用户不用滚回去看。
         // While learning, the prompt is pinned to the top so the user need not scroll back.
-        if (s_ble_learning) {
+        if (s_ble_learning || s_ble_feedback[0]) {
             settings_card(fb, (EpdRect){36, 202 - s_ble_scroll, 612, 126}, 22, 0xd0, 0x58);
             ui_text_vc(fb, 342, 265 - s_ble_scroll, 24,
+                       !s_ble_learning ? s_ble_feedback :
                        s_ble_learning == 1 ? "请按翻页器上「上一页」要用的键"
                                            : "请按翻页器上「下一页」要用的键",
                        EPD_DRAW_ALIGN_CENTER, false);
+            if (!s_ble_learning)
+                ui_text_vc(fb, 342, 305 - s_ble_scroll, 19, "轻点此处返回蓝牙开关", EPD_DRAW_ALIGN_CENTER, false);
         } else {
             setting_toggle(fb, l.toggle_top, "启用蓝牙", "开启后可配对蓝牙翻页器；关闭会释放蓝牙内存",
                            app_settings_ble_turner());
@@ -1026,13 +1019,14 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
-    const char *wireless_labels[] = {"WiFi"};
+    const char *wireless_labels[] = {"WiFi", "蓝牙翻页器"};
     char wireless_value[56]; snprintf(wireless_value, sizeof(wireless_value), "%s  ›", wifi_saved ? wifi_ssid : "未配置");
     fit_value(wireless_value, 235);
-    const char *wireless_values[] = {wireless_value};
-    static const int wireless_icons[] = {0};
+    const char *wireless_values[] = {wireless_value,
+                                    app_settings_ble_turner() ? "已开启  ›" : "已关闭  ›"};
+    static const int wireless_icons[] = {0, 1};
     setting_group(fb, 285, "无线连接", SETTINGS_WIRELESS_Y,
-                  wireless_icons, wireless_labels, wireless_values, 1);
+                  wireless_icons, wireless_labels, wireless_values, 2);
     const char *reading_labels[] = {"系统字体", "系统字号", "系统对比度", "书架样式", "状态栏签名", "首页强刷"};
     char font[96];
     const char *chosen_font = app_settings_system_font_path();
@@ -1048,15 +1042,14 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     const char *reading_values[] = {font, size, contrast, styles[app_settings_shelf_style()],
                                     signature_value, app_settings_home_full_refresh() ? "开启  ›" : "关闭  ›"};
     static const int reading_icons[] = {2, 3, 7, 4, 10, 11};
-    setting_group(fb, 397, "显示", SETTINGS_DISPLAY_Y,
+    setting_group(fb, SETTINGS_DISPLAY_Y - 30, "显示", SETTINGS_DISPLAY_Y,
                   reading_icons, reading_labels, reading_values, 6);
-    const char *display_labels[] = {"锁屏样式", "关机睡眠", "阅读操作", "日期与时间", "蓝牙翻页器"};
+    const char *display_labels[] = {"锁屏样式", "关机睡眠", "日期与时间"};
     const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›",
                                     app_settings_staged_shutdown() ? "先浅后深  ›" : "彻底断电  ›",
-                                    "设置  ›", "设置  ›",
-                                    app_settings_ble_turner() ? "已开启  ›" : "已关闭  ›"};
-    static const int display_icons[] = {5, 9, 2, 6, 1};
-    setting_group(fb, 842, "阅读与设备", SETTINGS_DEVICE_Y,
+                                    "设置  ›"};
+    static const int display_icons[] = {5, 9, 6};
+    setting_group(fb, SETTINGS_DEVICE_Y - 34, "阅读与设备", SETTINGS_DEVICE_Y,
                   display_icons, display_labels, display_values, SETTINGS_DEVICE_ROWS);
     static const char *const maintenance_labels[] = {"系统升级", "保存与恢复", "BOOT 刷机"};
     static const char *const maintenance_values[] = {"OTA / TF 卡  ›", "配置  ›", "电脑刷机  ›"};
@@ -1072,6 +1065,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
 static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
     s_notice[0] = 0;
+    s_ble_feedback[0] = 0;
     s_page = SETTINGS_MAIN;
     s_style_scroll = s_main_scroll = s_font_page = s_wallpaper_page = 0;
     s_wallpaper_selected = -1;
@@ -1081,7 +1075,38 @@ static void on_enter(app_ctx_t *ctx) {
     s_boot_pending = s_local_pending = s_upgrade_restart = false;
 }
 
+// 主循环主动消费按键；识别不需要再触摸屏幕。/ Consume key edges on ticks without requiring another touch.
+static bool ble_receive_feedback(void) {
+    ble_pt_event_t unused;
+    while (ble_pt_pop_key(&unused)) {}
+    bool changed = false;
+    ble_pt_raw_t raw;
+    while (ble_pt_pop_raw(&raw)) {
+        if (!raw.pressed || raw.was_rest || !ble_pt_connected()) continue;
+        if (s_ble_learning) {
+            const ble_pt_action_t action = s_ble_learning == 1 ? BLE_PT_ACTION_PREV : BLE_PT_ACTION_NEXT;
+            const esp_err_t error = ble_pt_bind(action, ble_pt_raw_code(&raw));
+            snprintf(s_ble_feedback, sizeof(s_ble_feedback), "%s",
+                     error == ESP_OK ? (action == BLE_PT_ACTION_PREV ? "识别成功 · 已绑定上一页" : "识别成功 · 已绑定下一页")
+                                     : "识别成功 · 绑定保存失败，请重试");
+            s_ble_learning = 0;
+            s_ble_scroll = 0;
+            changed = true;
+            // 同一帧的其余字节不得覆盖这次学习结果。/ Drain remaining bytes without overwriting this learned result.
+            while (ble_pt_pop_raw(&raw)) {}
+            break;
+        }
+        if (!s_ble_feedback[0]) {
+            snprintf(s_ble_feedback, sizeof(s_ble_feedback), "识别成功 · 已收到翻页器按键");
+            s_ble_scroll = 0;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    if (s_page == SETTINGS_BLUETOOTH && ble_receive_feedback()) return APP_REDRAW_PAGE;
     // 蓝牙启动失败的原因转成提示。放在这里而不是 render()：render 必须是纯绘制，
     // 而 take_* 会清空状态。
     // Fold a Bluetooth start failure into the notice here rather than in render(), which must
@@ -1500,21 +1525,6 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (y >= 518 && y < 588) { time_open(); return APP_REDRAW_PAGE; }
         return APP_REDRAW_NONE;
     }
-    if (s_page == SETTINGS_READING) {
-        if (y >= 281 && y < 407) {
-            app_settings_set_reader_power_turn(!app_settings_reader_power_turn());
-            return APP_REDRAW_PAGE;
-        }
-        if (y >= 431 && y < 557) {
-            app_settings_set_reader_immersive(!app_settings_reader_immersive());
-            return APP_REDRAW_PAGE;
-        }
-        if (y >= 581 && y < 707) {
-            app_settings_set_reader_hide_images(!app_settings_reader_hide_images());
-            return APP_REDRAW_PAGE;
-        }
-        return APP_REDRAW_NONE;
-    }
     if (s_page == SETTINGS_POWER_SLEEP) {
         if (y >= 300 && y < 432) {
             app_settings_set_staged_shutdown(false);
@@ -1586,22 +1596,14 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         // The layout yields screen coordinates (scroll already subtracted), so compare y directly.
         const int ty = y;
 
-        // 学习模式：下一个按下的原始边沿就是绑定值；点别处取消。
-        // Learn mode: the next raw edge becomes the binding; a tap elsewhere cancels.
+        // 学习时轻点取消；识别结果轻点后返回开关。/ Tap to cancel learning or dismiss the received-key result.
         if (s_ble_learning) {
-            ble_pt_raw_t raw;
-            while (ble_pt_pop_raw(&raw)) {
-                if (!raw.pressed || raw.was_rest) continue;
-                const ble_pt_action_t action = s_ble_learning == 1 ? BLE_PT_ACTION_PREV
-                                                                  : BLE_PT_ACTION_NEXT;
-                snprintf(s_ble_notice, sizeof(s_ble_notice),
-                         ble_pt_bind(action, ble_pt_raw_code(&raw)) == ESP_OK
-                             ? "已绑定自定义按键" : "绑定失败：请先连接设备");
-                s_ble_learning = 0;
-                return APP_REDRAW_PAGE;
-            }
             s_ble_learning = 0;
             snprintf(s_ble_notice, sizeof(s_ble_notice), "已取消学习");
+            return APP_REDRAW_PAGE;
+        }
+        if (s_ble_feedback[0] && ty >= 202 - s_ble_scroll && ty < 328 - s_ble_scroll) {
+            s_ble_feedback[0] = 0;
             return APP_REDRAW_PAGE;
         }
         if (ty < 160 || ty >= UI_NAV_TOP) return APP_REDRAW_NONE;
@@ -1637,7 +1639,11 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                     snprintf(s_ble_notice, sizeof(s_ble_notice), "请先连接翻页器再学习按键");
                     return APP_REDRAW_PAGE;
                 }
+                ble_pt_raw_t stale;
+                while (ble_pt_pop_raw(&stale)) {}
+                s_ble_feedback[0] = s_ble_notice[0] = 0;
                 s_ble_learning = i + 1;
+                s_ble_scroll = 0;
                 return APP_REDRAW_PAGE;
             }
         }
@@ -1705,6 +1711,15 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         ctx->request_app = &app_transfer;
         return APP_REDRAW_NONE;
     }
+    if (y >= SETTINGS_WIRELESS_Y + SETTINGS_ROW_H && y < SETTINGS_WIRELESS_Y + 2 * SETTINGS_ROW_H) {
+        s_page = SETTINGS_BLUETOOTH;
+        s_ble_scroll = 0;
+        s_ble_learning = 0;
+        s_ble_notice[0] = s_ble_feedback[0] = 0;
+        ble_pt_raw_t unused;
+        while (ble_pt_pop_raw(&unused)) {}
+        return APP_REDRAW_PAGE;
+    }
     if (y >= SETTINGS_DISPLAY_Y && y < SETTINGS_DISPLAY_Y + SETTINGS_ROW_H) {
         ttf_font_scan();
         s_font_page = 0;
@@ -1741,25 +1756,13 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_PAGE;
     }
     if (y >= SETTINGS_DEVICE_Y + 2 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 3 * SETTINGS_ROW_H) {
-        s_page = SETTINGS_READING;
-        return APP_REDRAW_PAGE;
-    }
-    if (y >= SETTINGS_DEVICE_Y + 3 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 4 * SETTINGS_ROW_H) {
         s_page = SETTINGS_TIME;
-        return APP_REDRAW_PAGE;
-    }
-    if (y >= SETTINGS_DEVICE_Y + (SETTINGS_DEVICE_ROWS - 1) * SETTINGS_ROW_H &&
-        y < SETTINGS_DEVICE_Y + SETTINGS_DEVICE_ROWS * SETTINGS_ROW_H) {
-        s_page = SETTINGS_BLUETOOTH;
-        s_ble_scroll = 0;
-        s_ble_learning = 0;
-        s_ble_notice[0] = 0;
         return APP_REDRAW_PAGE;
     }
     if (y >= SETTINGS_MAINTENANCE_Y && y < SETTINGS_MAINTENANCE_Y + SETTINGS_ROW_H) {
         upgrade_open(); return APP_REDRAW_PAGE;
     }
-    if (y >= SETTINGS_MAINTENANCE_Y + SETTINGS_ROW_H && y < SETTINGS_MAINTENANCE_Y + 3 * SETTINGS_ROW_H) {
+    if (y >= SETTINGS_MAINTENANCE_Y + SETTINGS_ROW_H && y < SETTINGS_MAINTENANCE_Y + 2 * SETTINGS_ROW_H) {
         s_page = SETTINGS_CONFIG; s_config_confirm = false; s_notice[0] = 0; return APP_REDRAW_PAGE;
     }
     if (y >= SETTINGS_MAINTENANCE_Y + 2 * SETTINGS_ROW_H && y < SETTINGS_MAINTENANCE_Y + 3 * SETTINGS_ROW_H) {

@@ -18,6 +18,7 @@
 
 #include "ble_page_turner.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -42,6 +43,19 @@
 #include "store/config/ble_store_config.h"
 
 static const char *TAG = "ble_pt";
+// 网络占用先登记，再串行拆栈，防止主循环同时重建蓝牙。/ Reserve network memory before serial teardown to prevent a concurrent BLE restart.
+static atomic_flag s_lifecycle = ATOMIC_FLAG_INIT;
+static atomic_uint s_network_users;
+static TaskHandle_t s_host_task;
+static bool lifecycle_take(uint32_t timeout_ms) {
+    const int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+    while (atomic_flag_test_and_set(&s_lifecycle)) {
+        if (esp_timer_get_time() >= deadline) return false;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return true;
+}
+static void lifecycle_give(void) { atomic_flag_clear(&s_lifecycle); }
 
 /* ---- HID 常量 / HID constants ---- */
 
@@ -135,7 +149,8 @@ static uint32_t s_reconnect_at;
 // Pending target: picking another peer while a link exists or is coming up records it here, and
 // poll() starts it once the disconnect has landed.
 static char s_pending_addr[18];
-static volatile bool s_connected, s_connecting, s_scanning, s_running;
+static volatile bool s_connected, s_connecting, s_scanning;
+static atomic_bool s_running;
 // 链路是否已经建立（GAP 层）。与 s_connected 分开：后者还要求服务发现做完。重连必须以
 // 这个为准——否则发现没走完时会把一条好链路反复拆掉重建，表现就是"连上一会儿又掉"。
 // Whether the GAP link exists. Separate from s_connected, which also requires discovery to have
@@ -334,8 +349,9 @@ static void report_map_hints(const uint8_t *map, size_t len) {
 // Extract the primary code: prefer the byte the report map pointed at, else the first non-zero
 // byte within the first few.
 static uint8_t extract_primary_code(const uint8_t *p, size_t n) {
-    if (s_preferred_byte != 0xFF && s_preferred_byte < n && p[s_preferred_byte] != 0)
-        return p[s_preferred_byte];
+    const size_t preferred = s_preferred_byte == 0xFF ? n : s_preferred_byte + (n == 9 ? 1u : 0u);
+    // 已知布局的零键码是释放，不能把报告 ID 或修饰键误当按键。/ A known zero usage is release, not a report ID or modifier key.
+    if (preferred < n) return p[preferred];
     const size_t limit = n < 8 ? n : 8;
     for (size_t i = 0; i < limit; ++i)
         if (p[i] != 0) return p[i];
@@ -378,18 +394,24 @@ static void ingest_report(const uint8_t *data, size_t len) {
     if (!data || !len || len > FRAME_MAX) return;
 
     const uint8_t code = extract_primary_code(data, len);
-    const uint8_t mods = (s_has_keyboard_page && len > 0) ? data[0] : 0;
+    const uint8_t mods = s_has_keyboard_page ? data[len == 9 ? 1 : 0] : 0;
 
     // 静止帧取第一帧「什么都没按」的报告。/ The rest frame is the first report with nothing pressed.
     if (!s_rest_known) {
-        if (!code) {
+        if (!code || s_has_keyboard_page) {
             memcpy(s_rest, data, len);
-            memcpy(s_last, data, len);
+            if (code) {
+                // 标准键盘无需等待先松键，首个按下也可用于学习。/ Standard keyboards can learn their first press without a prior release.
+                memset(s_rest, 0, len);
+                if (len == 9) s_rest[0] = data[0];
+            }
+            memcpy(s_last, s_rest, len);
             s_frame_len = len;
             s_rest_known = true;
+        } else {
+            if (code != s_held_usage || mods != s_held_mods) emit_usage(code, mods);
+            return;
         }
-        if (code) emit_usage(code, mods);
-        return;
     }
     if (len != s_frame_len) return;  // 长度变了，之前学的基准不再适用 / frame shape changed
 
@@ -404,8 +426,9 @@ static void ingest_report(const uint8_t *data, size_t len) {
     }
     memcpy(s_last, data, len);
 
-    if (code) emit_usage(code, mods);
-    else s_held_usage = 0;  // 全零报告 = 所有键都松开了 / an all-released report
+    if (code) {
+        if (code != s_held_usage || mods != s_held_mods) emit_usage(code, mods);
+    } else s_held_usage = 0;  // 全零报告 = 所有键都松开了 / an all-released report
 }
 
 /* ---- 扫描 / Discovery ---- */
@@ -832,6 +855,9 @@ esp_err_t ble_pt_connect(const char *addr) {
 
     s_connecting = true;
     s_rest_known = false;
+    s_has_keyboard_page = s_has_consumer_page = false;
+    s_preferred_byte = 0xFF;
+    s_held_usage = 0;
     s_subscribed_count = 0;
     note_peer(addr, NULL);
 
@@ -888,10 +914,12 @@ static void on_sync(void) {
 static void host_task(void *param) {
     (void)param;
     nimble_port_run();
-    nimble_port_freertos_deinit();
+    s_host_task = NULL;
+    vTaskDelete(NULL);
 }
 
-esp_err_t ble_pt_start(void) {
+static esp_err_t start_locked(void) {
+    if (atomic_load(&s_network_users)) return ESP_ERR_INVALID_STATE;
     if (s_running) return ESP_OK;
 
     // 内存闸门：NimBLE 的 host 动态分配走 PSRAM（CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL），
@@ -934,27 +962,63 @@ esp_err_t ble_pt_start(void) {
     // CONFIG_BT_NIMBLE_NVS_PERSIST.
 
     bonds_load();
-    nimble_port_freertos_init(host_task);
+    // 检查任务分配结果，失败时完整回收，避免假启动及停止死等。/ Check task allocation and unwind failures instead of claiming a running host.
+    if (xTaskCreatePinnedToCore(host_task, "nimble_host", CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE,
+                               NULL, configMAX_PRIORITIES - 4, &s_host_task,
+                               CONFIG_BT_NIMBLE_PINNED_TO_CORE) != pdPASS) {
+        s_host_task = NULL;
+        (void)nimble_port_deinit();
+        return ESP_ERR_NO_MEM;
+    }
     s_running = true;
     ESP_LOGI(TAG, "started, %u bond(s)", (unsigned)s_bond_count);
     return ESP_OK;
 }
 
-esp_err_t ble_pt_stop(uint32_t timeout_ms) {
+static esp_err_t stop_locked(void) {
     if (!s_running) return ESP_OK;
-    (void)timeout_ms;
     ble_pt_scan_stop();
     ble_pt_disconnect();
     // 让断开走完再拆 host；bond 留在 NVS，下次 start() 重新载入。
     // Let the disconnect settle before tearing the host down; bonds stay in NVS for the next start().
     vTaskDelay(pdMS_TO_TICKS(200));
-    nimble_port_stop();
-    nimble_port_deinit();
+    const int stopped = nimble_port_stop();
+    if (stopped != 0) return ESP_FAIL;
+    const esp_err_t error = nimble_port_deinit();
+    if (error != ESP_OK) return error;
     s_running = false;
     s_connected = s_connecting = s_scanning = s_link_up = false;
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_stable_since = 0;
+    s_held_usage = 0;
+    portENTER_CRITICAL(&s_ring_lock);
+    memset(&s_keys, 0, sizeof(s_keys));
+    memset(&s_raws, 0, sizeof(s_raws));
+    portEXIT_CRITICAL(&s_ring_lock);
     return ESP_OK;
+}
+
+esp_err_t ble_pt_start(void) {
+    if (!lifecycle_take(2000)) return ESP_ERR_TIMEOUT;
+    const esp_err_t error = start_locked();
+    lifecycle_give();
+    return error;
+}
+esp_err_t ble_pt_stop(uint32_t timeout_ms) {
+    if (!lifecycle_take(timeout_ms > 2000 ? 2000 : timeout_ms)) return ESP_ERR_TIMEOUT;
+    const esp_err_t error = stop_locked();
+    lifecycle_give();
+    return error;
+}
+esp_err_t ble_pt_network_acquire(void) {
+    atomic_fetch_add(&s_network_users, 1);
+    const esp_err_t error = ble_pt_stop(2000);
+    if (error != ESP_OK) atomic_fetch_sub(&s_network_users, 1);
+    return error;
+}
+void ble_pt_network_release(void) {
+    unsigned users = atomic_load(&s_network_users);
+    while (users && !atomic_compare_exchange_weak(&s_network_users, &users, users - 1)) {}
 }
 
 bool ble_pt_running(void) { return s_running; }
@@ -1009,6 +1073,11 @@ static bool why_load(char *out, size_t cap) {
 #define BLE_PT_WANT_DEBOUNCE_MS 2000
 
 void ble_pt_sync(bool wanted) {
+    if (atomic_load(&s_network_users)) wanted = false;
+    // 停用立即生效；仅重新启动防抖，网络不能等两秒再释放内存。/ Stop immediately; debounce only restarts so networking never waits two seconds for memory.
+    if (!wanted && s_running) {
+        if (ble_pt_stop(2000) != ESP_OK) return;
+    }
     // 先防抖。主循环每轮都会问一次，而"要不要蓝牙"这个值来自 WiFi 状态；那个状态在
     // 启动/停止的过渡里会抖，照单全收就会把蓝牙栈反复拆了又建——既表现为连接不稳定，
     // 也会在链路还活着的时候把"已连接"标志清掉（通知照旧到达，于是翻页器还能翻页）。
@@ -1079,6 +1148,10 @@ void ble_pt_sync(bool wanted) {
     // Record first, then act: a hard crash after this point still leaves the count raised.
     boot_tries_store((uint8_t)(tries + 1));
     const esp_err_t err = ble_pt_start();
+    if (err == ESP_ERR_INVALID_STATE && atomic_load(&s_network_users)) {
+        boot_tries_store(tries);
+        return;
+    }
     if (err != ESP_OK) {
         s_retry_after_ms = now + BLE_PT_RETRY_BACKOFF_MS;
         // 优先用 start() 写下的详细原因（里面有内存数字），只有它没写时才退回错误名。
@@ -1120,7 +1193,7 @@ void ble_pt_reset_failure(void) {
 #define REPEAT_DELAY_MS 500
 #define REPEAT_PERIOD_MS 120
 
-void ble_pt_poll(void) {
+static void poll_locked(void) {
     if (!s_running) return;
 
     // 自动重连：翻页器会自己省电断开，或走出范围。链路曾经建立过就记下目标，掉线后按
@@ -1170,6 +1243,12 @@ void ble_pt_poll(void) {
         s_last_repeat = now;
         emit_usage(usage, s_held_mods);
     }
+}
+
+void ble_pt_poll(void) {
+    if (!lifecycle_take(0)) return;
+    poll_locked();
+    lifecycle_give();
 }
 
 /* ---- 输入 / Input ---- */
@@ -1237,16 +1316,21 @@ void ble_pt_forget(const char *addr) {
 esp_err_t ble_pt_bind(ble_pt_action_t action, uint32_t code) {
     if (action != BLE_PT_ACTION_PREV && action != BLE_PT_ACTION_NEXT) return ESP_ERR_INVALID_ARG;
     if (!s_bindings.addr[0]) return ESP_ERR_INVALID_STATE;  // 没连着外设 / no peer connected
-    s_bindings.codes[action == BLE_PT_ACTION_PREV ? 0 : 1] = code;
+    if (!code) return ESP_ERR_INVALID_ARG;
+    uint32_t codes[BLE_PT_MAX_BINDINGS];
+    memcpy(codes, s_bindings.codes, sizeof(codes));
+    const unsigned index = action == BLE_PT_ACTION_PREV ? 0 : 1;
+    codes[index] = code;
+    if (codes[1 - index] == code) codes[1 - index] = 0;
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS_BINDINGS, NVS_READWRITE, &h);
     if (err != ESP_OK) return err;
     char key[16];
-    err = nvs_set_blob(h, bond_key(key, sizeof(key), s_bindings.addr), s_bindings.codes,
-                       sizeof(s_bindings.codes));
+    err = nvs_set_blob(h, bond_key(key, sizeof(key), s_bindings.addr), codes, sizeof(codes));
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
+    if (err == ESP_OK) memcpy(s_bindings.codes, codes, sizeof(codes));
     return err;
 }
 

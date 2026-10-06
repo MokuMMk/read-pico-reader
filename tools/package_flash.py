@@ -25,7 +25,7 @@ def package(build: Path, output: Path):
     release={'schema':1,'version':version,'project':'Read_Pico','board':'RDP-G01-W','layout':'pico-dual-4m-v1',
         'minimum_base_version':'0.3.3-rc72','url':f'https://wegooo-cell.github.io/read-pico-reader/{name}',
         'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),
-        'notes':'新增联网 OTA 与 TF 升级包，合并渐进式封面和蓝牙翻页器，优化微读连接与电量显示。'}
+        'notes':'蓝牙状态栏图标与按键学习反馈、WiFi/BLE 内存保护；阅读设置集中开关及长按全刷，普通阅读返回键，首行缩进与段首标点对齐修正。'}
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
     (output/'update.json').write_text(json.dumps(release,ensure_ascii=False,indent=2)+'\n')
     check(output)

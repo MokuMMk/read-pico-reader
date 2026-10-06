@@ -15,6 +15,7 @@
 #include "read_pico_transfer.h"
 #include "ui_kit.h"
 #include "settings.h"
+#include "ble_page_turner.h"
 
 // 底栏图标盒、返回键箭头、充电闪电的边长。
 // Box sizes for the bar icons, the back chevron and the charging bolt.
@@ -75,19 +76,24 @@ void ui_nav_status(uint8_t *fb) {
     // 固定状态栏字号，让系统字体缩放时文字仍与图标共用中心线。
     // Keep status type fixed so text and glyphs share one centerline at every system font scale.
     ui_text_fixed(fb, 36, 28, 24, clock, EPD_DRAW_ALIGN_LEFT, false);
+    read_pico_transfer_status_t network = {0};
+    read_pico_transfer_get_status(&network);
+    const bool wifi_visible = network.network_ready && network.mode == READ_PICO_TRANSFER_MODE_STA;
+    const bool bluetooth_visible = app_settings_ble_turner();
+    // 双图标时为签名留出安全间距；三者共用中心线。/ Reserve signature clearance for both icons on one centerline.
+    const int signature_width = wifi_visible && bluetooth_visible ? 220 : 280;
     char signature[96];
     snprintf(signature, sizeof(signature), "%s", app_settings_status_signature());
-    while (signature[0] && ui_text_fixed_width_px(21, signature) > 280) {
+    while (signature[0] && ui_text_fixed_width_px(21, signature) > signature_width) {
         size_t n = strlen(signature) - 1;
         while (n && ((unsigned char)signature[n] & 0xc0) == 0x80) --n;
         signature[n] = 0;
     }
     if (signature[0]) ui_text_fixed(fb, UI_LOCK_WIDTH / 2, 29, 21, signature, EPD_DRAW_ALIGN_CENTER, false);
-    read_pico_transfer_status_t network = {0};
-    read_pico_transfer_get_status(&network);
-    if (network.network_ready && network.mode == READ_PICO_TRANSFER_MODE_STA) {
-        ui_nav_wifi_icon(fb, 515, status_center_y, 30, 0x6a);
-    }
+    if (wifi_visible) ui_nav_wifi_icon(fb, 515, status_center_y, 30, 0x6a);
+    if (bluetooth_visible)
+        ui_draw_icon(fb, wifi_visible ? 479 : 515, status_center_y, 30, UI_ICON_BLUETOOTH,
+                     ble_pt_running() ? 0x6a : 0x8a);
     EpdRect battery = {606, status_center_y - 11, 40, 22};
     ui_draw_round_rect(fb, battery, 6, UI_GRAY_BLACK);
     ui_fill_round_rect(fb, (EpdRect){648, status_center_y - 4, 5, 8}, 2, UI_GRAY_BLACK);

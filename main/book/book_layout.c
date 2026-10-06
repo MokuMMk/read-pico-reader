@@ -220,31 +220,52 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
     *align = block ? block->align : 0;
     // 首行缩进由阅读设置统一控制；书内标题和对齐块仍保持原本的位置。
     // The reader setting controls paragraph indent; headings and aligned blocks keep their placement.
-    *indent = first_line && block && !*heading && !*align ?
-        (int)((unsigned)*px * block->indent_percent / 100) : 0;
-    if (first_line && !*heading && !*align) *indent = *px * (int)s_first_line_indent_em;
+    *indent = 0;
+    if (first_line && !*heading && !*align) {
+        // 缩进按当前字体真实全角字宽和字间距计算，不把行高当字宽。
+        // Indent by actual full-width advances plus tracking, not by the font's line height.
+        int advance = ttf_text_width_px(*px, "　");
+        if (advance <= 0) advance = ttf_text_width_px(*px, "一");
+        if (advance <= 0) advance = *px;
+        advance += s_tracking_px;
+        if (advance < 1) advance = 1;
+        *indent = advance * (int)s_first_line_indent_em;
+    }
     if (*indent >= s_rect.width) *indent = s_rect.width > 1 ? s_rect.width - 1 : 0;
     if (*indent + *px > s_rect.width) *indent = 0;
     *margin_before = first_line && block ? (int)((unsigned)*px * block->margin_before_percent / 100) : 0;
     *margin_after = block ? (int)((unsigned)*px * block->margin_after_percent / 100) : 0;
-    int available = s_rect.width - *indent;
     size_t limit = block ? block->offset + block->len : s_len;
     // 纸书常把全角空格写进段首；统一由阅读设置决定缩进，原文偏移仍保留。
     // Printed-book source often contains leading spaces; the reader setting owns the visual indent.
     size_t visible_off = off;
     if (first_line && !*heading && !*align) {
         while (visible_off < limit) {
-            unsigned char c = (unsigned char)s_text[visible_off];
-            if (c == ' ' || c == '\t') { ++visible_off; continue; }
-            if (visible_off + 3 <= limit && !memcmp(s_text + visible_off, "\xe3\x80\x80", 3)) {
-                visible_off += 3; continue;
-            }
-            if (visible_off + 2 <= limit && !memcmp(s_text + visible_off, "\xc2\xa0", 2)) {
-                visible_off += 2; continue;
+            size_t n = codepoint_size(s_text + visible_off, limit - visible_off);
+            if (!n) return false;
+            uint32_t cp = codepoint_value(s_text + visible_off, n);
+            if (cp == ' ' || cp == '\t' || cp == 0xa0 || cp == 0x1680 ||
+                (cp >= 0x2000 && cp <= 0x200b) || cp == 0x202f || cp == 0x205f ||
+                cp == 0x2060 || cp == 0x3000 || cp == 0xfeff) {
+                visible_off += n; continue;
             }
             break;
         }
+        if (visible_off < limit && *indent > 0) {
+            size_t n = codepoint_size(s_text + visible_off, limit - visible_off);
+            if (!n) return false;
+            uint32_t cp = codepoint_value(s_text + visible_off, n);
+            if (prohibited_line_end(cp)) {
+                // 段首开标点自身常有半字留白，向缩进区悬挂，保持可见左边缘对齐。
+                // Hang an opener's own leading whitespace into the indent, keeping its ink edge aligned.
+                char glyph[5]; memcpy(glyph, s_text + visible_off, n); glyph[n] = 0;
+                int bearing = ttf_text_left_bearing_px(*px, glyph);
+                if (bearing > *indent) bearing = *indent;
+                if (bearing > 0) *indent -= bearing;
+            }
+        }
     }
+    int available = s_rect.width - *indent;
     size_t end = visible_off;
     size_t last_start = visible_off;
     uint32_t last_cp = 0;

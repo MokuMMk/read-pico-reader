@@ -17,6 +17,8 @@ static size_t measure_calls;
 static int first_draw_px, last_draw_px, first_draw_x, last_draw_x;
 static int last_tracking_px;
 static int fitted_target;
+static int test_cjk_advance;
+static int test_opener_bearing;
 int test_guide_segments;
 int test_guide_first_y;
 int test_guide_height;
@@ -25,13 +27,17 @@ int ttf_text_width_px(int px, const char* text) {
     int n = 0, width = 0;
     for (; *text; text++) if (((unsigned char)*text & 0xc0) != 0x80) {
         n++;
-        width += *text == 'i' ? px / 2 : *text == 'W' ? px + px / 2 : px;
+        width += (unsigned char)*text >= 0x80 && test_cjk_advance ? test_cjk_advance :
+                 *text == 'i' ? px / 2 : *text == 'W' ? px + px / 2 : px;
     }
     measured_codepoints += (size_t)n;
     measure_calls++;
     return width;
 }
 int ttf_ascender_px(int px) { return px; }
+int ttf_text_left_bearing_px(int px, const char* text) {
+    (void)px; (void)text; return test_opener_bearing;
+}
 void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
                       enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
     (void)fb; (void)y; (void)px; (void)align;
@@ -212,6 +218,29 @@ int main(void) {
         assert(first_draw_x == (int)em * 10);
         assert(!strcmp(drawn, "甲乙丙丁"));
     }
+    // 模拟字号 48、真实字宽 33 的字体；开引号留白不得额外增加半格。
+    // Simulate a 48-high font with 33-wide glyphs; an opener's bearing must not add half an indent cell.
+    r = (EpdRect){36, 0, 612, 180};
+    test_cjk_advance = 33;
+    for (unsigned em = 0; em <= 3; ++em) {
+        for (int tracking = -4; tracking <= 4; tracking += 2) {
+            book_layout_set_first_line_indent(em);
+            book_layout_set_typography(tracking);
+            const char *cases[] = {"甲乙丙丁", "　甲乙丙丁", "\xef\xbb\xbf\xe2\x80\x8b甲乙丙丁",
+                                    "　“甲乙丙丁”", "（甲乙丙丁）", "「甲乙丙丁」"};
+            for (unsigned i = 0; i < sizeof(cases)/sizeof(cases[0]); ++i) {
+                test_opener_bearing = i >= 3 ? 20 : 0;
+                assert(book_layout_build(cases[i], strlen(cases[i]), r, 48));
+                drawn[0] = 0;
+                book_layout_draw_page(&fb, 0, r, 48);
+                int shift = em ? test_opener_bearing : 0;
+                assert(first_draw_x + shift == r.x + (int)em * (33 + tracking));
+                assert(book_layout_page_start_offset(0) == 0);
+            }
+        }
+    }
+    test_cjk_advance = test_opener_bearing = 0;
+    book_layout_set_typography(0);
     book_layout_set_first_line_indent(2);
     const char punct[] = "甲乙，丙";
     r = (EpdRect){0, 0, 20, 15};
@@ -271,6 +300,7 @@ int main(void) {
     drawn[0] = 0;
     book_layout_draw_page(&fb, 0, r, 10);
     assert(!strcmp(drawn, "abcd") && first_draw_x == 20 && last_draw_x == 0);
+    book_layout_set_first_line_indent(0);
     book_layout_set_typography(2);
     r = (EpdRect){0, 0, 25, 15};
     assert(book_layout_build("abcd", 4, r, 10));
@@ -286,6 +316,7 @@ int main(void) {
     book_layout_draw_page(&fb, 0, r, 10);
     assert(!strcmp(drawn, "abc") && last_tracking_px == -2);
     book_layout_set_typography(0);
+    book_layout_set_first_line_indent(2);
     r = (EpdRect){10, 20, 400, 120};
     assert(book_layout_build("甲乙丙丁", strlen("甲乙丙丁"), r, 40));
     book_layout_set_reading_line(0);

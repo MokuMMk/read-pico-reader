@@ -137,12 +137,16 @@ void ble_pt_reset_failure(void);
 
 /// 完全拆栈，把 NimBLE 占的内存（host 在 PSRAM）还给堆。用户关掉蓝牙时用这个，
 /// 而不是 ble_pt_disconnect()，好让 EPUB 解压之类吃内存的活儿能重新分配。
-/// 等最多 timeout_ms（上限 2s）让连接任务退出。
+/// 等最多 timeout_ms（上限 2s）取得生命周期锁，再等待 NimBLE 完成停机。
 /// Tear the stack down and return NimBLE's memory (the host lives in PSRAM). Use this rather
 /// than disconnect() when the user turns Bluetooth off, so memory-hungry work such as EPUB
 /// inflate can allocate again. Waits at most timeout_ms (capped at 2s).
 esp_err_t ble_pt_stop(uint32_t timeout_ms);
 bool ble_pt_running(void);
+/// WiFi 分配前释放蓝牙并禁止重启，结束后释放占用；失败不允许继续分配网络。
+/// Stop BLE before WiFi allocations and inhibit restarts until released; abort networking on failure.
+esp_err_t ble_pt_network_acquire(void);
+void ble_pt_network_release(void);
 
 /// 主循环每次迭代泵一次：驱动自动重连与按键自动重复。很轻，不阻塞。
 /// Pump once per main-loop iteration: drives auto-reconnect and key auto-repeat. Cheap.

@@ -88,6 +88,10 @@ void app_settings_set_reader_immersive(bool on);
 /// 阅读时跳过书内插图页；原图仍保留在 EPUB 中。/ Skip inline illustrations while reading without changing the EPUB.
 bool app_settings_reader_hide_images(void);
 void app_settings_set_reader_hide_images(bool on);
+/// 阅读时长按中间圆圈键全刷；关闭时返回首页，默认关闭。
+/// Refresh the entire screen on a reader middle-key hold; off returns Home, default off.
+bool app_settings_reader_hold_refresh(void);
+void app_settings_set_reader_hold_refresh(bool on);
 /// 书架排序偏好重启后保持。/ Persist the shelf's recent-reading sort across restarts.
 bool app_settings_shelf_recent_sort(void);
 void app_settings_set_shelf_recent_sort(bool on);

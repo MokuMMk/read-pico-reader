@@ -599,11 +599,8 @@ void app_loop_run(const app_loop_config_t* config) {
         // ble_pt_sync(). Rolling our own "state differs from setting, so start()" makes a failed
         // start true on every tick, re-initialising dozens of times a second until memory runs
         // out; sync() carries the memory gate, the failure back-off and the crash-loop lock.
-        // 蓝牙与 WiFi 共用同一个射频：传书/配网期间不启蓝牙，两者共存既要额外内存，
-        // 也会互相抢时隙。WiFi 停下后蓝牙会自己回来，因为设置本身没变。
-        // Bluetooth and WiFi share one radio: keep Bluetooth down while the transfer page runs
-        // WiFi, since coexistence costs extra memory and the two contend for airtime. Bluetooth
-        // returns on its own once WiFi stops, because the setting itself is unchanged.
+        // WiFi 在 C6、BLE 在 S3；传输仍与 BLE 竞争 S3 内部内存，网络占用先拆 BLE，结束后恢复。
+        // WiFi runs on C6 and BLE on S3; both consume S3 internal memory, so network leases pause BLE and release it afterwards.
         read_pico_transfer_status_t transfer;
         read_pico_transfer_get_status(&transfer);
         const bool wifi_busy = transfer.state != READ_PICO_TRANSFER_STOPPED ||

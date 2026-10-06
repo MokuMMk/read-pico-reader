@@ -52,6 +52,7 @@ c++ -std=c++20 -Wall -Wextra -Werror -Wno-unused-parameter -fsanitize=address,un
 build/book-tests/weread-service
 
 python3 tools/test_pmu_battery.py
+python3 tools/ble_turner_host_test.py
 for test in ota_release ota_online; do
     cc -std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations -fsanitize=address,undefined \
         -Itools/ota_stubs -Imain -Imanaged_components/espressif__cjson/cJSON \
