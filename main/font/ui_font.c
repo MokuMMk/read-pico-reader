@@ -90,6 +90,21 @@ int ui_font_ascender_px(int px) {
     stbtt_GetFontVMetrics(&s_font, &asc, &desc, &gap);
     return (int)lroundf(asc * scale_for(px));
 }
+void ui_font_measure_line_px(int px, const char *text, int *above, int *below) {
+    int top = 0, bottom = 0;
+    if (text && ready()) {
+        float scale = scale_for(px);
+        while (*text) {
+            int x0, y0, x1, y1;
+            stbtt_GetCodepointBitmapBox(&s_font, (int)next_cp(&text), scale, scale, &x0, &y0, &x1, &y1);
+            if (x1 <= x0 || y1 <= y0) continue;
+            if (-y0 > top) top = -y0;
+            if (y1 > bottom) bottom = y1;
+        }
+    }
+    if (above) *above = top;
+    if (below) *below = bottom;
+}
 
 static void evict(ui_glyph_t *g) {
     if (!g->used) return;

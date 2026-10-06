@@ -12,6 +12,7 @@
 #include "esp_http_client.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
+#include "esp_wifi.h"
 #include "read_pico_transfer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -97,15 +98,39 @@ static bool online(bool *owned) {
     if (!atomic_load(&s_cancel)) state(PICO_UPDATE_FAILED, "网络连接超时，请重试");
     return false;
 }
-static esp_http_client_handle_t open_http(const char *url, int *status, int64_t *length) {
-    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 8000, .buffer_size = 2048,
+typedef struct {
+    uint32_t start, end, size;
+    bool valid;
+} download_range_t;
+static esp_err_t range_header(esp_http_client_event_t *event) {
+    download_range_t *range = event->user_data;
+    if (!range || event->event_id != HTTP_EVENT_ON_HEADER || !event->header_key || !event->header_value)
+        return ESP_OK;
+    if (!strcasecmp(event->header_key, "Content-Range")) {
+        unsigned long start, end, size; char tail;
+        range->valid = strnlen(event->header_value, 96) < 96 &&
+            sscanf(event->header_value, "bytes %lu-%lu/%lu%c", &start, &end, &size, &tail) == 3 &&
+            start <= end && end < size && size <= UINT32_MAX;
+        if (range->valid) { range->start = start; range->end = end; range->size = size; }
+    }
+    return ESP_OK;
+}
+static esp_http_client_handle_t open_http_range(const char *url, uint32_t offset,
+        download_range_t *range, int *status, int64_t *length) {
+    if (range) memset(range, 0, sizeof(*range));
+    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 15000, .buffer_size = 2048,
         .buffer_size_tx = 1024, .crt_bundle_attach = esp_crt_bundle_attach,
-        .disable_auto_redirect = true, .keep_alive_enable = true};
+        .disable_auto_redirect = true, .keep_alive_enable = true,
+        .event_handler = range_header, .user_data = range};
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) return NULL;
     esp_http_client_set_header(client, "User-Agent", PICO_OTA_CAPABILITY);
     esp_http_client_set_header(client, "Accept-Encoding", "identity");
     esp_http_client_set_header(client, "Cache-Control", "no-cache");
+    if (offset) {
+        char value[48]; snprintf(value, sizeof(value), "bytes=%lu-", (unsigned long)offset);
+        if (esp_http_client_set_header(client, "Range", value) != ESP_OK) goto fail;
+    }
     if (esp_http_client_open(client, 0) != ESP_OK || atomic_load(&s_cancel)) goto fail;
     *length = esp_http_client_fetch_headers(client);
     if (*length < 0 || atomic_load(&s_cancel)) goto fail;
@@ -115,6 +140,23 @@ static esp_http_client_handle_t open_http(const char *url, int *status, int64_t 
 fail:
     esp_http_client_cleanup(client);
     return NULL;
+}
+static esp_http_client_handle_t open_http(const char *url, int *status, int64_t *length) {
+    return open_http_range(url, 0, NULL, status, length);
+}
+// 复用连接管理器等待短暂断网恢复，允许取消，不重启整个无线服务。
+// Wait for the connection manager to recover a short outage, with cancellation and no radio restart.
+static bool wait_network(void) {
+    int64_t deadline = esp_timer_get_time() + 30000000;
+    while (!atomic_load(&s_cancel) && esp_timer_get_time() < deadline) {
+        read_pico_transfer_service_poll();
+        read_pico_transfer_status_t status;
+        read_pico_transfer_get_status(&status);
+        if (status.mode == READ_PICO_TRANSFER_MODE_STA && status.network_ready) return true;
+        if (status.state == READ_PICO_TRANSFER_ERROR) return false;
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    return false;
 }
 // 读超时可重试；每次收到数据续期，避免慢速网络被总时长截断。
 // Retry temporary read timeouts and renew the idle deadline after each chunk.
@@ -137,7 +179,7 @@ static bool check_feed(void) {
     int code = -1; int64_t length = -1;
     esp_http_client_handle_t client = NULL;
     for (int i = 0; i < 3 && !atomic_load(&s_cancel); ++i) {
-        client = open_http(url, &code, &length);
+        if (wait_network()) client = open_http(url, &code, &length);
         if (client) break;
         vTaskDelay(pdMS_TO_TICKS(250));
     }
@@ -194,11 +236,8 @@ static bool download(void) {
         state(PICO_UPDATE_FAILED, "基础包不兼容，请通过官网完整刷机"); goto failed;
     }
     int code = -1; int64_t length = -1;
-    esp_http_client_handle_t client = open_http(release->url, &code, &length);
-    if (!client) { state(PICO_UPDATE_FAILED, "下载连接失败，请重试"); goto failed; }
-    if (code != 200 || (length > 0 && length != release->size)) {
-        esp_http_client_cleanup(client); state(PICO_UPDATE_FAILED, "升级包不存在或大小不符，请重新检查更新"); goto failed;
-    }
+    esp_http_client_handle_t client = NULL;
+    download_range_t range;
     esp_ota_handle_t handle = 0;
     psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
     bool begun = false;
@@ -207,7 +246,34 @@ static bool download(void) {
     size_t total = 0, header_size = 0;
     int64_t idle = esp_timer_get_time() + 30000000;
     int n = -1;
-    while (error == ESP_OK && (n = read_chunk(client, buffer, 4096, &idle)) > 0) {
+    unsigned retries = 0;
+    bool complete = false;
+    while (error == ESP_OK && !atomic_load(&s_cancel)) {
+        if (!client) {
+            if (wait_network()) client = open_http_range(release->url, total, &range, &code, &length);
+            if (!client) {
+                if (atomic_load(&s_cancel) || retries++ >= 3) { error = ESP_FAIL; break; }
+                vTaskDelay(pdMS_TO_TICKS(250 * retries)); continue;
+            }
+            // 续传必须严格匹配起点与全文件长度；最终仍验证整本镜像的 SHA256。
+            // Resumed responses must match their offset and full length; the whole image still gets SHA256 verification.
+            bool response_ok = total ? code == 206 && range.valid && range.start == total &&
+                range.size == release->size && range.end == release->size - 1 : code == 200;
+            if (!response_ok || (length > 0 && (uint64_t)length != release->size - total)) {
+                error = ESP_ERR_INVALID_RESPONSE; break;
+            }
+            idle = esp_timer_get_time() + 30000000;
+        }
+        n = read_chunk(client, buffer, 4096, &idle);
+        if (n <= 0) {
+            complete = esp_http_client_is_complete_data_received(client);
+            esp_http_client_cleanup(client); client = NULL;
+            if (n == 0 && complete && total == release->size) break;
+            complete = false;
+            if (total >= release->size || atomic_load(&s_cancel) || retries++ >= 3) { error = ESP_FAIL; break; }
+            vTaskDelay(pdMS_TO_TICKS(250 * retries));
+            continue;
+        }
         if (total + n > release->size) { error = ESP_ERR_INVALID_SIZE; break; }
         size_t used = 0;
         if (!begun) {
@@ -229,8 +295,7 @@ static bool download(void) {
         xSemaphoreGive(s_mutex);
         vTaskDelay(pdMS_TO_TICKS(1));
     }
-    bool complete = esp_http_client_is_complete_data_received(client);
-    esp_http_client_cleanup(client);
+    if (client) esp_http_client_cleanup(client);
     uint8_t digest[32]; size_t digest_size = 0; char hex[65];
     if (error == ESP_OK && (!begun || n < 0 || !complete || total != release->size || atomic_load(&s_cancel))) error = ESP_FAIL;
     if (error == ESP_OK && psa_hash_finish(&hash, digest, sizeof(digest), &digest_size) != PSA_SUCCESS) error = ESP_FAIL;
@@ -258,9 +323,15 @@ failed:
 static void worker(void *unused) {
     (void)unused;
     bool owned = false;
+    wifi_ps_type_t previous_ps = WIFI_PS_MIN_MODEM;
+    bool restore_ps = false;
     if (online(&owned) && !atomic_load(&s_cancel)) {
+        // 更新期间关闭无线省电；完成、取消和失败均恢复原策略。
+        // Disable radio power saving for updates, then restore it on success, cancellation or failure.
+        restore_ps = esp_wifi_get_ps(&previous_ps) == ESP_OK && esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK;
         if (s_download) (void)download(); else (void)check_feed();
     }
+    if (restore_ps) (void)esp_wifi_set_ps(previous_ps);
     if (owned) read_pico_transfer_stop();
     if (atomic_load(&s_cancel)) state(PICO_UPDATE_CANCELLED, "已取消，当前版本保持不变");
     xSemaphoreTake(s_mutex, portMAX_DELAY); s_status->busy = false; ++s_status->revision; xSemaphoreGive(s_mutex);
@@ -281,7 +352,7 @@ static esp_err_t start(bool downloading) {
     s_status->busy = true; s_status->received = 0;
     xSemaphoreGive(s_mutex);
     state(downloading ? PICO_UPDATE_DOWNLOADING : PICO_UPDATE_CHECKING,
-          downloading ? "正在下载，请保持供电" : "正在连接并检查更新");
+          downloading ? "正在下载，短暂断网会自动重连" : "正在连接并检查更新");
     if (xTaskCreate(worker, "pico_ota", 12288, NULL, 4, NULL) != pdPASS) {
         xSemaphoreTake(s_mutex, portMAX_DELAY); s_status->busy = false; xSemaphoreGive(s_mutex);
         state(PICO_UPDATE_FAILED, "内存不足，无法开始升级"); return ESP_ERR_NO_MEM;

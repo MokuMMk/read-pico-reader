@@ -241,8 +241,8 @@ void ui_text_vc(
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
     if (!s_system_ttf && ui_font_has_text(text)) {
-        int ascent = ui_font_ascender_px(px);
-        ui_font_draw_text_px(framebuffer, x, center_y + ascent / 2, px, text, align, fg, bg, false);
+        ui_font_measure_line_px(px, text, &above, &below);
+        ui_font_draw_text_px(framebuffer, x, center_y + (above - below) / 2, px, text, align, fg, bg, false);
     } else {
         ttf_measure_line_px(px, text, &above, &below);
         ttf_draw_text_px(framebuffer, x, center_y + (above - below) / 2, px, text, align, fg, bg);

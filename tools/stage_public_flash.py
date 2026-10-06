@@ -7,6 +7,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import shutil
 import json
+import re
 import sys
 from urllib.parse import urlparse
 
@@ -36,6 +37,16 @@ def stage(output: Path) -> None:
         shutil.copy2(FLASH / name, output / name)
     version = json.loads((FLASH / "manifest.json").read_text())["version"]
     shutil.copy2(FLASH / f"Pico-update-{version}.bin", output / f"Pico-update-{version}.bin")
+    # 保留已发布版本的固定下载地址，避免旧清单缓存或正在进行的更新突然遇到 404。
+    # Keep immutable published URLs so cached manifests and in-flight updates do not suddenly get a 404.
+    for upgrade in FLASH.glob("Pico-update-*.bin"):
+        name = re.fullmatch(r"Pico-update-(\d+\.\d+\.\d+(?:-rc\d+)?)\.bin", upgrade.name)
+        if not name: continue
+        with upgrade.open("rb") as source:
+            header = source.read(112)
+        assert header[48:80].split(b"\0")[0].decode("ascii") == name[1], "historical upgrade version mismatch"
+        assert header[80:112].split(b"\0")[0] == b"Read_Pico", "historical upgrade project mismatch"
+        shutil.copy2(upgrade, output / upgrade.name)
     shutil.copytree(FLASH / "vendor/web", output / "vendor/web", dirs_exist_ok=True)
     shutil.copy2(FLASH / "vendor/LICENSE", output / "vendor/LICENSE")
     licenses = {

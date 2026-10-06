@@ -168,7 +168,16 @@
       <p>升级到 rc79 后，也可在系统升级页连接 WiFi，检查并安装官网后续更新。在线更新需要官网发布新版清单；升级期间请保持供电。</p>
     </section>
     <section class="release" aria-labelledby="release-title">
-      <div class="eyebrow">0.3.3-rc81 · 联网测试版</div><h2 id="release-title">这次更新了什么</h2>
+      <div class="eyebrow">0.3.3-rc82 · 联网测试版</div><h2 id="release-title">这次更新了什么</h2>
+      <ul>
+        <li>发现新版本后直接显示“稍后 / 开始更新”，修复检查结束后按钮仍停留在“取消联网更新”的问题。</li>
+        <li>下载进度至少间隔 5 秒、且变化达到 5% 才更新，仅刷新百分比和进度条；页面标题、卡片和底栏保持稳定。</li>
+        <li>更新时关闭 WiFi 省电，完成或取消后恢复；延长连接等待，短暂断网自动重连并从已下载位置继续，最多重试三次。</li>
+        <li>续传核对文件范围和大小，下载结束验证完整 SHA256 与固件镜像；验证失败保留当前版本。</li>
+        <li>阅读页左上返回键、书名和收藏图标按同一视觉中心线对齐；内建字体根据实际字形边界居中。</li>
+        <li>完整刷机包、TF 升级 Bin 与 OTA 清单同步更新，保留双槽回退、个性化配置和阅读记录。</li>
+      </ul>
+      <details><summary>上一版 rc81 的更新</summary>
       <ul>
         <li>修复 WiFi/热点选择页点击无响应：按下反馈只刷新单行，松手后正常跳转；已配网时直接启动 WiFi 传书。</li>
         <li>重做 WiFi 连接页面：加大文字、加深卡片与分隔线；已连接时显示“断开”，断开后保留连接信息，传输中避免误断开。</li>
@@ -187,7 +196,8 @@
         <li>优化微读连接复用、下载等待和断网重试；新蓝牙选项加入配置备份。</li>
         <li>统一采用 PMU 软件油量表与有效位，状态栏和资料卡电量取整保持一致。</li>
       </ul>
-      <p>已通过编译与主机回归。rc79、rc80 可在设备“设置 → 升级和恢复 → 系统升级”中检查联网更新到 rc81；联网升级、蓝牙配对和真实账号下载仍需实机验证。</p>
+      </details>
+      <p>已通过产品配置编译、断网与取消回归、局部刷新及题头渲染核对。rc79 及以后版本可在“设置 → 升级和恢复 → 系统升级”检查联网更新到 rc82；新更新流程在安装 rc82 后生效，真实网络和墨水屏效果待实机验收。</p>
       <img src="./weread-preview.png" alt="微读跨页选择与逐本下载界面" style="display:block;width:100%;height:auto;margin-top:24px;border-radius:16px;">
     </section>
     <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点、USB 或微读传书导入书籍和文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>

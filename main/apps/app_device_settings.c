@@ -38,6 +38,8 @@
 #include "esp_attr.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "display.h"
+#include "e0470_epaper_waveform.h"
 #include "pmu_selftest.h"
 #include "soc/rtc_cntl_reg.h"
 
@@ -69,10 +71,54 @@ static EXT_RAM_BSS_ATTR pico_update_status_t s_update;
 static char s_upgrade_notice[96];
 static uint32_t s_update_drawn_percent, s_update_drawn_at;
 static pico_update_state_t s_update_drawn_state;
+static bool s_update_drawn_busy, s_upgrade_offer_pending;
+static uint32_t upgrade_percent(void) {
+    uint32_t percent = s_update.release.size ? (uint64_t)s_update.received * 100 / s_update.release.size : 0;
+    return percent > 100 ? 100 : percent;
+}
+static void upgrade_remember(uint32_t now) {
+    s_update_drawn_state = s_update.state;
+    s_update_drawn_busy = s_update.busy;
+    s_update_drawn_percent = upgrade_percent();
+    s_update_drawn_at = now;
+}
+// 结果等任务收尾后一次显示；进度只在五秒且变化五个百分点后局部更新。
+// Show results once after worker cleanup; update only progress after five seconds and five percentage points.
+static app_redraw_t upgrade_status_redraw(uint32_t now) {
+    bool downloading = s_update.state == PICO_UPDATE_DOWNLOADING;
+    if (s_update.busy && s_update.state != PICO_UPDATE_CHECKING && !downloading)
+        return APP_REDRAW_NONE;
+    bool offer = s_upgrade_offer_pending && !s_update.busy && s_update.state == PICO_UPDATE_AVAILABLE;
+    if (offer) {
+        s_upgrade_offer_pending = false;
+        s_upgrade_confirm = s_upgrade_online = true;
+    } else if (!s_update.busy) s_upgrade_offer_pending = false;
+    if (offer || s_update.state != s_update_drawn_state || s_update.busy != s_update_drawn_busy) {
+        upgrade_remember(now);
+        return APP_REDRAW_PAGE;
+    }
+    uint32_t percent = upgrade_percent();
+    if (downloading && percent >= s_update_drawn_percent + 5 && now - s_update_drawn_at >= 5000) {
+        upgrade_remember(now);
+        return APP_REDRAW_AREA;
+    }
+    return APP_REDRAW_NONE;
+}
+static EpdRect upgrade_progress_area(void) { return (EpdRect){52, 468, 580, 64}; }
+static void draw_upgrade_progress(uint8_t *fb) {
+    uint32_t percent = upgrade_percent();
+    epd_fill_rect(upgrade_progress_area(), UI_GRAY_WHITE, fb);
+    char progress[32]; snprintf(progress, sizeof(progress), "%lu%%", (unsigned long)percent);
+    ui_text(fb, 624, 477, 26, progress, EPD_DRAW_ALIGN_RIGHT, false);
+    ui_fill_round_rect(fb, (EpdRect){60, 519, 564, 8}, 4, 0xc0);
+    if (percent) ui_fill_round_rect(fb, (EpdRect){60, 519, (int)(564 * percent / 100), 8}, 4, 0x30);
+}
 static void upgrade_open(void) {
     (void)pico_ota_inspect(PICO_OTA_UPDATE_PATH, &s_local_update);
     pico_online_get_status(&s_update);
     s_upgrade_confirm = s_local_pending = s_upgrade_restart = false;
+    s_upgrade_offer_pending = false;
+    upgrade_remember(esp_timer_get_time() / 1000);
     s_upgrade_notice[0] = 0;
     s_page = SETTINGS_UPGRADE;
 }
@@ -828,13 +874,13 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 60, 264, 29, esp_app_get_description()->version, EPD_DRAW_ALIGN_LEFT, false);
         if (s_upgrade_confirm) {
             settings_card(fb, (EpdRect){36, 356, 612, 344}, 22, UI_GRAY_WHITE, 0x70);
-            ui_text(fb, 60, 383, 29, s_upgrade_online ? "确认联网升级" : "确认 TF 卡升级", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 60, 383, 29, s_upgrade_online ? "发现新版本" : "确认 TF 卡升级", EPD_DRAW_ALIGN_LEFT, false);
             ui_text(fb, 60, 447, 26, s_upgrade_online ? s_update.release.version : s_local_update.candidate_version,
                     EPD_DRAW_ALIGN_LEFT, false);
             ui_text(fb, 60, 513, 22, "升级期间请保持供电", EPD_DRAW_ALIGN_LEFT, false);
             ui_text(fb, 60, 560, 21, "设置、阅读记录与 TF 卡文件保留", EPD_DRAW_ALIGN_LEFT, false);
-            ui_draw_button(fb, (EpdRect){60, 613, 260, 64}, "取消", false);
-            ui_draw_button(fb, (EpdRect){364, 613, 260, 64}, "确认升级", true);
+            ui_draw_button(fb, (EpdRect){60, 613, 260, 64}, s_upgrade_online ? "稍后" : "取消", false);
+            ui_draw_button(fb, (EpdRect){364, 613, 260, 64}, s_upgrade_online ? "开始更新" : "确认升级", true);
         } else {
             settings_card(fb, (EpdRect){36, 356, 612, 278}, 22, UI_GRAY_WHITE, 0x70);
             ui_text(fb, 60, 383, 29, "联网 OTA", EPD_DRAW_ALIGN_LEFT, false);
@@ -844,15 +890,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text(fb, 60, 436, 21, detail, EPD_DRAW_ALIGN_LEFT, false);
             if (s_update.state == PICO_UPDATE_AVAILABLE)
                 ui_text(fb, 60, 477, 24, s_update.release.version, EPD_DRAW_ALIGN_LEFT, false);
-            if (s_update.state == PICO_UPDATE_DOWNLOADING) {
-                unsigned percent = s_update.release.size ? (uint64_t)s_update.received * 100 / s_update.release.size : 0;
-                char progress[32]; snprintf(progress, sizeof(progress), "%u%%", percent);
-                ui_text(fb, 624, 477, 26, progress, EPD_DRAW_ALIGN_RIGHT, false);
-                ui_fill_round_rect(fb, (EpdRect){60, 519, 564, 8}, 4, 0xc0);
-                ui_fill_round_rect(fb, (EpdRect){60, 519, (int)(564 * percent / 100), 8}, 4, 0x30);
-            }
+            if (s_update.state == PICO_UPDATE_DOWNLOADING) draw_upgrade_progress(fb);
             ui_draw_button(fb, (EpdRect){60, 550, 564, 62}, s_update.busy ? "取消联网更新" :
-                s_update.state == PICO_UPDATE_AVAILABLE ? "下载并安装" : "检查更新", s_update.state == PICO_UPDATE_AVAILABLE);
+                s_update.state == PICO_UPDATE_AVAILABLE ? "开始更新" : "检查更新", s_update.state == PICO_UPDATE_AVAILABLE);
             settings_card(fb, (EpdRect){36, 662, 612, 262}, 22, UI_GRAY_WHITE, 0x70);
             ui_text(fb, 60, 689, 29, "TF 卡升级", EPD_DRAW_ALIGN_LEFT, false);
             ui_text(fb, 60, 739, 23, "根目录：Pico-update.bin", EPD_DRAW_ALIGN_LEFT, false);
@@ -1073,6 +1113,7 @@ static void on_enter(app_ctx_t *ctx) {
     s_sync_pending = false;
     s_config_confirm = false;
     s_boot_pending = s_local_pending = s_upgrade_restart = false;
+    s_upgrade_offer_pending = s_upgrade_confirm = false;
 }
 
 // 主循环主动消费按键；识别不需要再触摸屏幕。/ Consume key edges on ticks without requiring another touch.
@@ -1160,13 +1201,10 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
             if (pico_online_commit() == ESP_OK) { esp_restart(); return APP_REDRAW_NONE; }
             pico_online_get_status(&s_update);
         }
-        uint32_t percent = s_update.release.size ? (uint64_t)s_update.received * 100 / s_update.release.size : 0;
         uint32_t now = esp_timer_get_time() / 1000;
-        if (s_update.state != s_update_drawn_state || (percent != s_update_drawn_percent && now - s_update_drawn_at >= 1000)) {
-            s_update_drawn_state = s_update.state; s_update_drawn_percent = percent; s_update_drawn_at = now;
-            return APP_REDRAW_PAGE;
-        }
-        return APP_REDRAW_NONE;
+        app_redraw_t redraw = upgrade_status_redraw(now);
+        if (redraw == APP_REDRAW_AREA) draw_upgrade_progress(ctx->fb);
+        return redraw;
     }
     if (!s_sync_pending) return APP_REDRAW_NONE;
     s_sync_pending = false;
@@ -1293,6 +1331,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (ev->type != UI_GESTURE_TAP || s_local_pending || s_upgrade_restart) return APP_REDRAW_NONE;
         int y = ev->y0;
         if (y < 190 && ev->x0 < 170) {
+            s_upgrade_offer_pending = false;
             if (s_upgrade_confirm) s_upgrade_confirm = false;
             else { pico_online_cancel_join(); s_page = SETTINGS_MAIN; }
             return APP_REDRAW_PAGE;
@@ -1300,12 +1339,15 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         int tab = ui_nav_hit(ev->x0, y);
         if (tab >= 0) { pico_online_cancel_join(); ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
         if (s_upgrade_confirm) {
-            if (y >= 613 && y < 677) {
+            if (y >= 613 && y < 677 &&
+                ((ev->x0 >= 60 && ev->x0 < 320) || (ev->x0 >= 364 && ev->x0 < 624))) {
                 s_upgrade_confirm = false;
+                s_upgrade_offer_pending = false;
                 if (ev->x0 >= 364 && ev->x0 < 624) {
                     if (s_upgrade_online) {
                         if (pico_online_download() != ESP_OK) snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "无法开始升级，请重新检查");
                         pico_online_get_status(&s_update);
+                        upgrade_remember(esp_timer_get_time() / 1000);
                     } else s_local_pending = true;
                 }
                 return APP_REDRAW_PAGE;
@@ -1315,10 +1357,14 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (ev->x0 < 60 || ev->x0 >= 624) return APP_REDRAW_NONE;
         if (y >= 550 && y < 612) {
             s_upgrade_notice[0] = 0;
-            if (s_update.busy) pico_online_cancel_join();
+            if (s_update.busy) { s_upgrade_offer_pending = false; pico_online_cancel_join(); }
             else if (s_update.state == PICO_UPDATE_AVAILABLE) { s_upgrade_confirm = true; s_upgrade_online = true; }
-            else if (pico_online_check() != ESP_OK) snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "无法检查更新，请退出传书后重试");
+            else {
+                s_upgrade_offer_pending = pico_online_check() == ESP_OK;
+                if (!s_upgrade_offer_pending) snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "无法检查更新，请退出传书后重试");
+            }
             pico_online_get_status(&s_update);
+            upgrade_remember(esp_timer_get_time() / 1000);
             return APP_REDRAW_PAGE;
         }
         if (y >= 840 && y < 902 && !s_update.busy) {
@@ -1802,9 +1848,16 @@ static void on_before_lock(app_ctx_t *ctx) {
     (void)ble_pt_stop(2000);
 }
 static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
+static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
+    if (redraw != APP_REDRAW_AREA || s_page != SETTINGS_UPGRADE) return false;
+    guard_draw_result(ctx->hl, update_display_area_with(ctx->hl, &E0470_WAVEFORM,
+                      MODE_GL16, upgrade_progress_area()));
+    return true;
+}
 
 const app_desc_t app_device_settings = {
     .title = "设置 Settings", .detail = "显示、连接与设备", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
     .on_enter = on_enter, .on_exit = settings_exit, .on_before_lock = on_before_lock, .render = render, .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key,
+    .present = settings_present,
 };

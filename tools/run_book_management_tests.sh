@@ -60,3 +60,4 @@ for test in ota_release ota_online; do
         -lm -o "build/book-tests/${test}"
     "build/book-tests/${test}"
 done
+python3 tools/ota_ui_host_test.py

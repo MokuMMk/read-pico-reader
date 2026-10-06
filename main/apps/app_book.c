@@ -2028,18 +2028,21 @@ static uint8_t inline_ink_gray(uint8_t gray) {
     return gray;
 }
 
+static void draw_reader_header(uint8_t *fb) {
+    ui_nav_back(fb, 36, 79);
+    char header[128];
+    copy_text(header, sizeof(header), s_book_title[0] ? s_book_title : s_title);
+    fit_text(header, 30, 450);
+    // 返回键、书名与收藏使用同一视觉中心线；字体切换不改变对齐。
+    // Back, title and favorite share one visual centerline across font changes.
+    ui_text_vc(fb, UI_LOCK_WIDTH / 2, 114, 30, header, EPD_DRAW_ALIGN_CENTER, false);
+    draw_favorite_icon(fb, 605, 96, 30, 36, s_reader_favorite, 0x38);
+    ui_hairline(fb, 151, 36, 612, UI_GRAY_LIGHT);
+}
 static void draw_reader(uint8_t* fb, size_t page) {
     ui_clear_page(fb);
     if (!(s_reader_fullscreen && app_settings_reader_immersive())) ui_nav_status(fb);
-    if (!s_reader_fullscreen) {
-        ui_nav_back(fb, 36, 79);
-        char header[128];
-        copy_text(header, sizeof(header), s_book_title[0] ? s_book_title : s_title);
-        fit_text(header, 30, 450);
-        ui_text(fb, UI_LOCK_WIDTH / 2, 94, 30, header, EPD_DRAW_ALIGN_CENTER, false);
-        draw_favorite_icon(fb, 605, 89, 30, 36, s_reader_favorite, 0x38);
-        ui_hairline(fb, 151, 36, 612, UI_GRAY_LIGHT);
-    }
+    if (!s_reader_fullscreen) draw_reader_header(fb);
     EpdRect body = body_rect();
     book_layout_draw_page(fb, page, body, s_px);
     if (page == 0 && s_chapter_lead_height && s_chapter_heading_title[0]) {

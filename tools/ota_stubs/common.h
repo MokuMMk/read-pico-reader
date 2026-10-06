@@ -35,7 +35,14 @@ typedef struct {uint8_t magic;uint8_t unused[11];uint16_t chip_id;uint8_t tail[1
 typedef struct {uint32_t address,length;} esp_image_segment_header_t;
 typedef struct {uint32_t address,size;} esp_partition_t;
 typedef struct FakeHttp *esp_http_client_handle_t;
-typedef struct {const char *url;int timeout_ms,buffer_size,buffer_size_tx;int (*crt_bundle_attach)(void*);bool disable_auto_redirect,keep_alive_enable;} esp_http_client_config_t;
+#define HTTP_EVENT_ON_HEADER 1
+typedef struct {int event_id; void *user_data; char *header_key, *header_value;} esp_http_client_event_t;
+typedef struct {const char *url;int timeout_ms,buffer_size,buffer_size_tx;int (*crt_bundle_attach)(void*);bool disable_auto_redirect,keep_alive_enable; int (*event_handler)(esp_http_client_event_t*);void *user_data;} esp_http_client_config_t;
+typedef int wifi_ps_type_t;
+#define WIFI_PS_MIN_MODEM 1
+#define WIFI_PS_NONE 0
+esp_err_t esp_wifi_get_ps(wifi_ps_type_t*);
+esp_err_t esp_wifi_set_ps(wifi_ps_type_t);
 typedef struct {int mode,state;bool network_ready;} read_pico_transfer_status_t;
 typedef struct {int mode;bool network_only;} read_pico_transfer_cfg_t;
 typedef struct {size_t bytes;} psa_hash_operation_t;
