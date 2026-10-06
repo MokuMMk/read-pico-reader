@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include "esp_heap_caps.h"
 #include "jpeg_decoder.h"
+#include "JPEGDEC.h"
 #include "png.h"
 
 static void *cover_alloc(size_t n) {
@@ -21,9 +22,143 @@ static uint8_t luminance(uint8_t r, uint8_t g, uint8_t b) {
     return (uint8_t)(((unsigned)r * 77 + (unsigned)g * 150 + (unsigned)b * 29) >> 8);
 }
 
+book_crop_t book_cover_crop(unsigned src_width, unsigned src_height,
+                            unsigned dst_width, unsigned dst_height) {
+    book_crop_t crop = {0, 0, src_width, src_height};
+    if (!src_width || !src_height || !dst_width || !dst_height) return crop;
+    // 比较 dst_w/src_w 与 dst_h/src_h，用交叉相乘避免浮点。
+    // Compare dst_w/src_w against dst_h/src_h by cross-multiplying, avoiding floating point.
+    if ((uint64_t)dst_width * src_height >= (uint64_t)dst_height * src_width) {
+        // 宽边受限：占满整宽，上下居中裁。/ Width-bound: keep the full width, crop top and bottom.
+        unsigned height = (unsigned)((uint64_t)dst_height * src_width / dst_width);
+        if (height < 1) height = 1;
+        if (height > src_height) height = src_height;
+        crop.height = height;
+        crop.y = (src_height - height) / 2;
+    } else {
+        // 高边受限：占满整高，左右居中裁。/ Height-bound: keep the full height, crop left and right.
+        unsigned width = (unsigned)((uint64_t)dst_width * src_height / dst_height);
+        if (width < 1) width = 1;
+        if (width > src_width) width = src_width;
+        crop.width = width;
+        crop.x = (src_width - width) / 2;
+    }
+    return crop;
+}
+
+/* ---- JPEG 帧头 / JPEG frame header ---- */
+
+// 读 SOF 标记与帧尺寸，只走标记段、不解码。
+// 0xC0 是基线，0xC2 是渐进式；ROM TJpgDec 只解基线，所以渐进式要交给 JPEGDEC。
+// Walk the marker segments and read the SOF marker plus the frame size. 0xC0 is baseline and
+// 0xC2 is progressive; the ROM TJpgDec decodes baseline only, so progressive frames go to
+// JPEGDEC.
+static bool jpeg_frame(const uint8_t *data, size_t size, uint8_t *sof,
+                       unsigned *width, unsigned *height) {
+    if (!data || size < 4 || data[0] != 0xFF || data[1] != 0xD8) return false;
+    size_t at = 2;
+    while (at + 1 < size) {
+        if (data[at] != 0xFF) { ++at; continue; }   // 段间的填充字节 / fill bytes between segments
+        uint8_t marker = data[at + 1];
+        if (marker == 0xFF) { ++at; continue; }
+        // 无长度字段的标记。/ Markers without a length field.
+        if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD9)) { at += 2; continue; }
+        if (at + 4 > size) return false;
+        size_t length = ((size_t)data[at + 2] << 8) | data[at + 3];
+        if (length < 2) return false;
+        // SOF0..SOF15，跳过 DHT(0xC4)、JPG(0xC8)、DAC(0xCC)。
+        // SOF0..SOF15, skipping DHT (0xC4), JPG (0xC8) and DAC (0xCC).
+        if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+            if (at + 9 > size) return false;
+            if (height) *height = ((unsigned)data[at + 5] << 8) | data[at + 6];
+            if (width) *width = ((unsigned)data[at + 7] << 8) | data[at + 8];
+            if (sof) *sof = marker;
+            return true;
+        }
+        at += 2 + length;
+    }
+    return false;
+}
+
+/* ---- 渐进式 JPEG / Progressive JPEG ---- */
+
+// EIGHT_BIT_GRAYSCALE 下 pPixels 每像素一个字节。JPEGDEC 按 MCU 块回调：块内 stride 是
+// iWidth，只有 iWidthUsed 列有效，坐标落在 JPEGDEC 缩放后的空间里。
+// Under EIGHT_BIT_GRAYSCALE pPixels holds one byte per pixel. JPEGDEC calls back per MCU
+// block: the stride inside a block is iWidth, only iWidthUsed columns are valid, and the
+// coordinates live in JPEGDEC's reduced space.
+typedef struct {
+    uint8_t *plane;
+    unsigned stride, height;
+} jpegdec_plane_t;
+
+static int jpegdec_collect(JPEGDRAW *draw) {
+    jpegdec_plane_t *plane = draw->pUser;
+    if (!plane || !plane->plane || draw->iBpp != 8 || !draw->pPixels || draw->iWidth < 1) return 0;
+    const uint8_t *src = (const uint8_t *)draw->pPixels;
+    const int columns = draw->iWidthUsed < draw->iWidth ? draw->iWidthUsed : draw->iWidth;
+    for (int row = 0; row < draw->iHeight; ++row) {
+        size_t y = (size_t)draw->y + row;
+        if (draw->y + row < 0 || y >= plane->height) break;
+        for (int column = 0; column < columns; ++column) {
+            if (draw->x + column < 0) continue;
+            size_t x = (size_t)draw->x + column;
+            if (x >= plane->stride) continue;
+            plane->plane[y * plane->stride + x] = src[(size_t)row * draw->iWidth + column];
+        }
+    }
+    return 1;
+}
+
+// ESP-IDF 下 JPEGDEC 只提供 C++ 类，组件里有一层 extern "C" 包装。
+// Under ESP-IDF JPEGDEC only offers the C++ class; the component wraps it with C linkage.
+extern int jpegdec_gray_progressive(const uint8_t *data, int size, JPEG_DRAW_CALLBACK *draw,
+                                    void *user, int *drawn_width, int *drawn_height);
+
+// 渐进式只取 DC 扫描，JPEGDEC 因此固定输出 1/8 分辨率；平面尺寸由帧头算出，
+// 与小平面一起缩到目标尺寸。对封面（176×240）来说已经足够，也避开了整幅系数数组。
+// Progressive decoding reads the DC scan only, so JPEGDEC always emits 1/8 resolution. The plane
+// size comes from the frame header and is resampled to the requested size: plenty for a 176x240
+// cover, and it never holds the full coefficient array.
+static bool jpegdec_gray(const uint8_t *data, size_t size, unsigned frame_width,
+                         unsigned frame_height, unsigned out_width, unsigned out_height,
+                         uint8_t *out) {
+    if (!data || size < 4 || size > INT32_MAX || !frame_width || !frame_height) return false;
+    jpegdec_plane_t plane = {
+        .stride = (frame_width + 7) / 8,
+        .height = (frame_height + 7) / 8,
+    };
+    if (plane.stride > 4096 || plane.height > 4096) return false;
+    plane.plane = cover_alloc((size_t)plane.stride * plane.height);
+    if (!plane.plane) return false;
+    memset(plane.plane, 0xFF, (size_t)plane.stride * plane.height);
+    const bool decoded = jpegdec_gray_progressive(data, (int)size, jpegdec_collect, &plane,
+                                                 NULL, NULL) != 0;
+    bool ok = false;
+    if (decoded) {
+        // 1/8 小平面同样按长边铺满 + 居中裁剪映射到目标。
+        // The 1/8 plane maps to the target the same way: fill the longer side, centre-crop.
+        const book_crop_t crop = book_cover_crop(plane.stride, plane.height, out_width, out_height);
+        for (unsigned y = 0; y < out_height; ++y) {
+            unsigned sy = crop.y + (unsigned)((uint64_t)y * crop.height / out_height);
+            for (unsigned x = 0; x < out_width; ++x) {
+                unsigned sx = crop.x + (unsigned)((uint64_t)x * crop.width / out_width);
+                out[y * out_width + x] = plane.plane[(size_t)sy * plane.stride + sx];
+            }
+        }
+        ok = true;
+    }
+    free(plane.plane);
+    return ok;
+}
+
 static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
                       unsigned out_height, uint8_t *out) {
     if (size > UINT32_MAX) return false;
+    uint8_t sof = 0;
+    unsigned frame_width = 0, frame_height = 0;
+    if (jpeg_frame(data, size, &sof, &frame_width, &frame_height) && sof == 0xC2)
+        return jpegdec_gray(data, size, frame_width, frame_height, out_width, out_height, out);
     esp_jpeg_image_cfg_t cfg = { .indata = (uint8_t *)data, .indata_size = (uint32_t)size,
                                  .out_format = JPEG_IMAGE_FORMAT_RGB565 };
     esp_jpeg_image_output_t info = {0};
@@ -39,10 +174,13 @@ static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
         cfg.outbuf = pixels;
         cfg.outbuf_size = info.output_len;
         if (esp_jpeg_decode(&cfg, &info) == ESP_OK) {
+            // 长边铺满再居中裁剪，长宽比不同也不拉伸。
+            // Fill by the longer side and centre-crop, so a different aspect ratio is not stretched.
+            const book_crop_t crop = book_cover_crop(info.width, info.height, out_width, out_height);
             for (unsigned y = 0; y < out_height; ++y) {
-                unsigned sy = (uint64_t)y * info.height / out_height;
+                unsigned sy = crop.y + (unsigned)((uint64_t)y * crop.height / out_height);
                 for (unsigned x = 0; x < out_width; ++x) {
-                    unsigned sx = (uint64_t)x * info.width / out_width;
+                    unsigned sx = crop.x + (unsigned)((uint64_t)x * crop.width / out_width);
                     const uint8_t *p = pixels + ((size_t)sy * info.width + sx) * 2;
                     uint16_t color = (uint16_t)p[0] | (uint16_t)p[1] << 8;
                     uint8_t r = (uint8_t)((color >> 11) & 31);
@@ -96,11 +234,16 @@ static bool png_gray(const uint8_t *data, size_t size, unsigned out_width,
     row = cover_alloc(stride);
     if (!row) goto done;
     unsigned next_y = 0;
+    // 流式读取时裁剪窗口同时作用于行与列：窗口外的行直接丢弃，列按窗口取样。
+    // The streaming reader applies the crop window to rows and columns alike: rows outside the
+    // window are dropped and columns are sampled inside it.
+    const book_crop_t crop = book_cover_crop(width, height, out_width, out_height);
     for (png_uint_32 y = 0; y < height; ++y) {
         png_read_row(png, row, NULL);
-        while (next_y < out_height && (uint64_t)next_y * height / out_height == y) {
+        while (next_y < out_height &&
+               crop.y + (uint64_t)next_y * crop.height / out_height == y) {
             for (unsigned x = 0; x < out_width; ++x) {
-                unsigned sx = (uint64_t)x * width / out_width;
+                unsigned sx = crop.x + (uint64_t)x * crop.width / out_width;
                 const uint8_t *p = row + sx * 4;
                 uint8_t gray = luminance(p[0], p[1], p[2]);
                 out[next_y * out_width + x] = (uint8_t)(((unsigned)gray * p[3] + 255u * (255u - p[3])) / 255u);
@@ -139,12 +282,12 @@ bool book_image_dimensions(const uint8_t *data, size_t size, bool png,
         *width = (uint32_t)data[16] << 24 | (uint32_t)data[17] << 16 | (uint32_t)data[18] << 8 | data[19];
         *height = (uint32_t)data[20] << 24 | (uint32_t)data[21] << 16 | (uint32_t)data[22] << 8 | data[23];
     } else {
-        if (size > UINT32_MAX) return false;
-        esp_jpeg_image_cfg_t cfg = {.indata = (uint8_t *)data, .indata_size = (uint32_t)size,
-                                    .out_format = JPEG_IMAGE_FORMAT_RGB888};
-        esp_jpeg_image_output_t info = {0};
-        if (esp_jpeg_get_image_info(&cfg, &info) != ESP_OK) return false;
-        *width = info.width; *height = info.height;
+        unsigned frame_width = 0, frame_height = 0;
+        // 帧头对基线、渐进式都能给出尺寸，而 esp_jpeg 只认基线。
+        // The frame header yields the size for baseline and progressive alike, where esp_jpeg
+        // only handles baseline.
+        if (!jpeg_frame(data, size, NULL, &frame_width, &frame_height)) return false;
+        *width = frame_width; *height = frame_height;
     }
     return *width > 0 && *height > 0 && *width <= 8192 && *height <= 8192;
 }

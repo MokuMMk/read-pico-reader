@@ -469,10 +469,17 @@ static void draw_shelf_cover(uint8_t* fb, EpdRect card, int row, const char* nam
     epd_fill_rect(image, UI_GRAY_LIGHT, fb);
     if (s_covers[row].gray) {
         const uint8_t *gray = s_covers[row].gray;
+        // 封面缓冲是 176×240、这一格是 164×214；按长边铺满 + 居中裁剪，避免被压扁。
+        // The cover buffer is 176x240 and this frame is 164x214; fill by the longer side and
+        // centre-crop so the artwork is not squashed.
+        const unsigned frame_width = (unsigned)image.width, frame_height = (unsigned)image.height;
+        const book_crop_t crop = book_cover_crop(BOOK_COVER_W, BOOK_COVER_H,
+                                                 frame_width, frame_height);
         for (int y = 0; y < image.height; ++y) {
+            const int sy = (int)(crop.y + (uint64_t)(unsigned)y * crop.height / frame_height);
             for (int x = 0; x < image.width; ++x) {
-                const uint8_t tone = ui_contrast_gray(gray[(y * BOOK_COVER_H / image.height) * BOOK_COVER_W +
-                                                            x * BOOK_COVER_W / image.width]);
+                const int sx = (int)(crop.x + (uint64_t)(unsigned)x * crop.width / frame_width);
+                const uint8_t tone = ui_contrast_gray(gray[sy * BOOK_COVER_W + sx]);
                 epd_draw_pixel(image.x + x, image.y + y,
                                ui_image_dither_gray(tone, image.x + x, image.y + y), fb);
             }
