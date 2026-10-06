@@ -29,6 +29,7 @@
 
 #include "app_registry.h"
 #include "app_content_open.h"
+#include "ble_page_turner.h"
 #include "continuous_du.h"
 #include "display.h"
 #include "e0470_epaper_waveform.h"
@@ -589,6 +590,23 @@ void app_loop_run(const app_loop_config_t* config) {
                 present_page(&ctx, current, &gesture, current->on_key_long(&ctx, key));
             }
         }
+        // 蓝牙翻页器：BLE 栈只在这里跟随设置启停。必须走 ble_pt_sync()——自己写
+        // 「设置与状态不一致就 start()」会让启动失败的那次判断每轮都成立，变成每秒
+        // 几十次重复初始化并把内存耗光。sync() 内部有内存闸门、失败退避和崩溃自锁。
+        // Bluetooth page-turner: the BLE stack follows the setting only here, and only through
+        // ble_pt_sync(). Rolling our own "state differs from setting, so start()" makes a failed
+        // start true on every tick, re-initialising dozens of times a second until memory runs
+        // out; sync() carries the memory gate, the failure back-off and the crash-loop lock.
+        // 蓝牙与 WiFi 共用同一个射频：传书/配网期间不启蓝牙，两者共存既要额外内存，
+        // 也会互相抢时隙。WiFi 停下后蓝牙会自己回来，因为设置本身没变。
+        // Bluetooth and WiFi share one radio: keep Bluetooth down while the transfer page runs
+        // WiFi, since coexistence costs extra memory and the two contend for airtime. Bluetooth
+        // returns on its own once WiFi stops, because the setting itself is unchanged.
+        read_pico_transfer_status_t transfer;
+        read_pico_transfer_get_status(&transfer);
+        const bool wifi_busy = transfer.state != READ_PICO_TRANSFER_STOPPED;
+        ble_pt_sync(app_settings_ble_turner() && !wifi_busy);
+        ble_pt_poll();
         if (!power_dialog_open && !menu_open && !ctx.request_app && !ctx.request_menu && !ctx.request_return && current->on_tick != NULL) {
             app_redraw_t redraw = current->on_tick(&ctx);
             if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) held_key = -1;

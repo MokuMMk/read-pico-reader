@@ -34,7 +34,18 @@ typedef struct {
 extern const uint8_t builtin_ttf_start[] asm("_binary_builtin_ttf_start");
 static stbtt_fontinfo s_font;
 static bool s_ready, s_attempted;
-static ui_glyph_t s_glyphs[UI_GLYPH_SLOTS];
+// 字形缓存放 PSRAM。每次取字形都会读一遍，但渲染本来就逐行读 PSRAM 里的
+// framebuffer，多这一处不改变量级。
+// The glyph cache lives in PSRAM. Every lookup walks it, but rendering already streams the
+// framebuffer out of PSRAM, so this does not change the order of magnitude.
+static ui_glyph_t *s_glyphs;
+
+static bool glyphs_alloc(void) {
+    if (!s_glyphs)
+        s_glyphs = heap_caps_calloc(UI_GLYPH_SLOTS, sizeof(ui_glyph_t),
+                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return s_glyphs != NULL;
+}
 static size_t s_bytes;
 static uint32_t s_age;
 static uint8_t s_cover[256];
@@ -89,6 +100,7 @@ static void evict(ui_glyph_t *g) {
 
 static ui_glyph_t *glyph(uint32_t cp, int px) {
     if (!ready()) return NULL;
+    if (!glyphs_alloc()) return NULL;
     px = clamp_px(px);
     for (int i = 0; i < UI_GLYPH_SLOTS; ++i)
         if (s_glyphs[i].used && s_glyphs[i].cp == cp && s_glyphs[i].px == px) {
