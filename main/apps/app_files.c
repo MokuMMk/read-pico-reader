@@ -37,7 +37,15 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+// RTC_CNTL_OPTION1_REG / FORCE_DOWNLOAD_BOOT 只有 esp32/s2/s3/c2/c3 有；ESP32-S31 没有
+// 这个寄存器（只有只读的 EFUSE_DIS_FORCE_DOWNLOAD），所以"从界面进下载模式"在 S31 上
+// 只能退化成重启并提示按键。
+// RTC_CNTL_OPTION1_REG / FORCE_DOWNLOAD_BOOT only exist on esp32/s2/s3/c2/c3; ESP32-S31 has no
+// such register (only the read-only EFUSE_DIS_FORCE_DOWNLOAD), so the UI's "enter BOOT mode"
+// degrades to a restart plus an instruction to hold the key.
+#if !defined(CONFIG_IDF_TARGET_ESP32S31)
 #include "soc/rtc_cntl_reg.h"
+#endif
 
 #define FILE_MAX 96
 #define FILE_ROWS 9
@@ -825,7 +833,14 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
         uint8_t req[2] = {0, 0};
         esp_err_t err = read_pico_pmu_cmd(PMU_CMD_HOST_REQUEST_RESET, req, sizeof(req));
         if (err != ESP_OK) ESP_LOGW("files", "BOOT PMU notice: %s", esp_err_to_name(err));
+#if defined(CONFIG_IDF_TARGET_ESP32S31)
+        ESP_LOGW(
+            "files",
+            "this chip has no force-download register; restarting into the app - hold BOOT to flash"
+        );
+#else
         REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+#endif
         esp_restart();
         return APP_REDRAW_NONE;
     }

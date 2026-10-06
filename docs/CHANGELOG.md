@@ -3,6 +3,12 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-05 · mindreset
+
+- 新增 Metalio E-Ink4-Plus（ESP32-S31）固件：同一份代码用 `-DPICO_BOARD=<名字>` 选板，`tools/build_board.ps1` 一条命令编译或烧录，两块板同面板（ED047TC2 1216×684）。
+- 新板支持：TPS65185 电源、FT6336U 触控、BQ27220 电量、PCF8563 RTC、SD 四线、电源键短按关机。显示路径用厂商示例固件的 epdiy 实现（MIT，见 `licenses/METALIO-MIT.txt`），原仓库 fork 仅用于 Read Pico。
+- 本版为本地验证版：显示、触控、TF 卡、电量、RTC、加速度计、短按关机已在真机验过；BLE 翻页器与连续 DU 在本板上未验。
+
 ## 2026-10-05 · Codex
 
 - 固件 0.3.3-rc72：修复部分 EPUB 兼容性。

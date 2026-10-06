@@ -32,6 +32,38 @@ extern "C" {
 /// / CST836U INT on TXD0 / GPIO43. Open-drain, active-low, 10k pull-up on the FPC.
 #define READ_PICO_TP_INT_GPIO CONFIG_READ_PICO_TP_INT_GPIO
 
+/// TF 卡接线。Read Pico 是 1 位总线；Metalio 走 SDMMC slot0 的专用 IOMUX，4 位。
+/// / Card wiring. Read Pico runs a 1-bit bus; Metalio uses the SDMMC slot 0 dedicated IOMUX in
+/// 4-bit mode.
+#if defined(PICO_BOARD_METALIO_EINK4_PLUS)
+#define READ_PICO_SD_CLK 24
+#define READ_PICO_SD_CMD 25
+#define READ_PICO_SD_D0 20
+#define READ_PICO_SD_D1 21
+#define READ_PICO_SD_D2 22
+#define READ_PICO_SD_D3 23
+#define READ_PICO_SD_WIDTH 4
+#else
+#define READ_PICO_SD_CLK 38
+#define READ_PICO_SD_CMD 42
+#define READ_PICO_SD_D0 44
+#define READ_PICO_SD_D1 GPIO_NUM_NC
+#define READ_PICO_SD_D2 GPIO_NUM_NC
+#define READ_PICO_SD_D3 GPIO_NUM_NC
+#define READ_PICO_SD_WIDTH 1
+#endif
+
+/// 触控芯片的 I2C 地址与中断脚。两颗芯片不同，read_pico_init.c 是共享的，所以差异在这里收敛。
+/// / Touch controller address and interrupt pin. The two boards differ and read_pico_init.c is
+/// shared, so the difference is concentrated here.
+#if defined(PICO_BOARD_METALIO_EINK4_PLUS)
+#define READ_PICO_TOUCH_ADDR 0x38
+#define READ_PICO_TOUCH_INT_GPIO 5
+#else
+#define READ_PICO_TOUCH_ADDR CST836U_ADDR_DEFAULT
+#define READ_PICO_TOUCH_INT_GPIO CONFIG_READ_PICO_TP_INT_GPIO
+#endif
+
 #define READ_PICO_PRODUCT_NAME "Read Pico"
 #define READ_PICO_DEVICE_NAME "小纸 Pico"
 /// 芯片平放实测 -5,-119,-1005；转到设备坐标后屏幕朝上约为 +Z。
@@ -40,7 +72,17 @@ extern "C" {
 #define READ_PICO_ACCEL_ZERO_Y_MG 5
 #define READ_PICO_ACCEL_ZERO_Z_MG 1005
 
+// 每块板一个定义，但对外只暴露 epd_board_read_pico 这一个名字，整棵树都只引用它，
+// 板级实现在 CMake 里二选一。ESP32-S31 上 Read Pico 的 SY7636A 与 16 位总线都不存在。
+// One definition per board, exposed under the single name epd_board_read_pico that the whole
+// tree refers to; CMake picks the implementation. On the ESP32-S31 board neither Read Pico's
+// SY7636A nor its 16-bit bus exists.
+#if defined(PICO_BOARD_METALIO_EINK4_PLUS)
+extern const EpdBoardDefinition epd_board_metalio_eink4_plus;
+#define epd_board_read_pico epd_board_metalio_eink4_plus
+#else
 extern const EpdBoardDefinition epd_board_read_pico;
+#endif
 
 i2c_master_bus_handle_t read_pico_i2c_bus(void);
 sy7636a_handle_t read_pico_sy7636a(void);

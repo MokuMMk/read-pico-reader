@@ -16,6 +16,16 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "soc/ledc_struct.h"
+
+// ESP32-S3 只有一个 LEDC 实例；ESP32-S31 拆成两组（组 0 = LEDC0，组 1 = LEDC1），
+// 而 LEDC_LOW_SPEED_MODE 就是组 1，所以低速组要用 LEDC1。
+// ESP32-S3 has a single LEDC instance; ESP32-S31 splits it into two groups (group 0 is LEDC0,
+// group 1 is LEDC1) and LEDC_LOW_SPEED_MODE is group 1, so the low-speed group is LEDC1.
+#if defined(CONFIG_IDF_TARGET_ESP32S31)
+#define PWM_AUDIO_LEDC LEDC1
+#else
+#define PWM_AUDIO_LEDC LEDC
+#endif
 #include "pwm_audio.h"
 
 static const char *TAG = "pwm_audio";
@@ -460,27 +470,33 @@ esp_err_t pwm_audio_init(const pwm_audio_config_t *cfg)
  PWM_AUDIO_CHECK(res == ESP_OK, "LEDC timer configuration failed", ESP_ERR_INVALID_ARG);
 
  // 缓存 LEDC 寄存器地址，缩短寻址。/ Cache LEDC register addresses to cut lookup time.
-#if defined (CONFIG_IDF_TARGET_ESP32P4) || defined (CONFIG_IDF_TARGET_ESP32C5) || defined (CONFIG_IDF_TARGET_ESP32C61)
- g_ledc_left_duty_val = &LEDC.channel_group[handle->ledc_timer.speed_mode].
+// ESP32-S31 的通道寄存器与 P4/C5/C61 同代，用 duty_init 而不是 duty。
+// ESP32-S31 shares the newer channel layout with P4/C5/C61: duty_init rather than duty.
+#if defined (CONFIG_IDF_TARGET_ESP32P4) || defined (CONFIG_IDF_TARGET_ESP32C5) \
+    || defined (CONFIG_IDF_TARGET_ESP32C61) || defined (CONFIG_IDF_TARGET_ESP32S31)
+ g_ledc_left_duty_val = &PWM_AUDIO_LEDC.channel_group[handle->ledc_timer.speed_mode].
  channel[handle->ledc_channel[CHANNEL_LEFT_INDEX].channel].duty_init.val;
 #else
- g_ledc_left_duty_val = &LEDC.channel_group[handle->ledc_timer.speed_mode].
+ g_ledc_left_duty_val = &PWM_AUDIO_LEDC.channel_group[handle->ledc_timer.speed_mode].
  channel[handle->ledc_channel[CHANNEL_LEFT_INDEX].channel].duty.val;
 #endif
- g_ledc_left_conf0_val = &LEDC.channel_group[handle->ledc_timer.speed_mode].
+ g_ledc_left_conf0_val = &PWM_AUDIO_LEDC.channel_group[handle->ledc_timer.speed_mode].
  channel[handle->ledc_channel[CHANNEL_LEFT_INDEX].channel].conf0.val;
- g_ledc_left_conf1_val = &LEDC.channel_group[handle->ledc_timer.speed_mode].
+ g_ledc_left_conf1_val = &PWM_AUDIO_LEDC.channel_group[handle->ledc_timer.speed_mode].
  channel[handle->ledc_channel[CHANNEL_LEFT_INDEX].channel].conf1.val;
-#if defined (CONFIG_IDF_TARGET_ESP32P4) || defined (CONFIG_IDF_TARGET_ESP32C5) || defined (CONFIG_IDF_TARGET_ESP32C61)
- g_ledc_right_duty_val = &LEDC.channel_group[handle->ledc_timer.speed_mode].
+// ESP32-S31 的通道寄存器与 P4/C5/C61 同代，用 duty_init 而不是 duty。
+// ESP32-S31 shares the newer channel layout with P4/C5/C61: duty_init rather than duty.
+#if defined (CONFIG_IDF_TARGET_ESP32P4) || defined (CONFIG_IDF_TARGET_ESP32C5) \
+    || defined (CONFIG_IDF_TARGET_ESP32C61) || defined (CONFIG_IDF_TARGET_ESP32S31)
+ g_ledc_right_duty_val = &PWM_AUDIO_LEDC.channel_group[handle->ledc_timer.speed_mode].
  channel[handle->ledc_channel[CHANNEL_RIGHT_INDEX].channel].duty_init.val;
 #else
- g_ledc_right_duty_val = &LEDC.channel_group[handle->ledc_timer.speed_mode].
+ g_ledc_right_duty_val = &PWM_AUDIO_LEDC.channel_group[handle->ledc_timer.speed_mode].
  channel[handle->ledc_channel[CHANNEL_RIGHT_INDEX].channel].duty.val;
 #endif
- g_ledc_right_conf0_val = &LEDC.channel_group[handle->ledc_timer.speed_mode].
+ g_ledc_right_conf0_val = &PWM_AUDIO_LEDC.channel_group[handle->ledc_timer.speed_mode].
  channel[handle->ledc_channel[CHANNEL_RIGHT_INDEX].channel].conf0.val;
- g_ledc_right_conf1_val = &LEDC.channel_group[handle->ledc_timer.speed_mode].
+ g_ledc_right_conf1_val = &PWM_AUDIO_LEDC.channel_group[handle->ledc_timer.speed_mode].
  channel[handle->ledc_channel[CHANNEL_RIGHT_INDEX].channel].conf1.val;
 
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)

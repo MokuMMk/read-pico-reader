@@ -489,6 +489,16 @@ void app_loop_run(const app_loop_config_t* config) {
         if (read_pico_pmu_ready() && !current->holds_pmu && !usb_storage_active()
             && ctx.now_ms - last_lock_poll_ms >= APP_LOCK_POLL_MS) {
             last_lock_poll_ms = ctx.now_ms;
+            // 必须先轮询再取动作：read_pico_pmu_take_key_action() 读的标志位是在
+            // read_pico_pmu_poll() 里由按键扫描设置的，而那个函数只在少数几个页面的 tick 里被调。
+            // Read Pico 上按键由 CW32 硬件看着，所以主循环不轮询也没事；本板没有 CW32，
+            // 不在主循环里轮询就等于从来不读电源键。
+            // Poll before taking the action: the flags read_pico_pmu_take_key_action() returns are
+            // set by the key scan inside read_pico_pmu_poll(), which is called from a few pages'
+            // ticks and never from the loop. On Read Pico the CW32 watches the key in hardware, so
+            // skipping it here was harmless; this board has no CW32, so without this the power key
+            // is never read at all.
+            (void)read_pico_pmu_poll();
             read_pico_pmu_key_action_t key_action = read_pico_pmu_take_key_action();
             if (key_action != READ_PICO_PMU_KEY_NONE) {
                 if (ctx.now_ms < s_lock_ignore_until_ms) {
@@ -523,6 +533,21 @@ void app_loop_run(const app_loop_config_t* config) {
                     cancel_gesture(&ctx, current, &gesture);
                     if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
                     menu_pressed = UI_MENU_HIT_NONE;
+#if defined(PICO_BOARD_METALIO_EINK4_PLUS)
+                    // 本板短按电源键=关机，走应用自己的关机流程：保存→画关机图→定稿→
+                    // 等按键空闲→epd_poweroff()→发 P13 脉冲。少掉 epd_poweroff 那一步，
+                    // 面板升压还在，电源芯片不会锁存关断（实测：脉冲后 2 秒板级又上电）。
+                    // On this board a short power press powers off, through the app's own
+                    // sequence: save, draw the power-off frame, settle, wait for key idle,
+                    // epd_poweroff(), then the P13 pulse. Without the epd_poweroff step the panel
+                    // boost keeps running and the supply will not latch off -- measured as the
+                    // board powering its rails back up two seconds after the pulse.
+                    run_power_action(&ctx, current, false);
+                    ctx.consumed = true;
+                    ctx.pressed = false;
+                    ctx.released = false;
+                    continue;
+#endif
                     app_redraw_t power_redraw = !menu_open && current->on_power_short
                         ? current->on_power_short(&ctx) : APP_REDRAW_NONE;
                     if (power_redraw != APP_REDRAW_NONE) {

@@ -9,6 +9,12 @@
 
 #include "read_pico_epd_timing.h"
 
+#if defined(PICO_BOARD_METALIO_EINK4_PLUS)
+// 厂商 epdiy 没有这几个函数，声明在兼容头里。
+// The vendor epdiy does not define these; the declarations live in the compat header.
+#include "epdiy_extras.h"
+#endif
+
 #include "e0470_epaper_waveform.h"
 #include "epdiy.h"
 #include "esp_log.h"
@@ -59,6 +65,7 @@ static int ceil_div(int n, int d) { return (n + d - 1) / d; }
 // / ceil(ns × f / 1000): minimum time to integer clocks at f MHz.
 static int clocks_for_ns(int ns, int pclk_mhz) { return ceil_div(ns * pclk_mhz, 1000); }
 
+#if !defined(PICO_BOARD_METALIO_EINK4_PLUS)
 static LcdLineTiming_t scan_to_line(const read_pico_epd_scan_t* s) {
     return (LcdLineTiming_t){
         .le_high_time = s->line_start,
@@ -67,11 +74,19 @@ static LcdLineTiming_t scan_to_line(const read_pico_epd_scan_t* s) {
         .ckv_high_time = s->ckv_high_01us,
     };
 }
+#endif
 
 static void apply_lcd(const read_pico_epd_scan_t* scan) {
+#if defined(PICO_BOARD_METALIO_EINK4_PLUS)
+    // 例程的 epdiy 没有 set_line_timing：行时序在 epd_lcd_init 时一次定好，改像素钟只能改频率。
+    // The vendor epdiy has no set_line_timing: the line timing is fixed by epd_lcd_init, and only
+    // the frequency can change afterwards.
+    epd_set_lcd_pixel_clock_MHz(scan->pclk_mhz);
+#else
     LcdLineTiming_t line = scan_to_line(scan);
     epd_lcd_set_line_timing(&line);
     epd_set_lcd_pixel_clock_MHz(scan->pclk_mhz);
+#endif
 }
 
 void read_pico_epd_scan(
@@ -158,12 +173,25 @@ void read_pico_epd_init_lcd(
     const read_pico_epd_scan_t* scan
 ) {
     if (bus == NULL || scan == NULL) return;
+#if defined(PICO_BOARD_METALIO_EINK4_PLUS)
+    // 例程的扁平结构：ckv_high_time / line_front_porch / le_high_time 直接在顶层。
+    // The vendor's flat struct puts ckv_high_time, line_front_porch and le_high_time at the top.
+    LcdEpdConfig_t config = {
+        .pixel_clock = (size_t)scan->pclk_mhz * 1000 * 1000,
+        .ckv_high_time = scan->ckv_high_01us,
+        .line_front_porch = scan->line_back_porch,
+        .le_high_time = scan->line_start,
+        .bus_width = bus_width,
+        .bus = *bus,
+    };
+#else
     LcdEpdConfig_t config = {
         .pixel_clock = (size_t)scan->pclk_mhz * 1000 * 1000,
         .line = scan_to_line(scan),
         .bus_width = bus_width,
         .bus = *bus,
     };
+#endif
     epd_lcd_init(&config, width, height);
 }
 

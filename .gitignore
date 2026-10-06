@@ -108,3 +108,8 @@ Desktop.ini
 *.workspace # General workspace files, can be from various tools
 *.suo       # Visual Studio Solution User Options
 *.sln.docstates # Visual Studio
+
+# 每块板的 SDKCONFIG 产物（tools/build_board.ps1 用 -DSDKCONFIG 生成）。
+# Per-board SDKCONFIG output, generated via -DSDKCONFIG by tools/build_board.ps1.
+sdkconfig.*
+
