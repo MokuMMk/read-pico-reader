@@ -42,7 +42,17 @@
 #define FILE_MAX 96
 #define FILE_ROWS 9
 typedef struct { char path[288]; char name[128]; off_t size; bool is_dir; } file_item_t;
-static file_item_t s_files[FILE_MAX];
+// 文件列表放 PSRAM：内部 RAM 已被静态占用到约 90%，而 BLE 控制器只能用内部 RAM，
+// 列表这类大数组没必要跟它抢。
+// The file list lives in PSRAM. Internal RAM is already around 90% statically used and the BLE
+// controller can only use internal RAM, so a list this big has no business holding any of it.
+static file_item_t *s_files;
+
+static bool files_alloc(void) {
+    if (!s_files)
+        s_files = heap_caps_calloc(FILE_MAX, sizeof(file_item_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return s_files != NULL;
+}
 static int s_count, s_folder, s_page;
 static int s_requested_folder = -1;
 static int s_counts[3];
@@ -315,6 +325,7 @@ static int compare_files(const void *left, const void *right) {
 }
 
 static void scan_folder(int folder) {
+    if (!files_alloc()) return;
     s_count = s_page = 0;
     s_message[0] = 0;
     read_pico_sd_get_info(&s_sd);

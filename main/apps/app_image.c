@@ -31,7 +31,16 @@ extern const uint8_t display_test_png_start[] asm("_binary_display_test_png_star
 extern const uint8_t display_test_png_end[] asm("_binary_display_test_png_end");
 
 typedef struct { char name[128]; char path[256]; bool png; } image_item_t;
-static image_item_t s_items[IMAGE_MAX];
+// 图片列表放 PSRAM，理由同文件列表：内部 RAM 留给只能用内部 RAM 的东西。
+// The image list lives in PSRAM for the same reason as the file list: internal RAM is kept for
+// what can only live there.
+static image_item_t *s_items;
+
+static bool items_alloc(void) {
+    if (!s_items)
+        s_items = heap_caps_calloc(IMAGE_MAX, sizeof(image_item_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return s_items != NULL;
+}
 static int s_count, s_page, s_selected;
 static uint8_t *s_gray;
 static unsigned s_width, s_height;
@@ -54,6 +63,7 @@ static bool image_name(const char *name, bool *png) {
 }
 
 static void scan_dir(const char *root) {
+    if (!items_alloc()) return;
     DIR *dir = opendir(root);
     if (!dir) return;
     struct dirent *entry;
