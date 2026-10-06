@@ -75,6 +75,7 @@ ICONS = (
     "file",              # 文件管理·文件行 / file manager, file row
     "rotate-cw",         # 电源弹窗·重启 / power dialog, restart
     "radio-tower",       # 传书页·创建热点 / transfer page, create hotspot
+    "chevron-right",     # 书架下一页 / next shelf page
 )
 
 _NUMBER = re.compile(r"[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")

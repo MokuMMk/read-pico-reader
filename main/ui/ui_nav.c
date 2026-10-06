@@ -15,20 +15,21 @@
 #include "read_pico_transfer.h"
 #include "ui_kit.h"
 #include "settings.h"
-#include "ble_page_turner.h"
 
 // 底栏图标盒、返回键箭头、充电闪电的边长。
 // Box sizes for the bar icons, the back chevron and the charging bolt.
 #define UI_NAV_TAB_ICON_PX 44
 #define UI_NAV_BACK_ICON_PX 38
 #define UI_NAV_BOLT_ICON_PX 26
+#define UI_NAV_NETWORK_ICON_PX 28
 
 static const char *const labels[] = {"首页", "书架", "文件管理", "设置"};
 
 void ui_nav_back(uint8_t *fb, int x, int y) {
     // 参考系统题头缩小返回键，中心仍保持在 y=113。/ Match the smaller reference back control while retaining the title centerline.
     ui_fill_round_rect(fb, (EpdRect){x, y + 13, 44, 44}, 22, UI_GRAY_WHITE);
-    ui_draw_round_rect(fb, (EpdRect){x, y + 13, 44, 44}, 22, 0xc0);
+    ui_draw_round_rect(fb, (EpdRect){x, y + 13, 44, 44}, 22, UI_NAV_BACK_BORDER_GRAY);
+    ui_draw_round_rect(fb, (EpdRect){x + 1, y + 14, 42, 42}, 21, UI_NAV_BACK_BORDER_GRAY);
     // Lucide chevron-left 的笔画占画布 14/24 高，取 38 像素复现原来 22 像素的视觉高度。
     // Lucide chevron-left spans 14/24 of its canvas, so 38 px reproduces the old 22 px visual height.
     ui_draw_icon(fb, x + 22, y + 35, UI_NAV_BACK_ICON_PX, UI_ICON_CHEVRON_LEFT, UI_GRAY_BLACK);
@@ -80,8 +81,20 @@ void ui_nav_status(uint8_t *fb) {
     read_pico_transfer_get_status(&network);
     const bool wifi_visible = network.network_ready && network.mode == READ_PICO_TRANSFER_MODE_STA;
     const bool bluetooth_visible = app_settings_ble_turner();
-    // 双图标时为签名留出安全间距；三者共用中心线。/ Reserve signature clearance for both icons on one centerline.
-    const int signature_width = wifi_visible && bluetooth_visible ? 220 : 280;
+    char percent[8] = "--%";
+    int gauge_percent = pmu_battery_percent(pmu);
+    if (gauge_percent >= 0) snprintf(percent, sizeof(percent), "%u%%", (unsigned)gauge_percent);
+    // 按实际百分比宽度排列网络图标，留 10 像素间隔；墨色与电池相同。
+    // Place the network marks 10 px before the measured percentage, using the battery ink.
+    const int network_right = 595 - ui_text_fixed_width_px(22, percent) - 10;
+    const int wifi_center = network_right - UI_NAV_NETWORK_ICON_PX / 2;
+    const int bluetooth_center = wifi_center - (wifi_visible ? UI_NAV_NETWORK_ICON_PX + 8 : 0);
+    int signature_width = 280;
+    if (wifi_visible || bluetooth_visible) {
+        int left = (bluetooth_visible ? bluetooth_center : wifi_center) - UI_NAV_NETWORK_ICON_PX / 2;
+        int available = 2 * (left - 12 - UI_LOCK_WIDTH / 2);
+        if (available < signature_width) signature_width = available > 0 ? available : 0;
+    }
     char signature[96];
     snprintf(signature, sizeof(signature), "%s", app_settings_status_signature());
     while (signature[0] && ui_text_fixed_width_px(21, signature) > signature_width) {
@@ -90,18 +103,15 @@ void ui_nav_status(uint8_t *fb) {
         signature[n] = 0;
     }
     if (signature[0]) ui_text_fixed(fb, UI_LOCK_WIDTH / 2, 29, 21, signature, EPD_DRAW_ALIGN_CENTER, false);
-    if (wifi_visible) ui_nav_wifi_icon(fb, 515, status_center_y, 30, 0x6a);
+    if (wifi_visible) ui_nav_wifi_icon(fb, wifi_center, status_center_y, UI_NAV_NETWORK_ICON_PX, UI_GRAY_BLACK);
     if (bluetooth_visible)
-        ui_draw_icon(fb, wifi_visible ? 479 : 515, status_center_y, 30, UI_ICON_BLUETOOTH,
-                     ble_pt_running() ? 0x6a : 0x8a);
+        ui_draw_icon(fb, bluetooth_center, status_center_y, UI_NAV_NETWORK_ICON_PX,
+                     UI_ICON_BLUETOOTH, UI_GRAY_BLACK);
     EpdRect battery = {606, status_center_y - 11, 40, 22};
     ui_draw_round_rect(fb, battery, 6, UI_GRAY_BLACK);
     ui_fill_round_rect(fb, (EpdRect){648, status_center_y - 4, 5, 8}, 2, UI_GRAY_BLACK);
-    char percent[8] = "--%";
     bool charging = pmu_battery_charging(pmu);
-    int gauge_percent = pmu_battery_percent(pmu);
     if (gauge_percent >= 0) {
-        snprintf(percent, sizeof(percent), "%u%%", (unsigned)gauge_percent);
         int width = (31 * gauge_percent + 50) / 100;
         if (width > 0) ui_fill_round_rect(fb, (EpdRect){610, status_center_y - 7, width, 14}, 4, UI_GRAY_BLACK);
     }

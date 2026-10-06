@@ -20,7 +20,10 @@ bool usb_storage_active(void) { return test_usb_active; }
 bool usb_storage_connected(void) { return test_usb_active; }
 static void tap(app_ctx_t* ctx, EpdRect rect) {
     ui_gesture_event_t ev = {.type = UI_GESTURE_PRESS, .x0 = rect.x + 2, .y0 = rect.y + 2, .x = rect.x + 2, .y = rect.y + 2};
-    on_gesture(ctx, &ev);
+    app_redraw_t pressed = on_gesture(ctx, &ev);
+    // 整页刷新在 app_loop 中会取消活动手势；入口反馈必须保留松手事件。
+    // app_loop cancels active gestures on a page refresh; feedback must preserve release.
+    assert(pressed != APP_REDRAW_PAGE && pressed != APP_REDRAW_FULL);
     ev.type = UI_GESTURE_TAP;
     on_gesture(ctx, &ev);
 }
@@ -88,6 +91,21 @@ int main(void) {
     on_tick(&ctx);
     assert(test_qr_encodes == 0);
     qr_regression(&ctx);
+    test_configured = true;
+    on_enter(&ctx);
+    tap(&ctx, method_control_rect(0));
+    assert(s_view == TRANSFER_HOME && s_start_pending && !s_scan_pending);
+    assert(s_mode == READ_PICO_TRANSFER_MODE_STA);
+    on_tick(&ctx);
+    tap(&ctx, control_rect(2));
+    assert(s_view == TRANSFER_METHODS && !s_start_pending);
+    test_configured = false;
+    on_enter(&ctx);
+    ui_gesture_event_t cancelled = {.type=UI_GESTURE_PRESS, .x0=50, .y0=350, .x=50, .y=350};
+    assert(on_gesture(&ctx, &cancelled) == APP_REDRAW_AREA);
+    cancelled.type = UI_GESTURE_CANCEL;
+    assert(on_gesture(&ctx, &cancelled) == APP_REDRAW_AREA);
+    assert(s_view == TRANSFER_METHODS && !s_start_pending && s_pressed == -1);
     for (int i = 0; i < 47; ++i) {
         EpdRect r = password_control_rect(i);
         assert(r.x >= 0 && r.x + r.width <= UI_LOCK_WIDTH);
@@ -102,6 +120,7 @@ int main(void) {
     assert(s_view == TRANSFER_NETWORKS && s_scan_pending);
     network_ui_tick(&ctx);
     assert(s_network_count == 8 && !s_scan_pending);
+    test_configured = s_saved_configured = true;
     tap(&ctx, (EpdRect){540, UI_NAV_TOP + 16, 20, 20});
     assert(test_nav_index == 3);
     test_nav_index = -1;

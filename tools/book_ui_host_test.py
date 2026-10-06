@@ -49,15 +49,21 @@ unit = r'''
 #define ESP_ERR_NVS_NOT_FOUND -2
 #define ESP_ERR_INVALID_STATE -3
 #define ESP_ERR_NOT_FINISHED 7
-typedef struct {int unused;} ble_pt_event_t;
-typedef struct {int unused;} ble_pt_raw_t;
-static bool ble_pt_pop_key(ble_pt_event_t *event){(void)event;return false;}
-static bool ble_pt_pop_raw(ble_pt_raw_t *event){(void)event;return false;}
+typedef struct {uint8_t usage,mods;} ble_pt_event_t;
+typedef struct {uint32_t code;bool pressed;} ble_pt_raw_t;
+typedef enum {BLE_PT_ACTION_NONE,BLE_PT_ACTION_PREV,BLE_PT_ACTION_NEXT} ble_pt_action_t;
+static ble_pt_event_t test_remote_keys[4];
+static ble_pt_raw_t test_remote_raw[4];
+static int test_remote_key_count,test_remote_raw_count;
+static bool ble_pt_pop_key(ble_pt_event_t *event){if(!test_remote_key_count)return false;*event=test_remote_keys[--test_remote_key_count];return true;}
+static bool ble_pt_pop_raw(ble_pt_raw_t *event){if(!test_remote_raw_count)return false;*event=test_remote_raw[--test_remote_raw_count];return true;}
+static uint32_t ble_pt_raw_code(const ble_pt_raw_t *raw){return raw->code;}
+static ble_pt_action_t ble_pt_action_for_raw(uint32_t code){return code==1?BLE_PT_ACTION_PREV:code==2?BLE_PT_ACTION_NEXT:BLE_PT_ACTION_NONE;}
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
 #define ESP_LOGI(...) ((void)0)
 typedef int esp_err_t;
-typedef struct {int leaf;bool request_menu;int64_t now_ms;} app_ctx_t;
+typedef struct {int leaf;bool request_menu;int64_t now_ms;uint8_t *fb;} app_ctx_t;
 typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE,APP_REDRAW_FULL} app_redraw_t;
 typedef struct {int x,y,width,height;} EpdRect;
 static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;return(EpdRect){40+i*(width+12),1096,width,96};}
@@ -216,6 +222,11 @@ static void app_files_request_folder(int folder){(void)folder;}
 #define UI_KEY_3 3
 static int s_pressed_control;
 static bool s_scan_pending,s_toolbar;
+static int s_mode,test_cover_prepares,test_shelf_renders;
+static EpdRect s_area;
+#define MODE_GL16 1
+static void prepare_covers(app_ctx_t *ctx){(void)ctx;++test_cover_prepares;}
+static void render(app_ctx_t *ctx,uint8_t *fb){(void)ctx;(void)fb;++test_shelf_renders;}
 static bool s_resume_pending,s_reader_cleanup,s_shake_enabled;
 static bool s_reader_fullscreen,test_reader_immersive,test_hold_refresh,test_hide_images,test_power_turn;
 static bool test_images_visible=true;
@@ -302,11 +313,35 @@ static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bo
 '''
 unit += function("book_layout_balanced_rect", layout_source) + "\n"
 unit += function("set_reader_view") + "\n"
+unit += function("ble_pt_action_for_usage", source.parents[2] / "components/ble_page_turner/src/ble_page_turner.c") + "\n"
 for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_hidden_key", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_rows", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
              "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "reader_manual_refresh", "apply_reader_option", "reader_return", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
+for name in ("book_remote_direction", "shelf_turn_page", "shelf_page_arrow_rect"):
+    unit += function(name) + "\n"
 unit += r'''
 int main(void) {
+    test_remote_keys[0]=(ble_pt_event_t){.usage=0x52};test_remote_key_count=1;
+    assert(book_remote_direction()==-1);
+    test_remote_keys[0]=(ble_pt_event_t){.usage=0x51};test_remote_key_count=1;
+    test_remote_raw[0]=(ble_pt_raw_t){.code=2,.pressed=true};test_remote_raw_count=1;
+    assert(book_remote_direction()==1&&book_remote_direction()==0);
+    test_remote_raw[0]=(ble_pt_raw_t){.code=1,.pressed=false};test_remote_raw_count=1;
+    assert(book_remote_direction()==0);
+    app_ctx_t remote_ctx={0};s_view=SHELF;test_shelf_style=2;s_visible_count=27;
+    assert(shelf_turn_page(&remote_ctx,-1)==APP_REDRAW_NONE&&remote_ctx.leaf==0);
+    assert(shelf_turn_page(&remote_ctx,1)==APP_REDRAW_AREA&&remote_ctx.leaf==1);
+    assert(test_cover_prepares==1&&test_shelf_renders==1&&s_area.y==196&&s_area.height==892);
+    remote_ctx.leaf=2;
+    assert(shelf_turn_page(&remote_ctx,1)==APP_REDRAW_NONE&&remote_ctx.leaf==2);
+    assert(shelf_turn_page(&remote_ctx,-1)==APP_REDRAW_AREA&&remote_ctx.leaf==1);
+    s_scan_pending=true;
+    assert(shelf_turn_page(&remote_ctx,1)==APP_REDRAW_NONE&&remote_ctx.leaf==1);
+    s_scan_pending=false;s_view=MANAGE;
+    assert(shelf_turn_page(&remote_ctx,1)==APP_REDRAW_NONE);
+    EpdRect left=shelf_page_arrow_rect(-1),right=shelf_page_arrow_rect(1);
+    assert(left.y==right.y&&left.y+left.height<=UI_BAR_TOP);
+    s_visible_count=0;s_view=SHELF;test_shelf_style=0;
     for (int gray=0; gray<=255; ++gray)
         assert(inline_ink_gray((uint8_t)gray)==gray);
     EpdRect margin_slider={36,700,294,66};

@@ -168,8 +168,12 @@
       <p>升级到 rc79 后，也可在系统升级页连接 WiFi，检查并安装官网后续更新。在线更新需要官网发布新版清单；升级期间请保持供电。</p>
     </section>
     <section class="release" aria-labelledby="release-title">
-      <div class="eyebrow">0.3.3-rc80 · 本地验证版</div><h2 id="release-title">这次更新了什么</h2>
+      <div class="eyebrow">0.3.3-rc81 · 联网测试版</div><h2 id="release-title">这次更新了什么</h2>
       <ul>
+        <li>修复 WiFi/热点选择页点击无响应：按下反馈只刷新单行，松手后正常跳转；已配网时直接启动 WiFi 传书。</li>
+        <li>所有圆形返回键外圈加深；状态栏 WiFi、蓝牙图标与电池同为黑色，缩小并靠近电量百分比。</li>
+        <li>书架点击封面增加向上抽出反馈；页码两侧新增翻页箭头，位置与文字对齐，首末页箭头置灰。</li>
+        <li>蓝牙翻页器支持书架上下键翻页：上/左键上一页，下/右键下一页；已学习按键同样生效，避免一次按键翻两页。</li>
         <li>合并 PR #3：支持渐进式 JPEG 封面，封面按比例缩放和居中裁剪。</li>
         <li>合并 PR #4：加入 BLE 蓝牙翻页器，设置界面与系统设计统一。</li>
         <li>状态栏增加 Lucide 蓝牙图标，可与 WiFi 同时显示；按键学习自动显示“识别成功”，网络启动前回收蓝牙资源。</li>
@@ -181,7 +185,7 @@
         <li>优化微读连接复用、下载等待和断网重试；新蓝牙选项加入配置备份。</li>
         <li>统一采用 PMU 软件油量表与有效位，状态栏和资料卡电量取整保持一致。</li>
       </ul>
-      <p>已通过编译与主机回归。本地测试版，联网升级、蓝牙配对和真实账号下载仍需实机验证。</p>
+      <p>已通过编译与主机回归。rc79、rc80 可在设备“设置 → 升级和恢复 → 系统升级”中检查联网更新到 rc81；联网升级、蓝牙配对和真实账号下载仍需实机验证。</p>
       <img src="./weread-preview.png" alt="微读跨页选择与逐本下载界面" style="display:block;width:100%;height:auto;margin-top:24px;border-radius:16px;">
     </section>
     <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点、USB 或微读传书导入书籍和文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>

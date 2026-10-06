@@ -370,6 +370,7 @@ static EpdRect progress_rect(void) {
     return (EpdRect){36, UI_BAR_TOP, UI_LOCK_WIDTH - 72, UI_BAR_H};
 }
 static int shelf_rows(void) { return app_settings_shelf_style() == 4 ? BOOK_ROWS : BOOK_GRID_ROWS; }
+#define SHELF_BOOK_LIFT_PX 16
 static EpdRect row_rect(int row) {
     if (s_view != BULK) {
         if (app_settings_shelf_style() == 4) {
@@ -573,6 +574,17 @@ static int leaves(void) {
 }
 static EpdRect shelf_manage_rect(void) { return (EpdRect){442, 94, 97, 54}; }
 static EpdRect shelf_import_rect(void) { return (EpdRect){551, 94, 97, 54}; }
+static EpdRect shelf_page_arrow_rect(int direction) {
+    return (EpdRect){direction < 0 ? 194 : 426, 1032, 64, 60};
+}
+static void draw_shelf_pager(uint8_t *fb, int count, int page, int pages) {
+    char label[64];
+    snprintf(label, sizeof(label), "%d本书 · %02d/%02d", count, page + 1, pages);
+    ui_text(fb, 342, 1053, 17, label, EPD_DRAW_ALIGN_CENTER, false);
+    ui_draw_icon(fb, 226, 1065, 22, UI_ICON_CHEVRON_LEFT, page > 0 ? 0 : 0x90);
+    ui_draw_icon(fb, 458, 1065, 22, UI_ICON_CHEVRON_RIGHT, page + 1 < pages ? 0 : 0x90);
+}
+static app_redraw_t shelf_turn_page(app_ctx_t *ctx, int direction);
 static EpdRect import_rect(int index) { return (EpdRect){36, 230 + index * 164, 612, 136}; }
 static void clean_filename(char *dst, size_t cap, const char *filename) {
     copy_text(dst, cap, filename);
@@ -1526,7 +1538,8 @@ static void draw_sheet(uint8_t* fb, int top, const char* title) {
 // 二级面板左上角的返回键：圆底加 Lucide chevron-left，各面板共用。
 // Secondary-panel back control: a circle with the Lucide chevron-left, shared by the panels.
 static void draw_sheet_back(uint8_t* fb, int top) {
-    epd_draw_circle(64, top + 57, 24, 0x78, fb);
+    epd_draw_circle(64, top + 57, 24, UI_NAV_BACK_BORDER_GRAY, fb);
+    epd_draw_circle(64, top + 57, 23, UI_NAV_BACK_BORDER_GRAY, fb);
     ui_draw_icon(fb, 64, top + 57, READER_SHEET_BACK_PX, UI_ICON_CHEVRON_LEFT, 0x38);
 }
 
@@ -2155,6 +2168,9 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
                 if (s_view == BULK) snprintf(mark, sizeof(mark), "%s", s_shelf[i].selected ? "已选" : "未选");
                 if (s_shelf[i].removed) snprintf(mark, sizeof(mark), "%s待清理", s_view == BULK && s_shelf[i].selected ? "已选·" : "已删·");
                 if (s_view == SHELF || s_view == MANAGE) {
+                    // 按下封面时书本向上抽出，书架层板与触摸命中区域保持原位。
+                    // Lift the pressed book while keeping the shelf and touch target in place.
+                    if (s_view == SHELF && s_pressed_control == row) r.y -= SHELF_BOOK_LIFT_PX;
                     if (app_settings_shelf_style() == 4 && row >= 3)
                         draw_shelf_spine(fb, r, name, s_shelf[i].favorite, row);
                     else draw_shelf_cover(fb, r, row, name, s_shelf[i].favorite);
@@ -2172,9 +2188,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         }
         if (s_view == SHELF || s_view == MANAGE) draw_shelf_furniture(fb);
         if (s_view == SHELF) {
-            char count[64];
-            snprintf(count, sizeof(count), "%d本书 · %02d/%02d", s_visible_count, ctx->leaf + 1, leaves());
-            ui_text(fb, 342, 1053, 17, count, EPD_DRAW_ALIGN_CENTER, false);
+            draw_shelf_pager(fb, s_visible_count, ctx->leaf, leaves());
             ui_nav_draw(fb, 1);
         }
         if (s_view != SHELF) {
@@ -3957,6 +3971,8 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
         if (s_view == SHELF) {
             int tab = ui_nav_hit(x, y);
             if (tab >= 0) { ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
+            if (ui_rect_hit(shelf_page_arrow_rect(-1), x, y)) return shelf_turn_page(ctx, -1);
+            if (ui_rect_hit(shelf_page_arrow_rect(1), x, y)) return shelf_turn_page(ctx, 1);
         }
         if (s_view == SHELF && ui_rect_hit(shelf_import_rect(), x, y)) {
             s_view = IMPORT;
@@ -4178,6 +4194,12 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
     }
     if (s_view == SHELF && ui_rect_hit(shelf_manage_rect(), x, y)) { *rect = shelf_manage_rect(); return 114; }
     if (s_view == SHELF && ui_rect_hit(shelf_import_rect(), x, y)) { *rect = shelf_import_rect(); return 115; }
+    if (s_view == SHELF) {
+        for (int i = 0; i < 2; ++i) {
+            *rect = shelf_page_arrow_rect(i ? 1 : -1);
+            if (ui_rect_hit(*rect, x, y)) return 116 + i;
+        }
+    }
     if (s_view == BULK) {
         for (int i = 0; i < 3; ++i) {
             *rect = bulk_filter_rect(i);
@@ -4197,8 +4219,21 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
 }
 static app_redraw_t paint_control(app_ctx_t* ctx, EpdRect rect) {
     render(ctx, ctx->fb);
-    s_area = rect;
     s_mode = MODE_DU;
+    if (s_view == SHELF) {
+        for (int row = 0; row < shelf_rows(); ++row) {
+            EpdRect target = row_rect(row);
+            if (rect.x != target.x || rect.y != target.y ||
+                rect.width != target.width || rect.height != target.height) continue;
+            // 覆盖抽出前后的并集，释放或取消时也擦净上方的旧封面。
+            // Refresh both book positions so release or cancellation clears the lifted edge.
+            rect.y -= SHELF_BOOK_LIFT_PX;
+            rect.height += SHELF_BOOK_LIFT_PX;
+            s_mode = MODE_GL16;
+            break;
+        }
+    }
+    s_area = rect;
     return APP_REDRAW_AREA;
 }
 static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
@@ -4336,15 +4371,8 @@ static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) 
             if (ev->type == UI_GESTURE_SWIPE_L) return turn_page(ctx, 1);
             if (ev->type == UI_GESTURE_SWIPE_R) return turn_page(ctx, -1);
         } else if (s_view == SHELF && (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R)) {
-            int next = ctx->leaf + (ev->type == UI_GESTURE_SWIPE_L ? 1 : -1);
-            if (next >= 0 && next < leaves()) {
-                ctx->leaf = next;
-                prepare_covers(ctx);
-                render(ctx, ctx->fb);
-                s_area = (EpdRect){0, 196, UI_LOCK_WIDTH, 892};
-                s_mode = MODE_GL16;
-                return APP_REDRAW_AREA;
-            }
+            app_redraw_t result = shelf_turn_page(ctx, ev->type == UI_GESTURE_SWIPE_L ? 1 : -1);
+            if (result != APP_REDRAW_NONE) return result;
         } else if ((s_view == BULK && !s_batch_confirm) &&
                    (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
             int next = ctx->leaf + (ev->type == UI_GESTURE_SWIPE_U ? 1 : -1);
@@ -4430,30 +4458,49 @@ static bool menu_handle_enabled(app_ctx_t* ctx) {
     (void)ctx;
     return s_view != READING && s_view != SHELF && s_view != TOC && s_view != EDIT;
 }
+static app_redraw_t shelf_turn_page(app_ctx_t *ctx, int direction) {
+    int next = ctx->leaf + direction;
+    if (s_view != SHELF || s_scan_pending || s_clear_confirm || next < 0 || next >= leaves())
+        return APP_REDRAW_NONE;
+    ctx->leaf = next;
+    s_pressed_control = -1;
+    prepare_covers(ctx);
+    render(ctx, ctx->fb);
+    s_area = (EpdRect){0, 196, UI_LOCK_WIDTH, 892};
+    s_mode = MODE_GL16;
+    return APP_REDRAW_AREA;
+}
+
+// 键事件与原始边沿可能属于同一份报告，每轮最多执行一次；其他子页只清理旧输入。
+// Keys and raw edges may come from the same report: apply one turn per tick, discard on other subpages.
+static int book_remote_direction(void) {
+    int direction = 0;
+    ble_pt_event_t event;
+    while (ble_pt_pop_key(&event)) {
+        ble_pt_action_t action = ble_pt_action_for_usage(event.usage, event.mods);
+        if (action == BLE_PT_ACTION_PREV) direction = -1;
+        else if (action == BLE_PT_ACTION_NEXT) direction = 1;
+    }
+    ble_pt_raw_t raw;
+    while (ble_pt_pop_raw(&raw)) {
+        if (!raw.pressed) continue;
+        ble_pt_action_t action = ble_pt_action_for_raw(ble_pt_raw_code(&raw));
+        if (action == BLE_PT_ACTION_PREV) direction = -1;
+        else if (action == BLE_PT_ACTION_NEXT) direction = 1;
+    }
+    return direction;
+}
 static app_redraw_t on_tick(app_ctx_t* ctx) {
     track_ticket_stats(ctx);
     if (ctx->consumed) return APP_REDRAW_NONE;
-    // 蓝牙翻页器：把收到的键折算成翻页，只在阅读正文里生效。同一份报告既会产生键事件、
-    // 也会产生原始边沿，两者可能同时命中，所以这里只累积一个方向、每轮最多翻一次。
-    // Bluetooth page-turner: fold received keys into page turns, only while reading. One report
-    // yields both a key event and raw edges, and both may match, so the direction is accumulated
-    // and applied at most once per tick.
-    if (s_view == READING && app_settings_ble_turner()) {
-        int ble_dir = 0;
-        ble_pt_event_t event;
-        while (ble_pt_pop_key(&event)) {
-            const ble_pt_action_t action = ble_pt_action_for_usage(event.usage, event.mods);
-            if (action == BLE_PT_ACTION_PREV) ble_dir = -1;
-            else if (action == BLE_PT_ACTION_NEXT) ble_dir = 1;
-        }
-        ble_pt_raw_t raw;
-        while (ble_pt_pop_raw(&raw)) {
-            if (!raw.pressed) continue;
-            const ble_pt_action_t action = ble_pt_action_for_raw(ble_pt_raw_code(&raw));
-            if (action == BLE_PT_ACTION_PREV) ble_dir = -1;
-            else if (action == BLE_PT_ACTION_NEXT) ble_dir = 1;
-        }
-        if (ble_dir) {
+    // 上/左为上一页，下/右为下一页；书架复用滑动的局部刷新，不闪动题头和底栏。
+    // Up/left turn back, down/right turn forward; the shelf reuses swipe refresh without flashing chrome.
+    if (app_settings_ble_turner()) {
+        int ble_dir = book_remote_direction();
+        if (ble_dir && s_view == SHELF) {
+            app_redraw_t redraw = shelf_turn_page(ctx, ble_dir);
+            if (redraw != APP_REDRAW_NONE) return redraw;
+        } else if (ble_dir && s_view == READING) {
             s_stats_activity_ms = ctx->now_ms;
             return turn_page(ctx, ble_dir);
         }

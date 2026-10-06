@@ -997,13 +997,19 @@ static app_redraw_t stop_usb_for_navigation(app_ctx_t *ctx, bool home) {
     return ctx->request_return || home ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
 }
 
-static app_redraw_t method_gesture(const ui_gesture_event_t *ev) {
+static app_redraw_t method_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     int old = s_pressed;
     int origin = hit_method(ev->x0, ev->y0);
     s_pressed = ev->type == UI_GESTURE_PRESS ? origin : -1;
     if (ev->type == UI_GESTURE_TAP && old >= 0 && old == origin && hit_method(ev->x, ev->y) == origin) {
         if (origin == 0) {
-            if (enter_networks()) return APP_REDRAW_PAGE;
+            if (s_status.wifi_configured) {
+                if (stop_upload_if_idle()) {
+                    queue_network_start(READ_PICO_TRANSFER_MODE_STA);
+                    s_method_message[0] = 0;
+                    return APP_REDRAW_PAGE;
+                }
+            } else if (enter_networks()) return APP_REDRAW_PAGE;
             snprintf(s_method_message, sizeof(s_method_message), "传输正在结束，请稍后再试");
         } else if (origin == 1) {
             if (start_hotspot_service()) return APP_REDRAW_PAGE;
@@ -1011,7 +1017,13 @@ static app_redraw_t method_gesture(const ui_gesture_event_t *ev) {
         }
         return APP_REDRAW_PAGE;
     }
-    return old == s_pressed ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
+    if (old == s_pressed) return APP_REDRAW_NONE;
+    // 按下反馈只刷新单行；整页刷新会取消尚未松手的手势，导致入口无法点击。
+    // Refresh only the pressed row; a page redraw cancels the active gesture before its tap.
+    render(ctx, ctx->fb);
+    s_area = method_control_rect(old >= 0 ? old : s_pressed);
+    s_settle = false;
+    return APP_REDRAW_AREA;
 }
 
 static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
@@ -1042,7 +1054,7 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
         ctx->request_return = true;
         return APP_REDRAW_NONE;
     }
-    if (s_view == TRANSFER_METHODS) return method_gesture(ev);
+    if (s_view == TRANSFER_METHODS) return method_gesture(ctx, ev);
     if (s_view != TRANSFER_HOME) return provisioning_gesture(ctx, ev);
     int old = s_pressed;
     int origin = hit_control(ev->x0, ev->y0);
