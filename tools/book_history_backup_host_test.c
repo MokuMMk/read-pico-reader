@@ -12,7 +12,8 @@ static int counts[2], active;
 struct nvs_iterator_opaque { int ns, index; };
 
 static int namespace_index(const char *name) {
-    for (int i = 0; i < 5; ++i) if (!strcmp(name, namespaces[i])) return i;
+    for (unsigned i = 0; i < sizeof(namespaces) / sizeof(namespaces[0]); ++i)
+        if (!strcmp(name, namespaces[i])) return (int)i;
     return -1;
 }
 static record_t *find_record(int ns, const char *key) {
@@ -120,16 +121,36 @@ int main(void) {
     const char *stale = "/sdcard/books/stale.epub";
     assert(put(0,"last",NVS_TYPE_STR,stale,strlen(stale)+1)==ESP_OK);
     assert(put(3,"f_deadbeef",NVS_TYPE_U8,&favorite,1)==ESP_OK);
+    // 旧备份不含移出状态，恢复时清除机器上后加的隐藏记录。/ Legacy restore clears later removals.
+    snprintf(key,sizeof(key),"h_%08x",path_hash);
+    assert(put(5,key,NVS_TYPE_STR,path,path_len)==ESP_OK);
     assert(book_history_backup_restore(f)==ESP_OK);
     assert(counts[1]==counts[0]);
     assert(!find_record(3,"f_deadbeef"));
+    assert(!find_record(5,key));
     for (int i=0;i<counts[0];++i) {
         record_t *a=&records[0][i], *b=find_record(a->ns,a->key);
         assert(b && b->type==a->type && b->len==a->len && !memcmp(a->data,b->data,a->len));
     }
+    fclose(f);
+    // 新备份完整恢复隐藏记录，并继续保留进度和收藏。/ New backups restore removal and reading data.
+    active=0;
+    assert(put(5,key,NVS_TYPE_STR,path,path_len)==ESP_OK);
+    f=tmpfile(); assert(f);
+    assert(book_history_backup_write(f)==ESP_OK);
+    rewind(f); assert(book_history_backup_validate(f));
+    active=1; rewind(f);
+    assert(book_history_backup_restore(f)==ESP_OK && counts[1]==counts[0]);
+    for (int i=0;i<counts[0];++i) {
+        record_t *a=&records[0][i], *b=find_record(a->ns,a->key);
+        assert(b && b->type==a->type && b->len==a->len && !memcmp(a->data,b->data,a->len));
+    }
+    assert(!valid_record(5,NVS_TYPE_STR,key,(const uint8_t*)other,other_len));
+    assert(!valid_record(5,NVS_TYPE_STR,key,(const uint8_t*)path,path_len-1));
+    assert(!valid_record(5,NVS_TYPE_BLOB,key,(const uint8_t*)path,path_len));
     assert(fseek(f,-1,SEEK_END)==0); assert(fputc(0xff,f)!=EOF); fflush(f);
     rewind(f); assert(!book_history_backup_validate(f));
     fclose(f);
-    puts("book history backup: progress, time, bookmarks, favorites, titles and checksum passed");
+    puts("book history backup: progress, time, bookmarks, favorites, titles, shelf removals and checksum passed");
     return 0;
 }

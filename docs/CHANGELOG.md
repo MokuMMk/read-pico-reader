@@ -6,6 +6,7 @@ User-visible changes by date and author; Git retains implementation history. See
 ## 2026-10-05 · DeepSeek Harness
 
 - 界面图标统一到 Lucide（未发布版本）：底栏四栏、返回箭头、菜单把手、充电闪电、阅读工具栏五个图标，以及设置页的对比度、关机睡眠、状态栏签名、首页强刷、保存与恢复五项，从手绘线段改为 Lucide 原图；WiFi、书签等原有图标也走同一条路径，线宽与灰度统一。新增 `main/assets/ui_icons.h` 与 `ui_draw_icon()`：48 像素 4bpp alpha 掩模，按实际像素做透明度合成，所以同一个图标能落在任意底色上。新增 `tools/gen_ui_icons.py`，从仓库内 `tools/icons/lucide/*.svg` 可复现地生成该头文件，不依赖 `previews/`；随之删除三份依赖已缺失 `previews/` 目录、无法复跑的旧图标生成器及其资产（`gen_app_icons.py`、`gen_wifi_glyph.py`、`gen_reader_refresh_icon.py`、`test_wifi_glyph.py`、`main/assets/app_icons.h`、`wifi_glyph.h`、`reader_refresh_icon.h`，其中 80×80 的应用图标数组此前已无任何调用点）。仅通过 CI 同款编译检查，图标观感尚待实机验收。
+- 书架收录读过的书（未发布版本）：从文件管理打开的 TXT/EPUB 可以位于 TF 卡任意位置，此前读完不会出现在书架里；现在只要留下阅读进度就上书架，文件已删除或内容已被替换的记录不上架。管理页新增「移出书架」：只把选中的书移出书架并记住，文件和阅读进度都保留，再次打开这本书就会重新上书架；批量按钮改为两行各三格，标签压到四字以内以免放大系统字号时顶出按钮。新增 `book_progress_list()` 供书架枚举已保存进度的路径；移出记录纳入配置备份，恢复上架核对路径碰撞。仅通过产品配置构建与宿主测试的语法检查，观感与行为尚待实机验收。
 
 ## 2026-10-05 · Codex
 

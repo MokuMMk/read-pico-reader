@@ -2,8 +2,8 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 中文：把阅读进度、时长、书签、收藏和自定义书名流式备份到 TF 卡。
- * English: Stream progress, reading time, bookmarks, favorites and custom titles to the TF backup.
+ * 中文：把阅读进度、时长、书签、收藏、自定义书名和移出书架状态流式备份到 TF 卡。
+ * English: Stream progress, reading time, bookmarks, favorites, titles and shelf removals to TF.
  */
 #include "book_history_backup.h"
 #include <stdlib.h>
@@ -15,7 +15,7 @@
 #define HISTORY_RECORD_HEADER 20
 
 static const char *const namespaces[] = {
-    "rp_books", "rp_ticket", "rp_marks", "rp_favs", "rp_titles"
+    "rp_books", "rp_ticket", "rp_marks", "rp_favs", "rp_titles", "rp_shelf"
 };
 
 static uint32_t hash_bytes(uint32_t hash, const void *data, size_t len) {
@@ -52,7 +52,16 @@ static bool valid_record(unsigned ns, uint8_t type, const char *key, const uint8
     }
     if (ns == 2) return book_key(key, 'm') && type == NVS_TYPE_BLOB && len >= 300;
     if (ns == 3) return book_key(key, 'f') && type == NVS_TYPE_U8 && len == 1 && data[0] <= 1;
-    return book_key(key, 't') && type == NVS_TYPE_BLOB && len >= 4;
+    if (ns == 4) return book_key(key, 't') && type == NVS_TYPE_BLOB && len >= 4;
+    // 新命名空间追加在末尾，旧备份的索引保持不变；完整路径与键必须属于同一本书。
+    // Append the namespace to preserve legacy indices; the full path must match its hashed key.
+    if (!book_key(key, 'h') || type != NVS_TYPE_STR || len < 2 || len > 288 ||
+        data[0] != '/' || data[len - 1] != 0 || strnlen((const char *)data, len) != len - 1)
+        return false;
+    char expected[11];
+    snprintf(expected, sizeof(expected), "h_%08lx",
+             (unsigned long)hash_bytes(UINT32_C(2166136261), data, len - 1));
+    return !strcmp(key, expected);
 }
 
 static esp_err_t read_value(nvs_handle_t h, const nvs_entry_info_t *info, uint8_t **value, size_t *len) {
