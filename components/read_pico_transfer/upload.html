@@ -42,6 +42,7 @@ dialog::backdrop{background:#20222175}dialog h2{margin-bottom:10px}dialog p{marg
 <section><h2>存储状态</h2><p id="storage" role="status">正在读取设备状态…</p><p class="hint">保持 Pico 停留在传输页面。上传后会保存到对应文件夹。</p></section>
 <section id="browser"><div class="line"><h2>浏览 TF 卡</h2><button id="refresh" class="tiny" type="button">刷新目录</button></div>
 <div class="toolbar"><button id="up" class="tiny" type="button">上一级</button><span id="path">/</span><button id="newFolder" class="tiny" type="button">新建文件夹</button></div>
+<div class="upload" data-kind="file"><p class="hint">先打开目标文件夹，再添加文件。支持任意格式，保留原文件名；同名文件会先询问。</p><input type="file" multiple aria-label="选择任意文件"><button class="primary send" type="button">添加文件到当前目录</button><p class="result" role="status"></p></div>
 <p id="listState" class="hint" role="status"></p><ul id="entries"></ul>
 <div class="pages"><button id="previous" class="tiny" type="button">上一页</button><span id="pageState" class="muted"></span><button id="next" class="tiny" type="button">下一页</button></div></section>
 <section class="upload" data-kind="book"><h2>上传书籍</h2><p class="hint">EPUB、TXT → books。同名文件会先询问。</p><input type="file" accept=".epub,.txt" multiple aria-label="选择书籍"><button class="primary send" type="button">上传到 books</button><p class="result" role="status"></p></section>
@@ -68,7 +69,7 @@ $('newFolder').onclick=()=>openEditor('mkdir');
 $('previous').onclick=()=>{if(page){--page;loadDirectory().catch(showError)}};
 $('next').onclick=()=>{if(page+1<pages){++page;loadDirectory().catch(showError)}};
 function upload(file,url,onProgress){return new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('PUT',url);xhr.upload.onprogress=e=>onProgress(e.loaded,e.total||file.size);xhr.onload=()=>{try{resolve({status:xhr.status,body:JSON.parse(xhr.responseText)})}catch{reject(Error('设备响应无法解析，请检查文件是否已保存'))}};xhr.onerror=()=>reject(Error('连接中断，请保持手机连接 Pico 热点'));xhr.send(file)})}
-const types={book:{re:/\.(epub|txt)$/i,url:'/upload',limit:0},font:{re:/\.(ttf|otf)$/i,url:'/font-upload',limit:33554432},picture:{re:/\.(jpg|jpeg|png)$/i,url:'/image-upload',limit:20971520}};
+const types={file:{re:null,url:'/file-upload',limit:0},book:{re:/\.(epub|txt)$/i,url:'/upload',limit:0},font:{re:/\.(ttf|otf)$/i,url:'/font-upload',limit:33554432},picture:{re:/\.(jpg|jpeg|png)$/i,url:'/image-upload',limit:20971520}};
 const cropWidth=684,cropHeight=1216;
 let cropImage=null,cropZoom=1,cropX=0,cropY=0,cropPointer=null;
 function cropScale(){return cropImage?Math.max(cropWidth/cropImage.naturalWidth,cropHeight/cropImage.naturalHeight)*cropZoom:1}
@@ -83,7 +84,32 @@ $('cropPreview').onpointermove=event=>{if(!cropPointer||cropPointer.id!==event.p
 $('cropPreview').onpointerup=$('cropPreview').onpointercancel=()=>{cropPointer=null};
 $('wallpaperSend').onclick=async()=>{if(!cropImage||busy)return;const result=$('wallpaperResult');if(!policy||policy.is_flash){result.textContent='设备未连接或 TF 卡未就绪';return}lock(true);try{result.textContent='正在制作 684 × 1216 壁纸…';const canvas=document.createElement('canvas');canvas.width=cropWidth;canvas.height=cropHeight;drawCrop(canvas);let blob=null;for(const quality of [0.86,0.72,0.56,0.42]){blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));if(blob&&blob.size<=2097152)break}if(!blob)throw Error('手机无法生成裁剪图片');if(blob.size>2097152)throw Error('图片仍过大，请换一张图片');if(blob.size>policy.free_bytes)throw Error('TF 卡空间不足');const name='pico-wallpaper-'+Date.now()+'.jpg';const url='/image-upload?name='+encodeURIComponent(name)+'&wallpaper=1';const response=await upload(blob,url,(done,total)=>result.textContent='正在上传壁纸 · '+size(done)+' / '+size(total));if(response.status!==200)throw Error(response.body.error||'壁纸上传失败');result.textContent='已设为壁纸锁屏';await info();if(path==='pictures')await loadDirectory()}catch(error){result.textContent=error.message}finally{lock(false)}};
 drawCrop($('cropPreview'));
-async function sendFiles(section){if(busy||!policy||policy.is_flash)return;const kind=section.dataset.kind,config=types[kind],files=[...section.querySelector('input').files],result=section.querySelector('.result');if(!files.length){result.textContent='请先选择文件';return}lock(true);for(const file of files){try{if(!config.re.test(file.name)||file.name.startsWith('.'))throw Error('文件格式不支持');if(!file.size)throw Error('文件为空');if((config.limit&&file.size>config.limit)||(kind==='book'&&policy.file_limit&&file.size>policy.file_limit))throw Error('文件超过上限');if(file.size>policy.free_bytes)throw Error('TF 卡剩余空间不足');result.textContent='正在上传 '+file.name;const url=config.url+'?name='+encodeURIComponent(file.name);let response=await upload(file,url,(done,total)=>result.textContent='正在上传 '+file.name+' · '+size(done)+' / '+size(total));if(response.status===409&&confirm('同名文件已存在，是否替换？\n'+file.name))response=await upload(file,url+'&overwrite=1',(done,total)=>result.textContent='正在替换 '+file.name+' · '+size(done)+' / '+size(total));if(response.status!==200)throw Error(response.body.error||'上传失败');result.textContent='已保存 '+file.name;await info();if(path==={book:'books',font:'fonts',picture:'pictures'}[kind])await loadDirectory()}catch(error){result.textContent=file.name+'：'+error.message}}lock(false)}
+async function sendFiles(section){
+ if(busy||!policy||policy.is_flash)return;
+ const kind=section.dataset.kind,config=types[kind],files=[...section.querySelector('input').files],result=section.querySelector('.result'),destination=path;
+ if(!files.length){result.textContent='请先选择文件';return}
+ lock(true);
+ let saved=0,failed=0;
+ try{for(const file of files){try{
+  if(config.re&&(!config.re.test(file.name)||file.name.startsWith('.')))throw Error('文件格式不支持');
+  if(kind!=='file'&&!file.size)throw Error('文件为空');
+  if((config.limit&&file.size>config.limit)||(kind==='book'&&policy.file_limit&&file.size>policy.file_limit))throw Error('文件超过上限');
+  if(file.size>policy.free_bytes)throw Error('TF 卡剩余空间不足');
+  const target=join(destination,file.name);
+  if(kind==='file'&&new TextEncoder().encode(target).length>238)throw Error('路径过长，请缩短名称');
+  const shown=kind==='file'?'/'+target:file.name;
+  result.textContent='正在上传 '+shown;
+  const url=config.url+(kind==='file'?'?path='+encodeURIComponent(target):'?name='+encodeURIComponent(file.name));
+  let response=await upload(file,url,(done,total)=>result.textContent='正在上传 '+shown+' · '+size(done)+' / '+size(total));
+  if(response.status===409&&confirm('同名文件已存在，是否替换？\n'+shown))response=await upload(file,url+'&overwrite=1',(done,total)=>result.textContent='正在替换 '+shown+' · '+size(done)+' / '+size(total));
+  if(response.status!==200)throw Error(response.body.error||'上传失败');
+  ++saved;result.textContent='已保存 '+shown;
+  await info();
+  if(kind==='file'||path==={book:'books',font:'fonts',picture:'pictures'}[kind])await loadDirectory();
+ }catch(error){++failed;result.textContent=file.name+'：'+error.message}}
+ if(files.length>1)result.textContent='已保存 '+saved+' 个文件'+(kind==='file'?'到 /'+destination:'')+(failed?' · '+failed+' 个未保存':'');
+ }finally{lock(false)}
+}
 document.querySelectorAll('.upload').forEach(section=>section.querySelector('.send').onclick=()=>sendFiles(section));
 info().then(loadDirectory).catch(error=>$('storage').textContent=error.message+'，请刷新网页重试');
 </script>

@@ -75,6 +75,11 @@ enum EpdDrawError update_display_area_with(
 );
 /// 动画定稿只驱动真实差异，不强制把区域内所有 GL16 像素重刷。
 /// Animation settle drives real differences only instead of forcing every GL16 pixel in the area.
+/// 在指定区域驱动全部像素，用于局部定稿和清残影。/ Drive all pixels within an area for local settling and ghost cleanup.
+enum EpdDrawError update_display_area_full_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
+    EpdRect area
+);
 enum EpdDrawError update_display_area_diff_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area

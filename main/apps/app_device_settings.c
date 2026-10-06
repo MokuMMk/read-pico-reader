@@ -4,8 +4,11 @@
  *
  * 中文：分组设置页；网络短时对时后 PMU 持续走时，开机恢复系统时钟。
  * English: Grouped settings; temporary WiFi sync seeds the PMU, whose RTC restores time at boot.
+ * 用户修订：设置列表滑动仅差分刷新内容，滑动过程中不周期插入黑白清屏。
+ * User revision: settings lists scroll with content-only differentials and no periodic black/white wipe during swipes.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include "esp_heap_caps.h"
 #include <dirent.h>
 #include <string.h>
@@ -55,6 +58,7 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_TEXT_EDIT } settings_page_t;
 static settings_page_t s_page;
 static int s_style_scroll, s_main_scroll;
+static bool s_scroll_drag_consumed, s_scroll_present_pending;
 // 蓝牙翻页器子页：滚动位置、正在学习哪个动作（0 未学，1 上一页，2 下一页）、提示行。
 // Bluetooth sub-page: scroll offset, which action is being learned (0 idle, 1 prev, 2 next),
 // and a notice line.
@@ -715,14 +719,14 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_page == SETTINGS_SYSTEM_SIZE) {
         back_header(fb, "系统字号");
         section(fb, 248, "界面文字大小");
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 11; ++i) {
             int value = 100 + i * 10;
-            EpdRect box = {36, 298 + i * 116, 612, 90};
+            EpdRect box = {36 + (i % 2) * 316, 298 + (i / 2) * 122, 296, 102};
             bool active = app_settings_system_font_size() == value;
             settings_card(fb, box, 20, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
             char label[48]; snprintf(label, sizeof(label), "%d%%", value);
-            ui_text_vc(fb, 64, box.y + 45, 29, label, EPD_DRAW_ALIGN_LEFT, false);
-            if (active) epd_fill_circle(605, box.y + 45, 8, UI_GRAY_BLACK, fb);
+            ui_text_vc(fb, box.x + 24, box.y + 51, 29, label, EPD_DRAW_ALIGN_LEFT, false);
+            if (active) epd_fill_circle(box.x + box.width - 25, box.y + 51, 8, UI_GRAY_BLACK, fb);
         }
         ui_nav_draw(fb, 3);
         return;
@@ -922,38 +926,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
-    const int profile_y = 164 - s_main_scroll;
-    if (profile_y + 106 > 160) {
-        settings_card(fb, (EpdRect){36, profile_y, 612, 106}, 24, UI_GRAY_WHITE, 0x70);
-        bool avatar_ok = app_settings_avatar_path()[0] &&
-            ui_wallpaper_draw_rounded(fb, app_settings_avatar_path(),
-                                      (EpdRect){57, profile_y + 11, 82, 82}, 20);
-        if (!avatar_ok) {
-            ui_fill_round_rect(fb, (EpdRect){57, profile_y + 11, 82, 82}, 20, 0x30);
-            ui_text(fb, 98, profile_y + 25, 49, "P", EPD_DRAW_ALIGN_CENTER, true);
-        }
-        char profile_name[64]; snprintf(profile_name, sizeof(profile_name), "%s", app_settings_device_name());
-        while (profile_name[0] && ttf_text_width_px(ui_text_effective_px(30), profile_name) > 345) {
-            size_t n = strlen(profile_name) - 1;
-            while (n && ((unsigned char)profile_name[n] & 0xc0) == 0x80) --n;
-            profile_name[n] = 0;
-        }
-        ui_text(fb, 164, profile_y + 19, 30, profile_name, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 164, profile_y + 62, 19, "Pico reader by Kiiko", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 618, profile_y + 62, 19, "编辑  ›", EPD_DRAW_ALIGN_RIGHT, false);
-        const pmu_snapshot_t *pmu = read_pico_pmu_get();
-        {
-            char battery[12] = "--%";
-            int percent = pmu_battery_percent(pmu);
-            if (percent >= 0) snprintf(battery, sizeof(battery), "%u%%", (unsigned)percent);
-            // 电量和“编辑”从同一左边界起排，避免数字较短时看起来偏右。
-            // Start the percentage at the edit label's left edge so short numbers do not appear offset.
-            int edit_left = 618 - ui_text_fixed_width_px(ui_text_effective_px(19), "编辑  ›");
-            ui_text(fb, edit_left, profile_y + 26, 22, battery, EPD_DRAW_ALIGN_LEFT, false);
-        }
-    }
-    char wifi_ssid[33] = {0}; bool wifi_saved = false;
-    (void)read_pico_transfer_get_saved_wifi(wifi_ssid, &wifi_saved);
     if (s_page == SETTINGS_BLE_SCAN) {
         ui_nav_back(fb, 36, 79);
         ui_text_vc(fb, 342, 107, 34, "扫描设备", EPD_DRAW_ALIGN_CENTER, false);
@@ -1059,6 +1031,38 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
+    const int profile_y = 164 - s_main_scroll;
+    if (profile_y + 106 > 160) {
+        settings_card(fb, (EpdRect){36, profile_y, 612, 106}, 24, UI_GRAY_WHITE, 0x70);
+        bool avatar_ok = app_settings_avatar_path()[0] &&
+            ui_wallpaper_draw_rounded(fb, app_settings_avatar_path(),
+                                      (EpdRect){57, profile_y + 11, 82, 82}, 20);
+        if (!avatar_ok) {
+            ui_fill_round_rect(fb, (EpdRect){57, profile_y + 11, 82, 82}, 20, 0x30);
+            ui_text(fb, 98, profile_y + 25, 49, "P", EPD_DRAW_ALIGN_CENTER, true);
+        }
+        char profile_name[64]; snprintf(profile_name, sizeof(profile_name), "%s", app_settings_device_name());
+        while (profile_name[0] && ttf_text_width_px(ui_text_effective_px(30), profile_name) > 345) {
+            size_t n = strlen(profile_name) - 1;
+            while (n && ((unsigned char)profile_name[n] & 0xc0) == 0x80) --n;
+            profile_name[n] = 0;
+        }
+        ui_text(fb, 164, profile_y + 19, 30, profile_name, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 164, profile_y + 62, 19, "Pico reader by Kiiko", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 618, profile_y + 62, 19, "编辑  ›", EPD_DRAW_ALIGN_RIGHT, false);
+        const pmu_snapshot_t *pmu = read_pico_pmu_get();
+        {
+            char battery[12] = "--%";
+            int percent = pmu_battery_percent(pmu);
+            if (percent >= 0) snprintf(battery, sizeof(battery), "%u%%", (unsigned)percent);
+            // 电量和“编辑”从同一左边界起排，避免数字较短时看起来偏右。
+            // Start the percentage at the edit label's left edge so short numbers do not appear offset.
+            int edit_left = 618 - ui_text_fixed_width_px(ui_text_effective_px(19), "编辑  ›");
+            ui_text(fb, edit_left, profile_y + 26, 22, battery, EPD_DRAW_ALIGN_LEFT, false);
+        }
+    }
+    char wifi_ssid[33] = {0}; bool wifi_saved = false;
+    (void)read_pico_transfer_get_saved_wifi(wifi_ssid, &wifi_saved);
     const char *wireless_labels[] = {"WiFi", "蓝牙翻页器"};
     char wireless_value[56]; snprintf(wireless_value, sizeof(wireless_value), "%s  ›", wifi_saved ? wifi_ssid : "未配置");
     fit_value(wireless_value, 235);
@@ -1108,6 +1112,7 @@ static void on_enter(app_ctx_t *ctx) {
     s_ble_feedback[0] = 0;
     s_page = SETTINGS_MAIN;
     s_style_scroll = s_main_scroll = s_font_page = s_wallpaper_page = 0;
+    s_scroll_drag_consumed = s_scroll_present_pending = false;
     s_wallpaper_selected = -1;
     s_wallpaper_confirm = s_wallpaper_preview_ok = false;
     s_sync_pending = false;
@@ -1318,6 +1323,42 @@ save_text:
     return APP_REDRAW_PAGE;
 }
 
+// 手指越过阈值就推进至少三行；一轮拖动只刷新一次，松手不再重复滚动。
+// Advance at least three rows on crossing the drag threshold; refresh once per drag, without repeating on release.
+static app_redraw_t scroll_gesture(const ui_gesture_event_t *ev, int *offset, int limit, bool *handled) {
+    *handled = ev->type != UI_GESTURE_TAP || s_scroll_drag_consumed;
+    if (ev->type == UI_GESTURE_PRESS) {
+        s_scroll_drag_consumed = false;
+        return APP_REDRAW_NONE;
+    }
+    if (ev->type == UI_GESTURE_TAP || ev->type == UI_GESTURE_CANCEL) {
+        s_scroll_drag_consumed = false;
+        return APP_REDRAW_NONE;
+    }
+    if (ev->type != UI_GESTURE_MOVE && ev->type != UI_GESTURE_SWIPE_U && ev->type != UI_GESTURE_SWIPE_D)
+        return APP_REDRAW_NONE;
+    if (ev->y0 < (s_page == SETTINGS_MAIN ? 160 : 190) || ev->y0 >= UI_NAV_TOP)
+        return APP_REDRAW_NONE;
+    if (s_scroll_drag_consumed) {
+        if (ev->type != UI_GESTURE_MOVE) s_scroll_drag_consumed = false;
+        return APP_REDRAW_NONE;
+    }
+    int dy = (int)ev->y - ev->y0, dx = (int)ev->x - ev->x0;
+    int distance = abs(dy);
+    if (ev->type == UI_GESTURE_MOVE && (distance < 108 || distance <= abs(dx))) return APP_REDRAW_NONE;
+    int step = distance < 204 ? 204 : distance > 450 ? 450 : distance;
+    bool up = ev->type == UI_GESTURE_SWIPE_U || (ev->type == UI_GESTURE_MOVE && dy < 0);
+    int next = *offset + (up ? step : -step);
+    if (limit < 0) limit = 0;
+    if (next < 0) next = 0;
+    if (next > limit) next = limit;
+    if (ev->type == UI_GESTURE_MOVE) s_scroll_drag_consumed = true;
+    if (next == *offset) return APP_REDRAW_NONE;
+    *offset = next;
+    s_scroll_present_pending = true;
+    return APP_REDRAW_AREA;
+}
+
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     if (s_page == SETTINGS_BOOT) {
         if (ev->type != UI_GESTURE_TAP || s_boot_pending) return APP_REDRAW_NONE;
@@ -1376,20 +1417,26 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_NONE;
     }
     if (s_page == SETTINGS_TEXT_EDIT) return profile_editor_gesture(ev);
-    if (s_page == SETTINGS_MAIN &&
-        (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
-        int next = s_main_scroll + (ev->type == UI_GESTURE_SWIPE_U ? 80 : -80);
-        if (next < 0) next = 0;
-        if (next > SETTINGS_SCROLL_MAX) next = SETTINGS_SCROLL_MAX;
-        if (next == s_main_scroll) return APP_REDRAW_NONE;
-        s_main_scroll = next;
-        return APP_REDRAW_PAGE;
+    if (s_page == SETTINGS_MAIN || s_page == SETTINGS_BLUETOOTH || s_page == SETTINGS_BLE_SCAN) {
+        int limit = SETTINGS_SCROLL_MAX;
+        int *offset = &s_main_scroll;
+        if (s_page != SETTINGS_MAIN) {
+            int bottom = s_page == SETTINGS_BLUETOOTH ? ble_layout().content_bottom + s_ble_scroll : ble_scan_layout().content_bottom;
+            limit = bottom - UI_NAV_TOP + 12;
+            offset = &s_ble_scroll;
+        }
+        bool handled;
+        app_redraw_t redraw = scroll_gesture(ev, offset, limit, &handled);
+        if (handled) return redraw;
     }
     if (s_page == SETTINGS_AVATAR && (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
         int pages = (s_wallpaper_count + 6) / 7;
+        int old = s_wallpaper_page;
         if (ev->type == UI_GESTURE_SWIPE_U && s_wallpaper_page + 1 < pages) ++s_wallpaper_page;
         if (ev->type == UI_GESTURE_SWIPE_D && s_wallpaper_page > 0) --s_wallpaper_page;
-        return APP_REDRAW_PAGE;
+        if (s_wallpaper_page == old) return APP_REDRAW_NONE;
+        s_scroll_present_pending = true;
+        return APP_REDRAW_AREA;
     }
     if (s_page == SETTINGS_WALLPAPER_PREVIEW && !s_wallpaper_confirm &&
         (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
@@ -1405,28 +1452,20 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (next > 253) next = 253;
         if (next == s_style_scroll) return APP_REDRAW_NONE;
         s_style_scroll = next;
-        return APP_REDRAW_PAGE;
+        s_scroll_present_pending = true;
+        return APP_REDRAW_AREA;
     }
     if ((s_page == SETTINGS_SYSTEM_FONT || s_page == SETTINGS_WALLPAPER) &&
         (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
         int *page = s_page == SETTINGS_SYSTEM_FONT ? &s_font_page : &s_wallpaper_page;
         int count = s_page == SETTINGS_SYSTEM_FONT ? ttf_font_count() + 1 : s_wallpaper_count;
         int pages = count > 0 ? (count + 7) / 8 : 1;
+        int old = *page;
         if (ev->type == UI_GESTURE_SWIPE_U && *page + 1 < pages) ++*page;
         if (ev->type == UI_GESTURE_SWIPE_D && *page > 0) --*page;
-        return APP_REDRAW_PAGE;
-    }
-    if ((s_page == SETTINGS_BLUETOOTH || s_page == SETTINGS_BLE_SCAN) &&
-        (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
-        int bottom = s_page == SETTINGS_BLUETOOTH ? ble_layout().content_bottom + s_ble_scroll : ble_scan_layout().content_bottom;
-        int limit = bottom - UI_NAV_TOP + 12;
-        if (limit < 0) limit = 0;
-        int next = s_ble_scroll + (ev->type == UI_GESTURE_SWIPE_U ? 80 : -80);
-        if (next < 0) next = 0;
-        if (next > limit) next = limit;
-        if (next == s_ble_scroll) return APP_REDRAW_NONE;
-        s_ble_scroll = next;
-        return APP_REDRAW_PAGE;
+        if (*page == old) return APP_REDRAW_NONE;
+        s_scroll_present_pending = true;
+        return APP_REDRAW_AREA;
     }
     if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
     if (s_page == SETTINGS_WALLPAPER_PREVIEW && s_wallpaper_confirm) {
@@ -1524,11 +1563,14 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_PAGE;
     }
     if (s_page == SETTINGS_SYSTEM_SIZE) {
-        if (y < 298 || y >= 878) return APP_REDRAW_NONE;
-        int index = (y - 298) / 116;
-        app_settings_set_system_font_size((uint8_t)(100 + index * 10));
-        ui_text_set_system_scale(true);
-        return APP_REDRAW_PAGE;
+        for (int index = 0; index < 11; ++index) {
+            EpdRect box = {36 + (index % 2) * 316, 298 + (index / 2) * 122, 296, 102};
+            if (!ui_rect_hit(box, ev->x0, y)) continue;
+            app_settings_set_system_font_size((uint8_t)(100 + index * 10));
+            ui_text_set_system_scale(true);
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
     }
     if (s_page == SETTINGS_SYSTEM_CONTRAST) {
         if (y < 298 || y >= 878) return APP_REDRAW_NONE;
@@ -1625,18 +1667,6 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
     if (s_page == SETTINGS_BLUETOOTH) {
         const ble_layout_t l = ble_layout();
-        // 上下滑滚动；上限由内容底推导，内容再变长也不会被卡住。
-        // Swipe to scroll; the limit derives from the content bottom, so a longer page never sticks.
-        if (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D) {
-            const int step = ev->type == UI_GESTURE_SWIPE_U ? 80 : -80;
-            int next = s_ble_scroll + step;
-            const int limit = l.content_bottom + s_ble_scroll - UI_NAV_TOP + 8;
-            if (next > limit) next = limit;
-            if (next < 0) next = 0;
-            if (next == s_ble_scroll) return APP_REDRAW_NONE;
-            s_ble_scroll = next;
-            return APP_REDRAW_PAGE;
-        }
         if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
         // 版式给的是屏幕坐标（已减去滚动量），所以这里直接用 y 比，不再加 scroll。
         // The layout yields screen coordinates (scroll already subtracted), so compare y directly.
@@ -1715,16 +1745,6 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
     if (s_page == SETTINGS_BLE_SCAN) {
         const ble_scan_layout_t l = ble_scan_layout();
-        if (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D) {
-            const int step = ev->type == UI_GESTURE_SWIPE_U ? 80 : -80;
-            int next = s_ble_scroll + step;
-            const int limit = l.content_bottom - UI_NAV_TOP + 8;
-            if (next > limit) next = limit;
-            if (next < 0) next = 0;
-            if (next == s_ble_scroll) return APP_REDRAW_NONE;
-            s_ble_scroll = next;
-            return APP_REDRAW_PAGE;
-        }
         if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
         if (y < 160 || y >= UI_NAV_TOP) return APP_REDRAW_NONE;
         const int ty = y + s_ble_scroll;
@@ -1849,6 +1869,19 @@ static void on_before_lock(app_ctx_t *ctx) {
 }
 static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
 static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
+    if (redraw == APP_REDRAW_AREA && s_scroll_present_pending &&
+        (s_page == SETTINGS_MAIN || s_page == SETTINGS_BLUETOOTH || s_page == SETTINGS_BLE_SCAN ||
+         s_page == SETTINGS_SHELF_STYLE || s_page == SETTINGS_SYSTEM_FONT ||
+         s_page == SETTINGS_WALLPAPER || s_page == SETTINGS_AVATAR)) {
+        s_scroll_present_pending = false;
+        render(ctx, ctx->fb);
+        int top = s_page == SETTINGS_MAIN ? 160 : s_page == SETTINGS_SHELF_STYLE ? 242 : 190;
+        EpdRect area = {0, top, UI_LOCK_WIDTH, UI_NAV_TOP - top};
+        // 只驱动变化像素，滚动次数不触发黑白清屏；题头与底栏保持稳定。
+        // Drive changed pixels only; scroll counts never trigger a wipe, and header/nav stay stable.
+        guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, area));
+        return true;
+    }
     if (redraw != APP_REDRAW_AREA || s_page != SETTINGS_UPGRADE) return false;
     guard_draw_result(ctx->hl, update_display_area_with(ctx->hl, &E0470_WAVEFORM,
                       MODE_GL16, upgrade_progress_area()));

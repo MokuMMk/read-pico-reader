@@ -187,7 +187,7 @@ void app_settings_init(void) {
         s_system_font[0] = 0;
     uint8_t system_size = 120;
     if (nvs_get_u8(h, NVS_KEY_SYS_SIZE, &system_size) == ESP_OK &&
-        system_size >= 100 && system_size <= 140 && system_size % 10 == 0)
+        system_size >= 100 && system_size <= 200 && system_size % 10 == 0)
         s_system_size = system_size;
     uint8_t system_contrast = 100;
     if (nvs_get_u8(h, NVS_KEY_SYS_CONTRAST, &system_contrast) == ESP_OK &&
@@ -356,7 +356,7 @@ void app_settings_set_system_font_path(const char* path) {
 }
 uint8_t app_settings_system_font_size(void) { return s_system_size; }
 void app_settings_set_system_font_size(uint8_t percent) {
-    if (percent < 100 || percent > 140 || percent % 10 || percent == s_system_size) return;
+    if (percent < 100 || percent > 200 || percent % 10 || percent == s_system_size) return;
     s_system_size = percent;
     nvs_put_u8(NVS_KEY_SYS_SIZE, percent);
 }
@@ -776,7 +776,7 @@ static bool backup_valid(const settings_backup_v1_t *backup) {
          memcmp(backup->magic, "PICOSET7", 8)) ||
         checksum != backup_checksum(backup)) return false;
     if (f[BK_SLEEP] > APP_SLEEP_OFF || f[BK_PICKUP] > 1 ||
-        f[BK_SYS_SIZE] < 100 || f[BK_SYS_SIZE] > 140 || f[BK_SYS_SIZE] % 10 ||
+        f[BK_SYS_SIZE] < 100 || f[BK_SYS_SIZE] > 200 || f[BK_SYS_SIZE] % 10 ||
         f[BK_SYS_CONTRAST] < 100 || f[BK_SYS_CONTRAST] > 140 || f[BK_SYS_CONTRAST] % 10 ||
         f[BK_LOCK] > 1 || f[BK_BOOK_PX] < 36 || f[BK_BOOK_PX] > 72 ||
         f[BK_SHAKE] > 1 || (f[BK_FULL_PAGES] != 0 && f[BK_FULL_PAGES] != 5 &&

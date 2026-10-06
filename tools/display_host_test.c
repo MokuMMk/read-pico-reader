@@ -88,6 +88,13 @@ int main(void) {
     for (int i = 0; i < 80; ++i)
         assert(update_display_area_with(&hl, &E0470_WAVEFORM, MODE_GL16, (EpdRect){0, 0, 16, 16}) == EPD_DRAW_SUCCESS);
     assert(last_mode == MODE_GL16);
+    // 反复局部差分不强驱动未变像素，也不累积整页 GC16 计数。
+    // Repeated local differentials neither force unchanged pixels nor advance whole-page GC16 cleanup.
+    int locals_full = full_draws;
+    for (int i = 0; i < 200; ++i)
+        assert(update_display_area_diff_with(&hl, &E0470_WAVEFORM, MODE_GL16,
+                                            (EpdRect){0, 160, 684, 936}) == EPD_DRAW_SUCCESS);
+    assert(full_draws == locals_full && last_mode == MODE_GL16);
     for (int i = 0; i < APP_UI_GC16_EVERY - 1; ++i) {
         assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS);
         assert(last_mode == MODE_GL16);

@@ -22,6 +22,9 @@
 #define UI_NAV_BACK_ICON_PX 38
 #define UI_NAV_BOLT_ICON_PX 26
 #define UI_NAV_NETWORK_ICON_PX 28
+#define UI_STATUS_TIME_PX 28
+#define UI_STATUS_PERCENT_PX 28
+#define UI_STATUS_SIGNATURE_PX 26
 
 static const char *const labels[] = {"首页", "书架", "文件管理", "设置"};
 
@@ -76,7 +79,7 @@ void ui_nav_status(uint8_t *fb) {
     const int status_center_y = 40;
     // 固定状态栏字号，让系统字体缩放时文字仍与图标共用中心线。
     // Keep status type fixed so text and glyphs share one centerline at every system font scale.
-    ui_text_fixed(fb, 36, 28, 24, clock, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, 36, status_center_y, UI_STATUS_TIME_PX, clock, EPD_DRAW_ALIGN_LEFT, false);
     read_pico_transfer_status_t network = {0};
     read_pico_transfer_get_status(&network);
     const bool wifi_visible = network.network_ready && network.mode == READ_PICO_TRANSFER_MODE_STA;
@@ -86,23 +89,29 @@ void ui_nav_status(uint8_t *fb) {
     if (gauge_percent >= 0) snprintf(percent, sizeof(percent), "%u%%", (unsigned)gauge_percent);
     // 按实际百分比宽度排列网络图标，留 10 像素间隔；墨色与电池相同。
     // Place the network marks 10 px before the measured percentage, using the battery ink.
-    const int network_right = 595 - ui_text_fixed_width_px(22, percent) - 10;
+    const int percent_left = 595 - ui_text_fixed_width_px(UI_STATUS_PERCENT_PX, percent);
+    const int network_right = percent_left - 10;
     const int wifi_center = network_right - UI_NAV_NETWORK_ICON_PX / 2;
     const int bluetooth_center = wifi_center - (wifi_visible ? UI_NAV_NETWORK_ICON_PX + 8 : 0);
     int signature_width = 280;
+    const int clock_right = 36 + ui_text_fixed_width_px(UI_STATUS_TIME_PX, clock);
+    int available = 2 * (UI_LOCK_WIDTH / 2 - clock_right - 12);
+    if (available < signature_width) signature_width = available > 0 ? available : 0;
+    int group_left = percent_left;
     if (wifi_visible || bluetooth_visible) {
-        int left = (bluetooth_visible ? bluetooth_center : wifi_center) - UI_NAV_NETWORK_ICON_PX / 2;
-        int available = 2 * (left - 12 - UI_LOCK_WIDTH / 2);
-        if (available < signature_width) signature_width = available > 0 ? available : 0;
+        group_left = (bluetooth_visible ? bluetooth_center : wifi_center) - UI_NAV_NETWORK_ICON_PX / 2;
     }
+    available = 2 * (group_left - 12 - UI_LOCK_WIDTH / 2);
+    if (available < signature_width) signature_width = available > 0 ? available : 0;
     char signature[96];
     snprintf(signature, sizeof(signature), "%s", app_settings_status_signature());
-    while (signature[0] && ui_text_fixed_width_px(21, signature) > signature_width) {
+    while (signature[0] && ui_text_fixed_width_px(UI_STATUS_SIGNATURE_PX, signature) > signature_width) {
         size_t n = strlen(signature) - 1;
         while (n && ((unsigned char)signature[n] & 0xc0) == 0x80) --n;
         signature[n] = 0;
     }
-    if (signature[0]) ui_text_fixed(fb, UI_LOCK_WIDTH / 2, 29, 21, signature, EPD_DRAW_ALIGN_CENTER, false);
+    if (signature[0]) ui_text_fixed_vc(fb, UI_LOCK_WIDTH / 2, status_center_y, UI_STATUS_SIGNATURE_PX,
+                                      signature, EPD_DRAW_ALIGN_CENTER, false);
     if (wifi_visible) ui_nav_wifi_icon(fb, wifi_center, status_center_y, UI_NAV_NETWORK_ICON_PX, UI_GRAY_BLACK);
     if (bluetooth_visible)
         ui_draw_icon(fb, bluetooth_center, status_center_y, UI_NAV_NETWORK_ICON_PX,
@@ -122,7 +131,7 @@ void ui_nav_status(uint8_t *fb) {
         // so white ink vanishes on the light part and no SOC-dependent colour is needed.
         ui_draw_icon(fb, 627, status_center_y, UI_NAV_BOLT_ICON_PX, UI_ICON_ZAP, UI_GRAY_WHITE);
     }
-    ui_text_fixed(fb, 595, 29, 22, percent, EPD_DRAW_ALIGN_RIGHT, false);
+    ui_text_fixed_vc(fb, 595, status_center_y, UI_STATUS_PERCENT_PX, percent, EPD_DRAW_ALIGN_RIGHT, false);
 }
 
 int ui_nav_hit(uint16_t x, uint16_t y) {

@@ -24,6 +24,14 @@ idf.py build
 
 不要在没有对应 flash 的机器上把 CI 配置当产品默认。/ Do not ship the CI timing as the product default.
 
+### 版本号与本地测试 / Versions and local tests
+
+用户 2026-10-06 确认：本地测试沿用当前正式发布的固件版本号，用测试日期和说明区分；正式上线时才递增版本号，并同步设备、刷机页、升级包与日志。不要为每次本地修复另增 rc 编号。
+Per the user's 2026-10-06 decision, local tests retain the current published firmware version and are distinguished by test date and notes. Increment only for publication, keeping the device, flasher, upgrade image and changelog in sync; do not add an rc for each local fix.
+
+本地包放在被忽略的构建目录，禁止用同版本的测试二进制覆盖 `flash/` 中已经发布的固定版本下载文件。联网 OTA 需要不同版本号的专项测试时，先获得用户对该测试版本的明确授权。
+Keep local bundles in ignored build directories; never replace immutable published downloads in `flash/` with a same-version test image. Use a different version for an OTA-specific test only when explicitly authorized by the user.
+
 ## 目录职责 / Layout
 
 | 路径 / Path | 职责 / Role |

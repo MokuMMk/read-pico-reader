@@ -27,6 +27,7 @@
  * 用户修订：阅读设置滑杆可拖动并在松手后重排；字体选择可纵向翻页；统计入口显示真实明细与近30天数据。
  * 用户修订：默认翻页保持原刷新规则；刷新设置可选真实错相 GL16 水波纹，阅读字体面板保持紧凑。
  * 用户修订：目录由独立模块整页绘制与命中；目录标题清理换行并限制为单行，翻页不再沿用书架的局部刷新。
+ * 用户修订：书架封面抽出与取消仅驱动变化像素，保持灰阶，不在点按时强制清屏。
  * Frozen: Phase4b uses the shared gesture entry and owns previous/tools/next keys; the toolbar keeps full refresh. Screen turns commit on release without pressed decoration.
  * Shake is experimental, off by default, forward only; exit disables AOI2 and sleeps it. Render only paints.
  * Join preparation before returning callbacks so menus/lock cannot race the page-local TTF lock.
@@ -49,6 +50,7 @@
  * User revision: reader sliders drag and reflow on release; font selection pages vertically; statistics entries show real details and recent-30-day data.
  * User revision: default turns keep their refresh policy; Refresh Settings may enable staggered GL16 water turns, while the font sheet stays compact.
  * User revision: a standalone module owns full-page TOC rendering and hit testing; normalized single-line titles cannot leak into another row.
+ * User revision: cover lift and cancellation drive changed pixels in grayscale, without forced cleanup during a tap.
  */
 #include <dirent.h>
 #include <errno.h>
@@ -259,6 +261,7 @@ static bool s_reader_footer_pending;
 static bool s_water_turn_pending;
 static e0470_turn_dir_t s_water_turn_dir;
 static int s_pressed_control = -1;
+static bool s_shelf_feedback_pending;
 static int64_t s_du_ms;
 static unsigned s_du_count;
 static EpdRect s_du_area;
@@ -2284,6 +2287,11 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     }
     else if (image_gray_refresh) err = update_display_with(ctx->hl, &E0470_FULL_WAVEFORM, MODE_GC16);
     else if (redraw == APP_REDRAW_FULL || s_reader_cleanup) err = update_display_full(ctx->hl);
+    else if (redraw == APP_REDRAW_AREA && s_view == SHELF && s_shelf_feedback_pending) {
+        // 抽出与复位只驱动发生变化的像素，避免整张封面被反复压黑。
+        // Lift and restore only changed pixels, avoiding a dark pulse over the whole cover.
+        err = update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, s_area);
+    }
     else if (redraw == APP_REDRAW_AREA) {
         // 翻页动画与页脚刷新独立：全屏没有页脚，仍使用用户选择的水波纹。
         // The turn effect is independent of the footer: full-screen turns still use the selected water effect.
@@ -2325,6 +2333,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     s_presented_view = (int)s_view;
     s_reader_footer_pending = false;
     s_water_turn_pending = false;
+    s_shelf_feedback_pending = false;
     s_mode = MODE_GL16;
     return true;
 }
@@ -4152,6 +4161,7 @@ static void on_enter(app_ctx_t* ctx) {
     s_clear_confirm = s_batch_confirm = false;
     s_pressed_control = -1;
     s_du_count = 0;
+    s_shelf_feedback_pending = false;
     s_reader_cleanup = false;
     s_poll_ms = 0;
     read_pico_sd_info_t sd = {0};
@@ -4304,6 +4314,7 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
 static app_redraw_t paint_control(app_ctx_t* ctx, EpdRect rect) {
     render(ctx, ctx->fb);
     s_mode = MODE_DU;
+    s_shelf_feedback_pending = false;
     if (s_view == SHELF) {
         for (int row = 0; row < shelf_rows(); ++row) {
             EpdRect target = row_rect(row);
@@ -4314,6 +4325,7 @@ static app_redraw_t paint_control(app_ctx_t* ctx, EpdRect rect) {
             rect.y -= SHELF_BOOK_LIFT_PX;
             rect.height += SHELF_BOOK_LIFT_PX;
             s_mode = MODE_GL16;
+            s_shelf_feedback_pending = true;
             break;
         }
     }

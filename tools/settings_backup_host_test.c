@@ -61,12 +61,13 @@ esp_err_t book_history_backup_restore(FILE *file) {
 static bool card_mounted = true;
 static bool commit_fails;
 static int commit_count;
+static uint8_t test_loaded_system_size;
 esp_err_t read_pico_sd_get_info(read_pico_sd_info_t *info) { info->mounted = card_mounted; return ESP_OK; }
 esp_err_t nvs_flash_init(void) { return ESP_OK; }
 esp_err_t nvs_flash_erase(void) { return ESP_OK; }
 esp_err_t nvs_open(const char *ns, int mode, nvs_handle_t *h) { (void)ns; (void)mode; *h = 1; return ESP_OK; }
 void nvs_close(nvs_handle_t h) { (void)h; }
-esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; (void)key; (void)value; return ESP_FAIL; }
+esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } return ESP_FAIL; }
 esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) { (void)h; (void)key; (void)value; return ESP_OK; }
 esp_err_t nvs_get_str(nvs_handle_t h, const char *key, char *value, size_t *size) { (void)h; (void)key; (void)value; (void)size; return ESP_FAIL; }
 esp_err_t nvs_set_str(nvs_handle_t h, const char *key, const char *value) { (void)h; (void)key; (void)value; return ESP_OK; }
@@ -83,6 +84,7 @@ int main(void) {
     card_mounted = false;
     assert(app_settings_backup_save() == ESP_ERR_INVALID_STATE);
     card_mounted = true;
+    s_system_size = 200;
     s_book_px = 62;
     s_book_tracking = 4;
     s_book_indent = 3;
@@ -132,6 +134,7 @@ int main(void) {
                             sizeof(settings_backup_profile_t), SEEK_SET) == 0);
     assert(fwrite(&saved_network, 1, sizeof(saved_network), saved) == sizeof(saved_network));
     assert(fclose(saved) == 0);
+    s_system_size = 120;
     s_book_px = 48;
     s_book_tracking = 2;
     s_book_indent = 0;
@@ -153,6 +156,7 @@ int main(void) {
     s_wallpaper[0] = 0;
     assert(app_settings_backup_restore() == ESP_OK);
     assert(history_restores == 1);
+    assert(app_settings_system_font_size() == 200);
     assert(wifi_imports == 1 && saved_wifi.configured &&
            !strcmp(saved_wifi.ssid, "Home_2.4G") &&
            !strcmp(saved_wifi.password, "password123"));
@@ -261,6 +265,17 @@ int main(void) {
     assert(s_book_px == 48);
     assert(remove(BACKUP_FILE) == 0);
     assert(app_settings_backup_restore() == ESP_ERR_NOT_FOUND);
-    puts("settings backup host test passed");
+    for (int percent = 100; percent <= 200; percent += 10) {
+        app_settings_set_system_font_size((uint8_t)percent);
+        assert(app_settings_system_font_size() == percent);
+    }
+    app_settings_set_system_font_size(210);
+    app_settings_set_system_font_size(195);
+    assert(app_settings_system_font_size() == 200);
+    test_loaded_system_size = 180; s_system_size = 120;
+    app_settings_init(); assert(app_settings_system_font_size() == 180);
+    test_loaded_system_size = 200; s_system_size = 120;
+    app_settings_init(); assert(app_settings_system_font_size() == 200);
+    puts("settings backup host test passed (including 200% size persistence and restore)");
     return 0;
 }

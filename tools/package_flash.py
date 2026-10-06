@@ -13,6 +13,14 @@ def package(build: Path, output: Path):
     assert data[0]==0xe9 and int.from_bytes(data[32:36],'little')==0xabcd5432
     version=data[48:80].split(b'\0')[0].decode('ascii')
     assert b'PICO_HTTPS_OTA_V1' in data, 'base package lacks online OTA support'
+    upgrade_name=f'Pico-update-{version}.bin'
+    # 本地同版本测试只能打到构建目录，已发布文件的下载内容必须固定。
+    # Same-version local tests belong in build directories; published downloads stay immutable.
+    published=ROOT/'flash'/upgrade_name
+    if output.resolve()==(ROOT/'flash').resolve() and published.is_file():
+        assert published.read_bytes()==data, (
+            'published version already exists with different bytes; '
+            'stage local tests in build/, or increment the version for an authorized release')
     manifest=json.loads((ROOT/'flash/manifest.json').read_text())
     manifest['version']=version
     manifest['updated_at']=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(timespec='seconds')
@@ -22,13 +30,12 @@ def package(build: Path, output: Path):
     parts={'firmware.bin':build/'Read_Pico.bin','bootloader.bin':build/'bootloader/bootloader.bin',
            'partitions.bin':build/'partition_table/partition-table.bin','ota_data_initial.bin':build/'ota_data_initial.bin'}
     for name,path in parts.items():shutil.copy2(path,output/name)
-    name=f'Pico-update-{version}.bin'
-    shutil.copy2(build/'Read_Pico.bin',output/name)
+    shutil.copy2(build/'Read_Pico.bin',output/upgrade_name)
     shutil.copy2(build/'Read_Pico.bin',output/'Pico-update.bin')
     release={'schema':1,'version':version,'project':'Read_Pico','board':'RDP-G01-W','layout':'pico-dual-4m-v1',
-        'minimum_base_version':'0.3.3-rc72','url':f'https://wegooo-cell.github.io/read-pico-reader/{name}',
+        'minimum_base_version':'0.3.3-rc72','url':f'https://wegooo-cell.github.io/read-pico-reader/{upgrade_name}',
         'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),
-        'notes':'发现更新直接选择开始；下载进度低频局部刷新；优化 WiFi 重连与断点续传；对齐阅读题头的返回键、书名及收藏图标。'}
+        'notes':'修复文件管理首次打开图片重启及任意目录图片打开；传书网页支持添加任意文件到当前目录；系统字号上限 200%；合并 VCOM 门控和 2 毫秒稳定时间；书架抽出使用局部灰阶差分；放大并对齐状态栏文字；设置列表滑动取消周期黑白清屏，到边界不空刷，移除蓝牙页资料卡叠绘。'}
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
     (output/'update.json').write_text(json.dumps(release,ensure_ascii=False,indent=2)+'\n')
     check(output)

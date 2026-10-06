@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.3.3-rc82",
+  "version": "0.3.3-rc83",
   "project": "Read_Pico",
   "board": "RDP-G01-W",
   "layout": "pico-dual-4m-v1",
   "minimum_base_version": "0.3.3-rc72",
-  "url": "https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc82.bin",
-  "size": 3740000,
-  "sha256": "b33265e497be20e40ff98218540ed1fa040d352fe491de9f533a9ceb4c5714c0",
-  "notes": "发现更新直接选择开始；下载进度低频局部刷新；优化 WiFi 重连与断点续传；对齐阅读题头的返回键、书名及收藏图标。"
+  "url": "https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc83.bin",
+  "size": 3744384,
+  "sha256": "35487924e32356cc34dfa75737429f3f65e9da802f7d994bcd33f60846d2d32f",
+  "notes": "修复文件管理首次打开图片重启及任意目录图片打开；传书网页支持添加任意文件到当前目录；系统字号上限 200%；合并 VCOM 门控和 2 毫秒稳定时间；书架抽出使用局部灰阶差分；放大并对齐状态栏文字；设置列表滑动取消周期黑白清屏，到边界不空刷，移除蓝牙页资料卡叠绘。"
 }

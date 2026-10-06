@@ -121,6 +121,12 @@ void ui_text_fixed(
     enum EpdFontFlags align, bool inverted
 );
 int ui_text_fixed_width_px(int px, const char* text);
+/// 按固定字号和实际字形范围居中，不受系统字号缩放影响。
+/// Center fixed-size text by its ink extents, independently of system scaling.
+void ui_text_fixed_vc(
+    uint8_t* framebuffer, int x, int center_y, int px, const char* text,
+    enum EpdFontFlags align, bool inverted
+);
 void ui_text_bw(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted

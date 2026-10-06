@@ -30,7 +30,7 @@ class Element {
 
 async function setup({responses = [], confirmations = [true], mode = 'ap'} = {}) {
   const nodes = new Map();
-  const sections = ['book', 'font', 'picture'].map(kind => {
+  const sections = ['book', 'font', 'picture', 'file'].map(kind => {
     const section = new Element();
     section.dataset.kind = kind;
     const input = new Element(), result = new Element(), send = new Element();
@@ -130,6 +130,28 @@ async function setup({responses = [], confirmations = [true], mode = 'ap'} = {})
   t.sections[2].input.files = [{name: '同名.png', size: 100}];
   await t.sections[2].send.onclick();
   assert.match(t.state.sent[1].url, /overwrite=1/);
+  // 热点/已有 WiFi 共用入口，目录目标与多文件串行上传保持一致。
+  // AP/STA share the same entry, directory target and serial multi-file uploads.
+  for (const mode of ['ap', 'sta']) {
+    t = await setup({mode});
+    const generic = t.sections.find(s => s.dataset.kind === 'file');
+    generic.input.files = [{name: 'README', size: 0}, {name: '升级 包%+#.bin', size: 32}, {name: '.env', size: 17}];
+    await generic.send.onclick();
+    assert.equal(t.state.sent.length, 3);
+    assert.deepEqual(t.state.sent.map(s => new URL('http://pico' + s.url).searchParams.get('path')), ['README', '升级 包%+#.bin', '.env']);
+    assert.match(generic.result.textContent, /已保存 3 个文件到 \/$/);
+    t.nodes.get('entries').children[0].children[0].children[0].onclick();
+    await flush(); await flush();
+    generic.input.files = [{name: '文件 没有扩展名', size: 100}];
+    await generic.send.onclick();
+    assert.equal(new URL('http://pico' + t.state.sent.at(-1).url).searchParams.get('path'), 'books/文件 没有扩展名');
+    assert.match(generic.result.textContent, /已保存 \/books\/文件 没有扩展名/);
+  }
+  t = await setup({responses: [{status: 409, body: {error: '同名文件已存在'}}, {status: 200, body: {ok: true}}]});
+  const generic = t.sections.find(s => s.dataset.kind === 'file');
+  generic.input.files = [{name: '升级.bin', size: 32}];
+  await generic.send.onclick();
+  assert.match(t.state.sent[1].url, /^\/file-upload\?path=.+&overwrite=1$/);
   t = await setup({mode: 'sta'});
   assert.equal(t.nodes.get('entries').children.length, 2);
   t.nodes.get('entries').children[1].children[1].children[1].onclick();

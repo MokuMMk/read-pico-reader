@@ -234,6 +234,19 @@ enum EpdDrawError update_display_area_diff_with(
     return result;
 }
 
+enum EpdDrawError update_display_area_full_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
+    EpdRect area
+) {
+    use_scan_for(waveform, mode);
+    epd_poweron();
+    epd_hl_waveform(hl, waveform);
+    enum EpdDrawError result = hl_update(hl, waveform, mode, true, &area, false);
+    epd_hl_waveform(hl, &E0470_WAVEFORM);
+    rails_keepalive();
+    return result;
+}
+
 enum EpdDrawError update_display_water_turn(EpdiyHighlevelState* hl, EpdRect area,
                                              e0470_turn_dir_t dir) {
     // 只在阅读页显式调用；普通页面仍走原刷新路径。

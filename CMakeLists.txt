@@ -6,12 +6,12 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)
 
-# 本地 OTA 验证可指定版本号；未指定时使用当前开发版。
-# Local OTA validation may override the version; otherwise use the current development build.
+# 本地测试沿用当前正式版号；仅正式发布或明确的 OTA 验证指定新版本。
+# Local tests keep the current release version; override only for publication or explicit OTA validation.
 if(DEFINED ENV{PICO_PROJECT_VER} AND NOT "$ENV{PICO_PROJECT_VER}" STREQUAL "")
     set(PROJECT_VER "$ENV{PICO_PROJECT_VER}")
 else()
-    set(PROJECT_VER "0.3.3-rc82")
+    set(PROJECT_VER "0.3.3-rc83")
 endif()
 project(Read_Pico)
 

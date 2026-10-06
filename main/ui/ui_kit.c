@@ -219,6 +219,23 @@ void ui_text_fixed(
         ttf_draw_text_px(framebuffer, x, y_top + ttf_ascender_px(px), px, text, align, fg, bg);
 }
 
+void ui_text_fixed_vc(
+    uint8_t* framebuffer, int x, int center_y, int px, const char* text,
+    enum EpdFontFlags align, bool inverted
+) {
+    if (!framebuffer || !text || !text[0] || px <= 0) return;
+    int above = 0, below = 0;
+    uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
+    uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
+    if (!s_system_ttf && ui_font_has_text(text)) {
+        ui_font_measure_line_px(px, text, &above, &below);
+        ui_font_draw_text_px(framebuffer, x, center_y + (above - below) / 2, px, text, align, fg, bg, false);
+    } else {
+        ttf_measure_line_px(px, text, &above, &below);
+        ttf_draw_text_px(framebuffer, x, center_y + (above - below) / 2, px, text, align, fg, bg);
+    }
+}
+
 void ui_text_bw(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted

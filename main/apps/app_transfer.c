@@ -651,7 +651,7 @@ static void draw_status(uint8_t* fb) {
         s_mode == READ_PICO_TRANSFER_MODE_AP ? "热点传书未启动" : "WiFi 传书未启动";
     if (s_media_lost) state = "存储已移除，传书已停止";
     ui_text(fb, area.x + 28, area.y + 24, 26, state, EPD_DRAW_ALIGN_LEFT, false);
-    char line[160];
+    char line[256];
     if (s_media_lost) snprintf(line, sizeof(line), "重新进入传书可使用内置存储");
     else if (s_status.state == READ_PICO_TRANSFER_ERROR && !s_status.network_ready)
         snprintf(line, sizeof(line), "原因：%s", esp_err_to_name(s_status.last_error));
@@ -660,7 +660,7 @@ static void draw_status(uint8_t* fb) {
     else snprintf(line, sizeof(line), "同网浏览器上传 · 已完成 %u 本", s_status.done_count);
     ui_text(fb, area.x + 28, area.y + 68, 19, line, EPD_DRAW_ALIGN_LEFT, false);
     snprintf(line, sizeof(line), "%s", s_status.cur_name);
-    while (*line && ttf_text_width_px(UI_PX_CAPTION, line) > area.width) {
+    while (*line && ttf_text_width_px(ui_text_effective_px(19), line) > area.width - 280) {
         size_t n = strlen(line) - 1;
         while (n && ((unsigned char)line[n] & 0xc0) == 0x80) --n;
         line[n] = 0;

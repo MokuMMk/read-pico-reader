@@ -4,8 +4,10 @@
  *
  * 热点与已有WiFi、HTTP接收和临时文件提交；容量策略由页面注入。
  * AP/STA networking, HTTP reception and file commit; page injects capacity policy.
- * 冻结：图书仅 TXT/EPUB，图片仅 JPG/PNG，字体仅 TTF/OTF；UTF-8 名字不转写，先验限额，失败清理临时文件。
- * Frozen: Books accept TXT/EPUB and images accept JPG/PNG; preserve UTF-8 names, check limits first and remove failed parts.
+ * 冻结：分类上传限制书籍/图片/字体格式；目录中的「添加文件」接受任意格式，保留 UTF-8 名字并先验容量。
+ * Frozen: Typed uploads limit book/image/font formats; Add File accepts any format within the TF root, preserving UTF-8 names and checking capacity first.
+ * 为传入升级包等其他文件增加目录上传；分类上传仍保持原有限额和失败清理。
+ * Directory uploads also accept upgrade packages; typed uploads retain their limits and failed-part cleanup.
  * 冻结：热点网页或停服设备触屏可配置网络，不自动切模式；凭据只存单个NVS blob，状态不含密码。
  * 冻结：显式对时优先复用已连接的 STA；停服时才短暂连接，用毕释放；凭据只保存在原 NVS blob。
  * Frozen: Explicit time sync reuses connected STA; only a stopped service connects briefly and releases WiFi; credentials stay in the original NVS blob.
@@ -144,6 +146,51 @@ static int resolve_mutation_path(const char *root, const char *name,
     }
     return 0;
 }
+
+// 网页只接受 TF 卡内相对路径；每段单独检查，不能通过编码后的斜杠绕出根目录。
+// Accept only TF-relative paths; validate every segment after URL decoding.
+static bool sd_relative_valid(const char *relative, bool allow_root) {
+    size_t length = strlen(relative);
+    if (!length) return allow_root;
+    if (length > 238 || relative[0] == '/' || relative[length - 1] == '/') return false;
+    const char *segment = relative;
+    for (const char *p = relative;; ++p) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch && ch != '/') {
+            if (ch < 32 || ch == 127 || strchr("\\:*?\"<>|", ch)) return false;
+            continue;
+        }
+        size_t n = (size_t)(p - segment);
+        if (!n || n > 240 || (n == 1 && segment[0] == '.') ||
+            (n == 2 && segment[0] == '.' && segment[1] == '.') ||
+            segment[0] == ' ' || segment[n - 1] == ' ' || segment[n - 1] == '.') return false;
+        if (!ch) return true;
+        segment = p + 1;
+    }
+}
+
+static bool sd_decode_relative(const char *encoded, char relative[240], bool allow_root) {
+    size_t n = 0;
+    while (*encoded) {
+        unsigned char ch = (unsigned char)*encoded++;
+        if (ch == '%') {
+            if (!encoded[0] || !encoded[1]) return false;
+            int hi = hex_value(encoded[0]), lo = hex_value(encoded[1]);
+            if (hi < 0 || lo < 0) return false;
+            ch = (unsigned char)((hi << 4) | lo);
+            encoded += 2;
+        }
+        if (!ch || n + 1 >= 240) return false;
+        relative[n++] = (char)ch;
+    }
+    relative[n] = 0;
+    return sd_relative_valid(relative, allow_root);
+}
+
+static bool sd_absolute(const char *relative, char *out, size_t cap) {
+    return snprintf(out, cap, "/sdcard%s%s", relative[0] ? "/" : "", relative) < (int)cap;
+}
+
 
 static int check_length(size_t total, size_t limit, uint64_t available) {
     if (!total) return 400;
@@ -284,6 +331,43 @@ static file_result_t upload_managed(const char *path, const char *part, size_t t
     if (!status) status = receive_file(path, part, total, buf, cap, recv, ctx, progress);
     if (status && status != TRANSFER_COMMITTED_BACKUP_RETAINED) return (file_result_t){.status = status};
     file_result_t result = changed_result(path, changed);
+    result.storage_cleanup_failed = status == TRANSFER_COMMITTED_BACKUP_RETAINED;
+    return result;
+}
+
+// 通用文件在目标目录创建独占临时文件，不会覆盖用户原有的同名 .part 文件。
+// General uploads reserve a unique part in the destination directory, preserving existing user .part files.
+static file_result_t upload_directory_file(const char *root, const char *relative, size_t total,
+        uint64_t available, bool overwrite, char *buf, size_t cap, receive_cb_t recv, void *ctx,
+        progress_cb_t progress, file_changed_cb_t changed) {
+    if (!sd_relative_valid(relative, false)) return (file_result_t){.status = 400};
+    char parent[256], path[256], part[288];
+    const char *name = strrchr(relative, '/');
+    size_t prefix = name ? (size_t)(name - relative) : 0;
+    name = name ? name + 1 : relative;
+    if (snprintf(parent, sizeof(parent), "%s%s%.*s", root, prefix ? "/" : "",
+                 (int)prefix, relative) >= (int)sizeof(parent)) return (file_result_t){.status = 400};
+    struct stat st;
+    if (stat(parent, &st) || !S_ISDIR(st.st_mode)) return (file_result_t){.status = 404};
+    int status = resolve_mutation_path(parent, name, path, sizeof(path));
+    if (!status) status = destination_status(path, overwrite);
+    if (!status && total > available) status = 507;
+    if (status) return (file_result_t){.status = status};
+    if (snprintf(part, sizeof(part), "%s/.pico-upload-XXXXXX", parent) >= (int)sizeof(part))
+        return (file_result_t){.status = 400};
+    int fd = mkstemp(part);
+    if (fd < 0) return (file_result_t){.status = 507};
+    if (close(fd)) { remove(part); return (file_result_t){.status = 507}; }
+    // 空文件也有效；图书快捷上传仍由原来的长度策略拒绝空内容。
+    // Empty general files are valid; typed book uploads still reject empty content.
+    status = receive_file(path, part, total, buf, cap, recv, ctx, progress);
+    if (status && status != TRANSFER_COMMITTED_BACKUP_RETAINED) {
+        remove(part);
+        return (file_result_t){.status = status};
+    }
+    const char *ext = strrchr(name, '.');
+    file_result_t result = changed_result(path,
+        ext && (!strcasecmp(ext, ".epub") || !strcasecmp(ext, ".txt")) ? changed : NULL);
     result.storage_cleanup_failed = status == TRANSFER_COMMITTED_BACKUP_RETAINED;
     return result;
 }
@@ -1284,49 +1368,35 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
     return media_upload_handler(req, "/sdcard/fonts", 2, FONT_UPLOAD_LIMIT);
 }
 
-// 网页只接受 TF 卡内相对路径；每段单独检查，不能通过编码后的斜杠绕出根目录。
-// Accept only TF-relative paths; validate every segment after URL decoding.
-static bool sd_relative_valid(const char *relative, bool allow_root) {
-    size_t length = strlen(relative);
-    if (!length) return allow_root;
-    if (length > 238 || relative[0] == '/' || relative[length - 1] == '/') return false;
-    const char *segment = relative;
-    for (const char *p = relative;; ++p) {
-        unsigned char ch = (unsigned char)*p;
-        if (ch && ch != '/') {
-            if (ch < 32 || ch == 127 || strchr("\\:*?\"<>|", ch)) return false;
-            continue;
-        }
-        size_t n = (size_t)(p - segment);
-        if (!n || n > 240 || (n == 1 && segment[0] == '.') ||
-            (n == 2 && segment[0] == '.' && segment[1] == '.') ||
-            segment[0] == ' ' || segment[n - 1] == ' ' || segment[n - 1] == '.') return false;
-        if (!ch) return true;
-        segment = p + 1;
+static esp_err_t file_upload_handler(httpd_req_t *req) {
+    if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开\"}");
+    if (s_cfg.is_flash) return wifi_response(req, "400 Bad Request", "{\"error\":\"请插入 TF 卡后重试\"}");
+    char query[800], encoded[720], relative[240], replace[8], path[256];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "path", encoded, sizeof(encoded)) != ESP_OK ||
+        !sd_decode_relative(encoded, relative, false) || !sd_absolute(relative, path, sizeof(path)))
+        return respond_error(req, 400);
+    bool overwrite = httpd_query_key_value(query, "overwrite", replace, sizeof(replace)) == ESP_OK && !strcmp(replace, "1");
+    const char *name = strrchr(relative, '/'); name = name ? name + 1 : relative;
+    portENTER_CRITICAL(&s_lock);
+    if (!admission_begin(s_stopping, &s_upload_active)) {
+        portEXIT_CRITICAL(&s_lock);
+        return wifi_response(req, "503 Service Unavailable", "{\"error\":\"网络正在切换，请稍后重试\"}");
     }
+    s_status.state = READ_PICO_TRANSFER_UPLOADING; s_status.last_error = ESP_OK;
+    snprintf(s_status.cur_name, sizeof(s_status.cur_name), "%s", name);
+    s_status.cur_bytes = 0; s_status.cur_total = req->content_len;
+    portEXIT_CRITICAL(&s_lock);
+    file_result_t result = upload_directory_file("/sdcard", relative, req->content_len,
+        s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx), overwrite, s_buffer, 16384,
+        receive_http, req, upload_progress, s_cfg.file_changed_cb);
+    portENTER_CRITICAL(&s_lock);
+    s_upload_active = false;
+    if (result.changed) { ++s_status.done_count; ++s_status.changed_count; }
+    portEXIT_CRITICAL(&s_lock);
+    return file_response(req, result, false, path);
 }
 
-static bool sd_decode_relative(const char *encoded, char relative[240], bool allow_root) {
-    size_t n = 0;
-    while (*encoded) {
-        unsigned char ch = (unsigned char)*encoded++;
-        if (ch == '%') {
-            if (!encoded[0] || !encoded[1]) return false;
-            int hi = hex_value(encoded[0]), lo = hex_value(encoded[1]);
-            if (hi < 0 || lo < 0) return false;
-            ch = (unsigned char)((hi << 4) | lo);
-            encoded += 2;
-        }
-        if (!ch || n + 1 >= 240) return false;
-        relative[n++] = (char)ch;
-    }
-    relative[n] = 0;
-    return sd_relative_valid(relative, allow_root);
-}
-
-static bool sd_absolute(const char *relative, char *out, size_t cap) {
-    return snprintf(out, cap, "/sdcard%s%s", relative[0] ? "/" : "", relative) < (int)cap;
-}
 
 static esp_err_t files_error(httpd_req_t *req, const char *status, const char *message) {
     return wifi_response(req, status, message);
@@ -1823,6 +1893,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         { .uri = "/upload", .method = HTTP_PUT, .handler = upload_handler },
         { .uri = "/image-upload", .method = HTTP_PUT, .handler = image_upload_handler },
         { .uri = "/font-upload", .method = HTTP_PUT, .handler = font_upload_handler },
+        { .uri = "/file-upload", .method = HTTP_PUT, .handler = file_upload_handler },
         { .uri = "/files", .method = HTTP_GET, .handler = files_list_handler },
         { .uri = "/files", .method = HTTP_POST, .handler = files_mutation_handler },
         { .uri = "/books", .method = HTTP_GET, .handler = books_handler },

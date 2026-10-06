@@ -221,6 +221,7 @@ static void app_files_request_folder(int folder){(void)folder;}
 #define UI_KEY_2 2
 #define UI_KEY_3 3
 static int s_pressed_control;
+static bool s_shelf_feedback_pending;
 static bool s_scan_pending,s_toolbar;
 static int s_mode,test_cover_prepares,test_shelf_renders;
 static EpdRect s_area;

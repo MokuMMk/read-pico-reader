@@ -59,7 +59,7 @@ typedef struct {
     bool network_ready; ///< 已取得可用网络地址 / Usable network address acquired
     unsigned sta_count; ///< 连接数 / Station count
     char ssid[33]; ///< 热点名称 / AP name
-    char cur_name[121]; ///< 完整 UTF-8 文件名 / Complete UTF-8 filename
+    char cur_name[241]; ///< 完整 UTF-8 文件名 / Complete UTF-8 filename
     size_t cur_bytes; ///< 已接收字节 / Received bytes
     size_t cur_total; ///< 本次总字节 / Request total bytes
     unsigned done_count; ///< 成功提交数 / Successfully committed files

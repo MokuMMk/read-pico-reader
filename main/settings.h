@@ -45,6 +45,7 @@ void app_settings_set_font_path(const char* path);
 /// 系统界面字体；空值使用内建思源黑体并从 TF 卡补字。/ UI font; empty uses built-in Source Han Sans with SD fallback.
 const char* app_settings_system_font_path(void);
 void app_settings_set_system_font_path(const char* path);
+/// 系统字号 100..200%，每档 10%。/ System UI size 100..200%, in 10% steps.
 uint8_t app_settings_system_font_size(void);
 void app_settings_set_system_font_size(uint8_t percent);
 /// 系统界面灰阶对比度，100..140%。/ System UI grayscale contrast, 100..140%.

@@ -20,6 +20,7 @@
 #include "esp_heap_caps.h"
 #include "read_pico_sd.h"
 #include "ui_gesture.h"
+#include "ui_image_dither.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
 #include "ui_nav.h"
@@ -71,9 +72,11 @@ static void scan_dir(const char *root) {
         bool png;
         if (!image_name(entry->d_name, &png) || strlen(entry->d_name) >= sizeof(s_items[0].name)) continue;
         image_item_t *item = &s_items[s_count];
-        if (snprintf(item->path, sizeof(item->path), "%s/%s", root, entry->d_name) >= sizeof(item->path)) continue;
+        if (snprintf(item->path, sizeof(item->path), "%s/%s", root, entry->d_name) >= (int)sizeof(item->path)) continue;
         struct stat st;
         if (stat(item->path, &st) || !S_ISREG(st.st_mode)) continue;
+        // 直接打开的图片已放在首项，目录扫描不再重复加入。/ Do not duplicate the directly opened first item.
+        if (s_count && !strcmp(s_items[0].path, item->path)) continue;
         strcpy(item->name, entry->d_name);
         item->png = png;
         ++s_count;
@@ -82,6 +85,31 @@ static void scan_dir(const char *root) {
 }
 
 static void scan_images(void) {
+    s_count = 0;
+    if (!items_alloc()) {
+        strcpy(s_message, "图片列表内存不足，请返回后重试");
+        return;
+    }
+    // 先分配再访问列表；首次从文件管理进入时此前会解引用空指针。
+    // Allocate before touching the list; the first Files entry previously dereferenced NULL.
+    if (s_requested_path[0]) {
+        const char *name = strrchr(s_requested_path, '/');
+        bool png;
+        if (!name || !image_name(name + 1, &png)) {
+            strcpy(s_message, "图片格式不支持");
+            return;
+        }
+        s_count = 1;
+        snprintf(s_items[0].path, sizeof(s_items[0].path), "%s", s_requested_path);
+        snprintf(s_items[0].name, sizeof(s_items[0].name), "%s", name + 1);
+        s_items[0].png = png;
+        char root[256];
+        size_t length = (size_t)(name - s_requested_path);
+        memcpy(root, s_requested_path, length);
+        root[length] = 0;
+        scan_dir(root);
+        return;
+    }
     s_count = 1;
     memset(s_items, 0, sizeof(s_items[0]));
     strcpy(s_items[0].name, "内置灰阶测试图");
@@ -97,11 +125,13 @@ static void scan_images(void) {
 
 static bool load_image(int index) {
     free(s_gray); s_gray = NULL;
+    s_viewing = false;
+    if (!s_items || index < 0 || index >= s_count) return false;
     const image_item_t *item = &s_items[index];
     const uint8_t *data = display_test_png_start;
     size_t size = (size_t)(display_test_png_end - display_test_png_start);
     uint8_t *file_data = NULL;
-    if (index) {
+    if (item->path[0]) {
         struct stat st;
         if (stat(item->path, &st) || st.st_size <= 0 || st.st_size > IMAGE_BYTES_MAX) {
             strcpy(s_message, "图片超过 2 MB 或无法读取"); return false;
@@ -115,7 +145,7 @@ static bool load_image(int index) {
         data = file_data; size = (size_t)st.st_size;
     }
     unsigned width, height;
-    if (!book_image_dimensions(data, size, item->png, &width, &height)) {
+    if (!book_image_dimensions(data, size, item->png, &width, &height) || !width || !height) {
         free(file_data); strcpy(s_message, "图片格式不支持"); return false;
     }
     unsigned fit_w = UI_LOCK_WIDTH, fit_h = (uint64_t)height * fit_w / width;
@@ -139,7 +169,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (unsigned y = 0; y < s_height; ++y)
             for (unsigned x = 0; x < s_width; ++x)
                 epd_draw_pixel(x0 + x, y0 + y,
-                    ui_contrast_gray(s_gray[(size_t)y * s_width + x]), fb);
+                    ui_image_dither_gray(s_gray[(size_t)y * s_width + x], x0 + x, y0 + y), fb);
         return;
     }
     ui_nav_status(fb);
@@ -172,10 +202,7 @@ static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
     s_page = 0; s_viewing = false; s_message[0] = 0; scan_images();
     if (s_requested_path[0]) {
-        for (int i = 1; i < s_count; ++i) if (!strcmp(s_items[i].path, s_requested_path)) {
-            load_image(i);
-            break;
-        }
+        if (s_count) load_image(0);
         s_requested_path[0] = 0;
     }
 }
