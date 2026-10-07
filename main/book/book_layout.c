@@ -38,6 +38,26 @@ static unsigned s_lead_height;
 static const blk_t* s_blocks;
 static size_t s_block_count;
 
+// 页内插图：图片序号、页内 y、显示宽高。平坦池按页顺序存放，每页用起点表切片，
+// 这样大多数没有插图的页只花两个下标。
+// Images placed on a page: index, y within the page, and display width/height. The pool is flat
+// and ordered by page, sliced by a per-page start table, so a page without images costs two
+// indices and nothing else.
+typedef struct {
+    int16_t image;
+    int16_t y;
+    int16_t width;
+    int16_t height;
+} layout_image_t;
+
+static layout_image_t* s_images;
+static size_t s_image_count;
+static size_t s_image_capacity;
+static uint32_t* s_page_img_start;
+
+static book_layout_image_dims_fn s_dims_fn;
+static void* s_dims_ctx;
+
 // 块表是有序字节区间，二分查找当前行样式。/ Blocks are ordered byte ranges; binary-search the line style.
 static const blk_t* block_at(size_t off) {
     if (!s_block_count) return NULL;
@@ -143,8 +163,13 @@ static bool prohibited_line_end(uint32_t cp) {
 void book_layout_free(void) {
     free(s_pages);
     free(s_line);
+    free(s_images);
+    free(s_page_img_start);
     s_pages = NULL;
     s_line = NULL;
+    s_images = NULL;
+    s_page_img_start = NULL;
+    s_image_count = s_image_capacity = 0;
     s_text = NULL;
     s_count = s_capacity = s_len = 0;
     s_px = 0;
@@ -184,10 +209,79 @@ void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px) {
     s_lead_height = height_px;
 }
 
+void book_layout_set_image_dims(book_layout_image_dims_fn fn, void* ctx) {
+    s_dims_fn = fn;
+    s_dims_ctx = ctx;
+}
+
+// 按栏宽等比缩放、不超过整页高、不放大——与参考实现同一套规则。
+// Aspect-fit to the column width, never taller than the page, never upscaled, matching the
+// reference implementations.
+static bool image_display_size(int image, int* out_w, int* out_h) {
+    if (out_w) *out_w = 0;
+    if (out_h) *out_h = 0;
+    if (!s_dims_fn) return false;
+    int w = 0, h = 0;
+    if (!s_dims_fn(s_dims_ctx, image, &w, &h) || w <= 0 || h <= 0) return false;
+    int64_t cw = s_rect.width, ch = s_rect.height;
+    if (cw <= 0 || ch <= 0) return false;
+    if (w > cw) { h = (int)((int64_t)h * cw / w); w = (int)cw; }
+    if (h > ch) { w = (int)((int64_t)w * ch / h); h = (int)ch; }
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return true;
+}
+
+static bool record_page_image(int image, int y, int w, int h) {
+    if (s_image_count == s_image_capacity) {
+        size_t cap = s_image_capacity ? s_image_capacity * 2 : 16;
+        if (cap > PAGE_MAX * 4) return false;
+        layout_image_t* grown = heap_caps_realloc(s_images, cap * sizeof(*grown), PSRAM_CAPS);
+        if (!grown) return false;
+        s_images = grown;
+        s_image_capacity = cap;
+    }
+    layout_image_t* rec = &s_images[s_image_count++];
+    rec->image = (int16_t)image;
+    rec->y = (int16_t)y;
+    rec->width = (int16_t)w;
+    rec->height = (int16_t)h;
+    if (s_page_img_start && s_count) s_page_img_start[s_count] = (uint32_t)s_image_count;
+    return true;
+}
+
+int book_layout_page_image_count(size_t page) {
+    if (page >= s_count || !s_page_img_start) return 0;
+    return (int)(s_page_img_start[page + 1] - s_page_img_start[page]);
+}
+
+bool book_layout_page_image_at(size_t page, int i, int* image, int* y, int* width, int* height) {
+    if (page >= s_count || !s_page_img_start || i < 0) return false;
+    uint32_t a = s_page_img_start[page];
+    if ((uint32_t)i >= s_page_img_start[page + 1] - a) return false;
+    const layout_image_t* rec = &s_images[a + (uint32_t)i];
+    if (image) *image = rec->image;
+    if (y) *y = rec->y;
+    if (width) *width = rec->width;
+    if (height) *height = rec->height;
+    return true;
+}
+
 int book_layout_page_image(size_t page) {
     if (page >= s_count || !s_block_count) return -1;
     const blk_t* block = block_at(s_pages[page]);
-    return block && block->offset == s_pages[page] ? block->image : -1;
+    if (!block || block->offset != s_pages[page] || block->image < 0) return -1;
+    // 图片流进正文之后，插图常常正好落在页首，只判断"页首是图片块"会把普通文字页也算成整页插图。
+    // 这里要求这一页的范围【只覆盖这一个图片块】，才是真正需要强刷的整页灰阶图。
+    // Once images flow into the page an inline image often sits at the top, so testing only the
+    // page start also matched ordinary text pages. Require the page to span exactly this image
+    // block: that is a whole-page gray bitmap, the case the forced refresh exists for.
+    size_t after = block->offset + block->len;
+    if (after < s_len && s_text[after] == '\n') ++after;
+    size_t page_end = page + 1 < s_count ? s_pages[page + 1] : s_len;
+    return page_end == after ? block->image : -1;
 }
 
 static int line_height_for(int px) { return (int)((unsigned)px * s_line_percent / 100); }
@@ -202,9 +296,17 @@ static bool append_page(size_t off) {
         size_t* pages = heap_caps_realloc(s_pages, cap * sizeof(*pages), PSRAM_CAPS);
         if (!pages) return false;
         s_pages = pages;
+        // 起点表要多一项：第 page 页的插图区间是 [start[page], start[page+1])。
+        // The start table needs one extra slot: page `page` owns [start[page], start[page+1]).
+        uint32_t* starts = heap_caps_realloc(s_page_img_start, (cap + 1) * sizeof(*starts), PSRAM_CAPS);
+        if (!starts) return false;
+        s_page_img_start = starts;
         s_capacity = cap;
     }
-    s_pages[s_count++] = off;
+    s_pages[s_count] = off;
+    s_page_img_start[s_count] = (uint32_t)s_image_count;
+    ++s_count;
+    s_page_img_start[s_count] = (uint32_t)s_image_count;
     return true;
 }
 
@@ -407,8 +509,24 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
         if (visible != off) { off = visible; continue; }
         const blk_t* block = block_at(off);
         if (block && block->image >= 0 && off == block->offset) {
-            if (used && !append_page(off)) goto fail;
-            used = rect.height;
+            int img_w = 0, img_h = 0;
+            if (image_display_size(block->image, &img_w, &img_h)) {
+                // 图是页面流里的一个块：放得下就留在本页，文字接着图下面排；放不下才翻页。
+                // An image is one block in the page flow: keep it on this page when it fits and
+                // let the text continue below it; only start a new page when it does not fit.
+                if (used && used + img_h > rect.height) {
+                    if (!append_page(off)) goto fail;
+                    used = 0;
+                }
+                if (!record_page_image(block->image, (int)used, img_w, img_h)) goto fail;
+                used += img_h + px / 2;  // 图下留半个行高 / half a line under the image
+            } else {
+                // 取不到尺寸时退回整页显示，保证纯插图章节仍可被跨章跳过逻辑识别。
+                // Without dimensions, fall back to a whole-page image so an image-only chapter
+                // stays detectable by the chapter-skip path.
+                if (used && !append_page(off)) goto fail;
+                used = rect.height;
+            }
             off = block->offset + block->len;
             if (off < len && utf8[off] == '\n') ++off;
             continue;
@@ -458,13 +576,34 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
     if (!fb || page >= s_count || px != s_px || rect.width != s_rect.width ||
         rect.height != s_rect.height || rect.x < 0 || rect.y < 0 ||
         rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height) return;
+    // 走回退路径的"整页插图"没有图片记录：这里没有文字可画，那张图由调用方绘制，直接返回。
+    // 有记录时说明图片已经流进正文，文字和图一起排。
+    // A whole-page image from the fallback path has no record: there is no text to draw here and
+    // the caller draws that image, so return. With records the image flowed into the page and the
+    // text lays out alongside it.
+    if (book_layout_page_image(page) >= 0 && book_layout_page_image_count(page) == 0) return;
     size_t off = s_pages[page];
-    if (book_layout_page_image(page) >= 0) return;
     size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
     int64_t used = page == 0 ? s_lead_height : 0;
+    // 本页插图按出现顺序排在池里，游标走到哪个块就用哪条记录，不必再查表。
+    // This page's images sit in the pool in encounter order, so the walk just consumes them in
+    // turn instead of looking each one up.
+    uint32_t img_at = s_page_img_start ? s_page_img_start[page] : 0;
+    const uint32_t img_end = s_page_img_start ? s_page_img_start[page + 1] : 0;
     while (off < end) {
         size_t visible = skip_image_spacing(off);
         if (visible != off) { off = visible; continue; }
+        const blk_t* image_block = block_at(off);
+        if (image_block && image_block->image >= 0 && off == image_block->offset) {
+            while (img_at < img_end && s_images[img_at].image != image_block->image) ++img_at;
+            if (img_at < img_end) {
+                const layout_image_t* rec = &s_images[img_at++];
+                used = (int64_t)rec->y + rec->height + s_px / 2;
+            }
+            off = image_block->offset + image_block->len;
+            if (off < end && s_text[off] == '\n') ++off;
+            continue;
+        }
         size_t next;
         bool paragraph_end, heading;
         int line_px, line_width, indent, margin_before, margin_after;

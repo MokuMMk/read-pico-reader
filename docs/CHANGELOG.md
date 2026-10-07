@@ -3,6 +3,11 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-06 · mindreset
+
+- 正文图片改为图文混排：插图不再占据整页，而是作为页面流里的一个块放在正文之间，图下方接着排后续正文；只有当前页放不下时才翻页。图片按栏宽等比缩放、不超过一页高、不放大，水平居中。
+- 排版仍然不依赖图片解码器：尺寸由调用方通过回调提供并在本章缓存；未注册回调时行为与改动前一致，可回退到整页显示。
+
 ## 2026-10-06 · Codex
 
 - 固件 0.3.3-rc83：

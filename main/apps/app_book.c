@@ -223,9 +223,25 @@ bool app_book_reader_body_visible(void) {
 static blk_t* s_blocks;
 static char** s_images;
 static size_t s_image_count;
-static uint8_t* s_inline_gray;
-static unsigned s_inline_w, s_inline_h;
-static int s_inline_index = -1;
+// 本页插图：序号、页内位置与显示尺寸、解码后的灰度位图。排版把图放进页面流之后，
+// 一页可能不止一张，所以这里存数组而不是单张。
+// Images for the current page: index, position and display size, and the decoded gray bitmap.
+// Once the layout flows images into the page, a page can hold more than one, so this is an array.
+#define READER_PAGE_IMAGES_MAX 8
+typedef struct {
+    int index;
+    int x, y, w, h;
+    uint8_t* gray;
+} reader_image_t;
+static reader_image_t s_page_images[READER_PAGE_IMAGES_MAX];
+static int s_page_image_count;
+static size_t s_page_images_for = SIZE_MAX;
+
+// 图片尺寸缓存：排版会按顺序问遍本章的图，同一张只探一次。
+// Dimensions cache: layout asks about every image in the chapter in order, so probe each once.
+static int16_t* s_image_dims;
+static uint8_t* s_image_dims_ok;
+static size_t s_image_dims_count;
 static size_t s_block_count;
 static size_t s_text_len, s_chapter, s_page;
 static size_t s_selected_toc = SIZE_MAX;
@@ -282,6 +298,8 @@ static void free_book(void);
 static void save_progress(void);
 static void invalidate_prep(void);
 static void prepare_inline_image(void);
+static void release_page_images(void);
+static void release_image_dims(void);
 static void sort_shelf(app_ctx_t* ctx);
 static void prepare_covers(app_ctx_t* ctx);
 bool app_book_request_open(const char* path) {
@@ -2055,17 +2073,34 @@ static void draw_reader(uint8_t* fb, size_t page) {
         ui_text(fb, UI_LOCK_WIDTH / 2, body.y + 87, 49, heading, EPD_DRAW_ALIGN_CENTER, false);
         ui_hairline(fb, body.y + 174, 210, 264, UI_GRAY_LIGHT);
     }
-    if (!app_settings_reader_hide_images() && book_layout_page_image(page) == s_inline_index && s_inline_gray) {
-        int left = body.x + (body.width - (int)s_inline_w) / 2;
-        int top = body.y + (body.height - (int)s_inline_h) / 2;
-        for (unsigned y = 0; y < s_inline_h; ++y)
-            for (unsigned x = 0; x < s_inline_w; ++x)
-                epd_draw_pixel(left + x, top + y,
-                    ui_image_dither_gray(inline_ink_gray(s_inline_gray[y * s_inline_w + x]),
-                                         left + (int)x, top + (int)y), fb);
-    } else if (!app_settings_reader_hide_images() && book_layout_page_image(page) >= 0) {
-        ui_text_vc(fb, body.x + body.width / 2, body.y + body.height / 2,
-                   UI_PX_CAPTION, "此插图暂无法显示", EPD_DRAW_ALIGN_CENTER, false);
+    // s_page_images 只对应 s_page；预取画别的页时不能把它们摆上去，否则会出现
+    // "上一页的大图盖住本页正文"。
+    // s_page_images only describes s_page. While the prefetch renders another page these must not
+    // be placed, or a large image from the previous page covers this page's text.
+    if (!app_settings_reader_hide_images() && page == s_page) {
+        int drawn = 0;
+        for (int i = 0; i < s_page_image_count; ++i) {
+            const reader_image_t* img = &s_page_images[i];
+            if (!img->gray) continue;
+            int left = body.x + (body.width - img->w) / 2;
+            int top = body.y + img->y;
+            for (int y = 0; y < img->h; ++y) {
+                for (int x = 0; x < img->w; ++x) {
+                    epd_draw_pixel(left + x, top + y,
+                        ui_image_dither_gray(inline_ink_gray(img->gray[(size_t)y * img->w + x]),
+                                             left + x, top + y), fb);
+                }
+            }
+            ++drawn;
+        }
+        // 排版放下了图但一张都没解码出来：在页面中间给个提示，别留下空白。
+        // The layout placed images but none decoded: say so in the middle instead of leaving it blank.
+        if (!drawn && book_layout_page_image_count(page) > 0) {
+            ESP_LOGW(TAG, "page %u has %d laid-out images but none decoded", (unsigned)page,
+                     book_layout_page_image_count(page));
+            ui_text_vc(fb, body.x + body.width / 2, body.y + body.height / 2,
+                       UI_PX_CAPTION, "此插图暂无法显示", EPD_DRAW_ALIGN_CENTER, false);
+        }
     }
     if (s_reader_fullscreen) {
         // Full-book progress uses the last few screen rows and no footer text.
@@ -2126,9 +2161,14 @@ static void ensure_prep(void) {
     }
 }
 static bool kick_prep(void) {
+    // 预取只会把下一页画进 s_next_fb，而插图位图属于当前页；两页里只要有一页带插图，
+    // 画出来的东西就是错的，所以直接不预取。
+    // The prefetch only renders the next page into s_next_fb while the decoded bitmaps belong to
+    // the current page, so any image on either page makes the result wrong. Skip prefetching then.
     if (s_view != READING || s_toolbar || s_clear_confirm ||
         s_page + 1 >= book_layout_page_count() || s_next_page == (int)s_page + 1 ||
-        book_layout_page_image(s_page + 1) >= 0) return false;
+        book_layout_page_image_count(s_page) > 0 ||
+        book_layout_page_image_count(s_page + 1) > 0) return false;
     // 预渲染只是加速功能；开书时不要先占用一整页缓冲。
     // Prefetch is optional; never reserve a full framebuffer before opening a book.
     if (!s_prep_task) ensure_prep();
@@ -2341,8 +2381,15 @@ static app_redraw_t paint_reading(app_ctx_t* ctx, enum EpdDrawMode mode) {
     s_water_turn_pending = false;
     int64_t started = esp_timer_get_time();
     prepare_inline_image();
-    s_reader_image_refresh_pending = !app_settings_reader_hide_images() && s_inline_gray &&
-        book_layout_page_image(s_page) == s_inline_index;
+    // 只有"整页就是一张图"才需要强刷：那个分支会走整块 GC16，而它排在翻页动画之前，
+    // 一旦命中，正文里有插图的页面就没有揭页动画了。混排的插图属于正常正文内容，
+    // 均衡档本来就会刷新它。
+    // Only a page that is nothing but one image needs the forced refresh: that branch runs a
+    // whole-body GC16 ahead of the page-turn effect, so taking it costs an inline-image page its
+    // turn animation. An inline image is ordinary page content and the balanced profile already
+    // refreshes it.
+    s_reader_image_refresh_pending =
+        !app_settings_reader_hide_images() && book_layout_page_image(s_page) >= 0;
     lock_draw();
     bool cached = !s_toolbar && !s_clear_confirm && s_next_fb && s_next_page == (int)s_page;
     if (cached)
@@ -2390,10 +2437,12 @@ static void free_book(void) {
     s_chapter_heading_title[0] = s_chapter_heading_label[0] = 0;
     free(s_text);
     free(s_blocks);
+    release_page_images();
+    release_image_dims();
     for (size_t i = 0; i < s_image_count; ++i) free(s_images[i]);
     free(s_images);
     s_images = NULL; s_image_count = 0;
-    free(s_inline_gray); s_inline_gray = NULL; s_inline_index = -1;
+    release_page_images();
     s_reader_image_refresh_pending = false;
     s_blocks = NULL;
     s_block_count = 0;
@@ -2407,36 +2456,96 @@ static void free_book(void) {
     s_book_title[0] = 0;
     app_font_activate_system();
 }
-static void prepare_inline_image(void) {
-    if (app_settings_reader_hide_images()) return;
-    int index = book_layout_page_image(s_page);
-    if (index < 0 || index == s_inline_index || (size_t)index >= s_image_count) return;
-    invalidate_prep();
-    free(s_inline_gray); s_inline_gray = NULL;
-    s_inline_index = index;
-    uint8_t *encoded = NULL; size_t size = 0; bool png = false;
-    esp_err_t image_err = book_chapter_image(s_chapter, s_images[index], &encoded, &size, &png);
-    if (image_err != ESP_OK) {
-        ESP_LOGW(TAG, "inline image load chapter=%u index=%d: %s", (unsigned)s_chapter,
-                 index, esp_err_to_name(image_err));
-        return;
+static void release_page_images(void) {
+    for (int i = 0; i < s_page_image_count; ++i) {
+        free(s_page_images[i].gray);
+        s_page_images[i].gray = NULL;
     }
-    unsigned width = 0, height = 0;
-    EpdRect body = body_rect();
-    if (book_image_dimensions(encoded, size, png, &width, &height)) {
-        double scale_x = (double)body.width / width, scale_y = (double)body.height / height;
-        double scale = scale_x < scale_y ? scale_x : scale_y;
-        if (scale > 1.0) scale = 1.0;
-        unsigned out_w = (unsigned)(width * scale), out_h = (unsigned)(height * scale);
-        if (!out_w) out_w = 1;
-        if (!out_h) out_h = 1;
-        uint8_t *gray = heap_caps_malloc((size_t)out_w * out_h, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (gray && book_image_grayscale(encoded, size, png, out_w, out_h, gray)) {
-            s_inline_gray = gray; s_inline_w = out_w; s_inline_h = out_h;
-        } else { free(gray); ESP_LOGW(TAG, "inline image decode chapter=%u index=%d", (unsigned)s_chapter, index); }
-    } else ESP_LOGW(TAG, "inline image dimensions chapter=%u index=%d", (unsigned)s_chapter, index);
-    free(encoded);
+    s_page_image_count = 0;
+    s_page_images_for = SIZE_MAX;
 }
+
+static void release_image_dims(void) {
+    free(s_image_dims);
+    free(s_image_dims_ok);
+    s_image_dims = NULL;
+    s_image_dims_ok = NULL;
+    s_image_dims_count = 0;
+}
+
+// 排版回调：给一张图探原始像素尺寸。探测结果在本章内缓存，避免每页重排都解码一遍。
+// Layout callback: probe an image's pixel dimensions, cached for the chapter so a relayout does
+// not decode the same header again.
+static bool reader_image_dims(void* ctx, int image, int* width, int* height) {
+    (void)ctx;
+    if (image < 0 || (size_t)image >= s_image_count) return false;
+    if (!s_image_dims || s_image_dims_count != s_image_count) {
+        release_image_dims();
+        s_image_dims = heap_caps_calloc(s_image_count * 2, sizeof(*s_image_dims), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        s_image_dims_ok = heap_caps_calloc(s_image_count, sizeof(*s_image_dims_ok), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_image_dims || !s_image_dims_ok) { release_image_dims(); return false; }
+        s_image_dims_count = s_image_count;
+    }
+    if (!s_image_dims_ok[image]) {
+        uint8_t* encoded = NULL;
+        size_t size = 0;
+        bool png = false;
+        unsigned w = 0, h = 0;
+        if (book_chapter_image(s_chapter, s_images[image], &encoded, &size, &png) == ESP_OK) {
+            if (book_image_dimensions(encoded, size, png, &w, &h) && w && h) {
+                s_image_dims[image * 2] = (int16_t)(w > INT16_MAX ? INT16_MAX : w);
+                s_image_dims[image * 2 + 1] = (int16_t)(h > INT16_MAX ? INT16_MAX : h);
+                s_image_dims_ok[image] = 1;
+            }
+            free(encoded);
+        }
+    }
+    if (!s_image_dims_ok[image]) return false;
+    if (width) *width = s_image_dims[image * 2];
+    if (height) *height = s_image_dims[image * 2 + 1];
+    return true;
+}
+
+// 为一个页面解码排版放下的所有插图。
+// Decode every image the layout placed on this page.
+static void prepare_inline_image(void) {
+    if (app_settings_reader_hide_images()) { release_page_images(); return; }
+    if (s_page == s_page_images_for) return;
+    release_page_images();
+    s_page_images_for = s_page;
+    int count = book_layout_page_image_count(s_page);
+    if (count > READER_PAGE_IMAGES_MAX) count = READER_PAGE_IMAGES_MAX;
+    for (int i = 0; i < count; ++i) {
+        int index = -1, y = 0, w = 0, h = 0;
+        if (!book_layout_page_image_at(s_page, i, &index, &y, &w, &h)) continue;
+        if (index < 0 || (size_t)index >= s_image_count || w <= 0 || h <= 0) continue;
+        uint8_t* encoded = NULL;
+        size_t size = 0;
+        bool png = false;
+        esp_err_t img_err = book_chapter_image(s_chapter, s_images[index], &encoded, &size, &png);
+        if (img_err != ESP_OK) {
+            ESP_LOGW(TAG, "page image load chapter=%u index=%d: %s", (unsigned)s_chapter, index,
+                     esp_err_to_name(img_err));
+            continue;
+        }
+        uint8_t* gray = heap_caps_malloc((size_t)w * h, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        bool ok = gray && book_image_grayscale(encoded, size, png, (unsigned)w, (unsigned)h, gray);
+        free(encoded);
+        if (!ok) {
+            free(gray);
+            ESP_LOGW(TAG, "page image decode chapter=%u index=%d", (unsigned)s_chapter, index);
+            continue;
+        }
+        reader_image_t* slot = &s_page_images[s_page_image_count++];
+        slot->index = index;
+        slot->x = 0;  // 绘制时按栏宽居中 / centred at draw time
+        slot->y = y;
+        slot->w = w;
+        slot->h = h;
+        slot->gray = gray;
+    }
+}
+
 static bool load_chapter_at(app_ctx_t* ctx, size_t chapter, size_t offset,
                             bool last_page, const char *anchor, size_t source_offset) {
     if (chapter != s_chapter || (!anchor && source_offset == SIZE_MAX)) s_selected_toc = SIZE_MAX;
@@ -2496,8 +2605,33 @@ static bool load_chapter_at(app_ctx_t* ctx, size_t chapter, size_t offset,
     lock_draw();
     invalidate_prep();
     book_layout_set_chapter_lead(lead_skip, lead_height);
+    // 尺寸回调要在布局之前装好：排版会按顺序问遍本章的图，问的时候 s_images 必须已经是这一章。
+    // 这一步以前排在布局之后，于是第一次排版问到的是上一章的图片表，拿不到尺寸就退回整页显示，
+    // 而回退路径不记录内嵌图，那一页就画成了空白。
+    // The dimensions callback must be in place before the layout runs: pagination asks about this
+    // chapter's images and s_images has to be this chapter's by then. It used to sit after the
+    // layout, so the first build asked about the previous chapter's list, got nothing, fell back
+    // to whole-page images, and the fallback records no inline image -- leaving a blank page.
+    // 先把旧表释放，再装本章的表。顺序反了会把本章的表释放掉，s_images 就成了悬空指针。
+    // Free the old list first, then install this chapter's. The other order frees the new list
+    // and leaves s_images dangling.
+    for (size_t i = 0; i < s_image_count; ++i) free(s_images[i]);
+    free(s_images);
+    release_image_dims();
+    s_images = loaded.images;
+    s_image_count = loaded.image_count;
+    // 章节号必须和图片表同时生效：回调按 (章节, 路径) 取图，错配会读到非法地址。
+    // The chapter number has to go in with the list: the callback resolves an image by chapter and
+    // path together, and a mismatch reads an invalid address.
+    s_chapter = chapter;
+    book_layout_set_image_dims(reader_image_dims, NULL);
     bool ok = book_layout_build_blocks(loaded.utf8, loaded.len, loaded.blocks, loaded.count, body_rect(), s_px);
     if (!ok) {
+        // loaded 会被释放，本章的图片表也跟着没了，清掉引用避免留下悬空指针。
+        // `loaded` is about to be freed, taking this chapter's image list with it; drop the
+        // references so nothing dangles.
+        s_images = NULL;
+        s_image_count = 0;
         html_text_free(&loaded);
         book_layout_set_chapter_lead(old_lead_skip, old_lead_height);
         bool restored = s_text && book_layout_build_blocks(s_text, s_text_len, s_blocks, s_block_count, body_rect(), s_px);
@@ -2516,11 +2650,9 @@ static bool load_chapter_at(app_ctx_t* ctx, size_t chapter, size_t offset,
     s_text_len = loaded.len;
     s_blocks = loaded.blocks;
     s_block_count = loaded.count;
-    for (size_t i = 0; i < s_image_count; ++i) free(s_images[i]);
-    free(s_images);
-    s_images = loaded.images; s_image_count = loaded.image_count;
-    free(s_inline_gray); s_inline_gray = NULL; s_inline_index = -1;
-    s_chapter = chapter;
+    // 图片表、章节号和尺寸缓存已经在布局之前装好，这里不再动它们。
+    // The image list, chapter number and dimensions cache were set up before the layout.
+    release_page_images();
     s_chapter_lead_skip = lead_skip;
     s_chapter_lead_height = lead_height;
     copy_text(s_chapter_heading_title, sizeof(s_chapter_heading_title), heading);
@@ -2645,8 +2777,8 @@ static bool open_book(app_ctx_t* ctx, const char* path) {
     skip_hidden_image_pages(ctx, 1);
     if (!s_text) { free_book(); return false; }
     s_view = READING;
-    s_reader_image_refresh_pending = !app_settings_reader_hide_images() && s_inline_gray &&
-        book_layout_page_image(s_page) == s_inline_index;
+    s_reader_image_refresh_pending =
+        !app_settings_reader_hide_images() && book_layout_page_image(s_page) >= 0;
     s_stats_last_ms = s_stats_activity_ms = ctx->now_ms;
     s_reader_panel = READER_PANEL_NONE;
     s_clear_confirm = s_batch_confirm = false;
@@ -3262,7 +3394,7 @@ static app_redraw_t apply_reader_option(app_ctx_t* ctx, int kind) {
     }
     unlock_draw();
     if (ok) {
-        free(s_inline_gray); s_inline_gray = NULL; s_inline_index = -1;
+        release_page_images();
         prepare_inline_image();
         s_jump_offset = SIZE_MAX;
         save_progress();
@@ -3299,7 +3431,7 @@ static app_redraw_t toggle_reader_fullscreen(app_ctx_t* ctx) {
     }
     unlock_draw();
     if (!ok) return APP_REDRAW_NONE;
-    free(s_inline_gray); s_inline_gray = NULL; s_inline_index = -1;
+    release_page_images();
     prepare_inline_image();
     s_jump_offset = SIZE_MAX;
     s_reader_panel = READER_PANEL_NONE;
