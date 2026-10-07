@@ -34,6 +34,7 @@ The release adds inline images, swipe page turns, configurable idle lock, cleare
 ## 2026-10-07 · mindreset
 
 - 刷机页不再给出蓝牙等无法刷机的串口，只列 Espressif 设备。
+- 刷机页的安装器对话框改为中文（原包只带英文）。
 - 刷机不再默认擦除整片闪存：之前设置会跳过询问直接擦除，现在会先问，默认不擦，书籍和设置保留。
 
 ## 2026-10-06 · Codex
