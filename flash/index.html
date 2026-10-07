@@ -7,6 +7,25 @@
   <meta name="description" content="Pico 阅读固件图文刷机指南：连接设备、选择串口、等待安装完成。">
   <title>Pico 阅读固件 · 图文刷机指南</title>
   <script>
+    // attachShadow 不在父树上留下 mutation 记录，父树的观察器因此看不到后挂上的影子根。
+    // 安装器的对话框正是这样长出来的：元素先插入，观察器触发一次时还没有影子根，根随后才
+    // 挂上，于是整个对话框都翻不到，包括 "Erase device" 这个标题和它旁边的勾选框标签。
+    // 这里挂个钩子，新的影子根一出现就登记下来，交给下面的翻译层处理。
+    // attachShadow leaves no mutation record on the parent tree, so a parent observer cannot see a
+    // shadow root attached after the element was inserted. That is exactly how the installer's
+    // dialog grows: the element goes in, the observer fires once and finds no shadow root, and the
+    // root is attached afterwards -- so the whole dialog stayed untranslated, "Erase device" as its
+    // heading and as the checkbox label beside it included. Hook it here and register every new
+    // root for the translation layer below.
+    window.__flasherShadowRoots = [];
+    (() => {
+      const attachShadow = Element.prototype.attachShadow;
+      Element.prototype.attachShadow = function (init) {
+        const root = attachShadow.call(this, init);
+        try { window.__flasherShadowRoots.push(root); } catch (e) { /* 忽略 / ignore */ }
+        return root;
+      };
+    })();
     // 打包好的安装器直接调 navigator.serial.requestPort()，不带任何过滤，于是浏览器能看到的
     // 串口都会列出来，包括刷不了机的蓝牙虚拟串口。这里在它之前补一层 Espressif 厂商过滤：
     // Pico 的 USB Serial/JTAG（VID 303A）会列出来，蓝牙那些不会。放在独立脚本里是因为它必须
@@ -157,6 +176,18 @@
         for (const el of root.querySelectorAll("*")) if (el.shadowRoot) watch(el.shadowRoot);
       }
 
+      // 处理钩子登记到的每个影子根，并递归进它内部的影子根。
+      // Handle every root the hook registered, recursing into the roots inside it.
+      function drain() {
+        const roots = window.__flasherShadowRoots;
+        if (!roots) return;
+        for (let i = 0; i < roots.length; i++) {
+          const root = roots[i];
+          if (watched.has(root)) continue;
+          walk(root);
+          watch(root);
+        }
+      }
       const installer = () => document.getElementById("flash-installer");
       function start() {
         const el = installer();
@@ -165,13 +196,14 @@
         watch(el.shadowRoot);
         return true;
       }
-      if (!start()) {
-        // 元素先注册自定义元素再长出影子根，所以第一帧可能还没有。
-        // The element gets its shadow root only after the custom element upgrades, so the first
-        // frame may not have one yet.
-        const timer = setInterval(() => { if (start()) clearInterval(timer); }, 50);
-        setTimeout(() => clearInterval(timer), 10000);
-      }
+      start();
+      drain();
+      // 钩子负责及时性，慢扫描负责兜底：还有别的路径能长出影子根（自定义元素自行 upgrade
+      // 等），漏掉一个就是整块对话框没翻。树很小，扫一遍没有成本。
+      // The hook handles promptness and the slow sweep is the safety net: other paths can create a
+      // shadow root too (a custom element upgrading on its own), and missing one means a whole
+      // dialog stays in English. The tree is tiny, so a sweep costs nothing.
+      setInterval(() => { start(); drain(); }, 400);
     })();
   </script>
   <script type="module" src="./vendor/web/install-button.js"></script>
