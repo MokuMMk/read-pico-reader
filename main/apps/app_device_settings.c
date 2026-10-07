@@ -491,12 +491,44 @@ typedef struct {
     int content_bottom;
 } ble_scan_layout_t;
 
+// 扫描列表只列真的广播了名字的设备。没有广播名时组件把地址回落成名字，那一行对用户
+// 认不出是什么设备，而且地址太长会把信号强度挤掉。
+// The scan list shows only devices that actually advertised a name. Without one the component
+// falls back to the address: nothing the user can recognise, and long enough to crowd the signal
+// strength off the row.
+static bool ble_scan_visible(const ble_pt_device_t *dev) {
+    return dev != NULL && dev->has_name;
+}
+
+static int ble_scan_visible_count(void) {
+    int visible = 0;
+    const uint8_t count = ble_pt_device_count();
+    for (uint8_t i = 0; i < count; ++i) {
+        if (ble_scan_visible(ble_pt_device(i))) ++visible;
+    }
+    return visible;
+}
+
+// 取第 row 台有名字的设备；遍历顺序仍是组件的原始顺序。
+// The row-th device that has a name; the walk keeps the component's order.
+static const ble_pt_device_t *ble_scan_visible_at(int row) {
+    if (row < 0) return NULL;
+    const uint8_t count = ble_pt_device_count();
+    int seen = 0;
+    for (uint8_t i = 0; i < count; ++i) {
+        const ble_pt_device_t *dev = ble_pt_device(i);
+        if (!ble_scan_visible(dev)) continue;
+        if (seen++ == row) return dev;
+    }
+    return NULL;
+}
+
 static ble_scan_layout_t ble_scan_layout(void) {
     ble_scan_layout_t l;
     memset(&l, 0, sizeof(l));
     l.status_top = 200;
     l.devices_top = 300;
-    l.device_rows = (int)ble_pt_device_count();
+    l.device_rows = ble_scan_visible_count();
     l.content_bottom = l.devices_top + (l.device_rows ? l.device_rows * BLE_ROW_H : 68) + 40;
     return l;
 }
@@ -1017,11 +1049,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         // 持续扫描中：告诉用户正在找，以及找到几台。
         // Continuous scan: say that it is running and how many turned up.
         char head[64];
-        if (ble_pt_scanning()) snprintf(head, sizeof(head), "正在搜索…已找到 %u 台", (unsigned)ble_pt_device_count());
+        if (ble_pt_scanning()) snprintf(head, sizeof(head), "正在搜索…已找到 %u 台", (unsigned)ble_scan_visible_count());
         else snprintf(head, sizeof(head), "扫描已停止");
         ui_text(fb, 44, l.status_top - scroll, 23, head, EPD_DRAW_ALIGN_LEFT, false);
         for (int i = 0; i < l.device_rows; ++i) {
-            const ble_pt_device_t *dev = ble_pt_device((uint8_t)i);
+            const ble_pt_device_t *dev = ble_scan_visible_at(i);
             if (!dev) continue;
             char label[48];
             snprintf(label, sizeof(label), "%s", dev->name);
@@ -1854,7 +1886,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         // 选一台就连，连上后退回二级页。扫描在离页时停。
         // Picking one connects, then returns to level two; scanning stops on the way out.
         for (int i = 0; i < l.device_rows; ++i) {
-            const ble_pt_device_t *dev = ble_pt_device((uint8_t)i);
+            const ble_pt_device_t *dev = ble_scan_visible_at(i);
             if (!dev) continue;
             const int top = l.devices_top + i * BLE_ROW_H;
             if (ty < top || ty >= top + BLE_ROW_H) continue;
