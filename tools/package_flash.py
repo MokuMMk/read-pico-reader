@@ -35,7 +35,7 @@ def package(build: Path, output: Path):
     release={'schema':1,'version':version,'project':'Read_Pico','board':'RDP-G01-W','layout':'pico-dual-4m-v1',
         'minimum_base_version':'0.3.3-rc72','url':f'https://wegooo-cell.github.io/read-pico-reader/{upgrade_name}',
         'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),
-        'notes':'修复文件管理首次打开图片重启及任意目录图片打开；传书网页支持添加任意文件到当前目录；系统字号上限 200%；合并 VCOM 门控和 2 毫秒稳定时间；书架抽出使用局部灰阶差分；放大并对齐状态栏文字；设置列表滑动取消周期黑白清屏，到边界不空刷，移除蓝牙页资料卡叠绘。'}
+        'notes':'1. 优化图文混排\n2. 支持滑动翻页\n3. 新增自动休眠\n4. 优化蓝牙翻页器\n5. 优化图标与界面\n6. 优化文件管理排版'}
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
     (output/'update.json').write_text(json.dumps(release,ensure_ascii=False,indent=2)+'\n')
     check(output)

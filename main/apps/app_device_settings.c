@@ -118,6 +118,50 @@ static void draw_upgrade_progress(uint8_t *fb) {
     ui_fill_round_rect(fb, (EpdRect){60, 519, 564, 8}, 4, 0xc0);
     if (percent) ui_fill_round_rect(fb, (EpdRect){60, 519, (int)(564 * percent / 100), 8}, 4, 0x30);
 }
+// 日志按 UTF-8 字符和实际字宽换行，限制六行，不影响下载时的局部刷新。
+// Wrap notes on UTF-8 boundaries using measured widths; cap at six lines without changing download refreshes.
+static bool upgrade_note_line(const char **cursor, char *line, size_t capacity) {
+    if (!cursor || !*cursor || !line || capacity < 5) return false;
+    const char *p = *cursor;
+    while (*p && (strchr("\r\n\t ;", *p) || !strncmp(p, "；", 3)))
+        p += !strncmp(p, "；", 3) ? 3 : 1;
+    size_t used = 0;
+    line[0] = 0;
+    while (*p && !strchr("\r\n;", *p) && strncmp(p, "；", 3)) {
+        unsigned char lead = (unsigned char)*p;
+        size_t bytes = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+        if (bytes > strlen(p) || used + bytes >= capacity) break;
+        memcpy(line + used, p, bytes);
+        line[used + bytes] = 0;
+        if (used && ui_text_fixed_width_px(26, line) > 540) { line[used] = 0; break; }
+        used += bytes;
+        p += bytes;
+    }
+    *cursor = p;
+    return used != 0;
+}
+static void draw_upgrade_notes(uint8_t *fb) {
+    const char *cursor = s_update.release.notes;
+    char line[sizeof(s_update.release.notes)];
+    if (!*cursor) {
+        ui_text_fixed(fb, 60, 530, 26, "本次更新暂无说明", EPD_DRAW_ALIGN_LEFT, false);
+        return;
+    }
+    for (int row = 0; row < 6 && upgrade_note_line(&cursor, line, sizeof(line)); ++row) {
+        if (row == 5 && *cursor) {
+            size_t used = strlen(line);
+            while (used && (used + 4 > sizeof(line) || ui_text_fixed_width_px(26, line) > 514)) {
+                do { --used; } while (used && ((unsigned char)line[used] & 0xc0) == 0x80);
+                line[used] = 0;
+            }
+            memcpy(line + used, "…", 4);
+        }
+        ui_text_fixed(fb, 60, 530 + row * 38, 26, line, EPD_DRAW_ALIGN_LEFT, false);
+    }
+}
+static EpdRect upgrade_confirm_button(bool online, bool accept) {
+    return (EpdRect){accept ? 364 : 60, online ? 842 : 613, 260, 64};
+}
 static void upgrade_open(void) {
     (void)pico_ota_inspect(PICO_OTA_UPDATE_PATH, &s_local_update);
     pico_online_get_status(&s_update);
@@ -912,14 +956,18 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 60, 224, 22, "当前版本", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 60, 264, 29, esp_app_get_description()->version, EPD_DRAW_ALIGN_LEFT, false);
         if (s_upgrade_confirm) {
-            settings_card(fb, (EpdRect){36, 356, 612, 344}, 22, UI_GRAY_WHITE, 0x70);
-            ui_text(fb, 60, 383, 29, s_upgrade_online ? "发现新版本" : "确认 TF 卡升级", EPD_DRAW_ALIGN_LEFT, false);
-            ui_text(fb, 60, 447, 26, s_upgrade_online ? s_update.release.version : s_local_update.candidate_version,
+            settings_card(fb, (EpdRect){36, 356, 612, s_upgrade_online ? 574 : 344}, 22, UI_GRAY_WHITE, 0x70);
+            ui_text_fixed(fb, 60, 383, 31, s_upgrade_online ? "发现新版本" : "确认 TF 卡升级", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text_fixed(fb, 60, 447, 28, s_upgrade_online ? s_update.release.version : s_local_update.candidate_version,
                     EPD_DRAW_ALIGN_LEFT, false);
-            ui_text(fb, 60, 513, 22, "升级期间请保持供电", EPD_DRAW_ALIGN_LEFT, false);
-            ui_text(fb, 60, 560, 21, "设置、阅读记录与 TF 卡文件保留", EPD_DRAW_ALIGN_LEFT, false);
-            ui_draw_button(fb, (EpdRect){60, 613, 260, 64}, s_upgrade_online ? "稍后" : "取消", false);
-            ui_draw_button(fb, (EpdRect){364, 613, 260, 64}, s_upgrade_online ? "开始更新" : "确认升级", true);
+            if (s_upgrade_online) {
+                ui_text_fixed(fb, 60, 494, 26, "本次更新", EPD_DRAW_ALIGN_LEFT, false);
+                draw_upgrade_notes(fb);
+            }
+            ui_text_fixed(fb, 60, s_upgrade_online ? 770 : 513, 24, "升级期间请保持供电", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text_fixed(fb, 60, s_upgrade_online ? 806 : 560, 23, "设置、阅读记录与 TF 卡文件保留", EPD_DRAW_ALIGN_LEFT, false);
+            ui_draw_button(fb, upgrade_confirm_button(s_upgrade_online, false), s_upgrade_online ? "稍后" : "取消", false);
+            ui_draw_button(fb, upgrade_confirm_button(s_upgrade_online, true), s_upgrade_online ? "开始更新" : "确认升级", true);
         } else {
             settings_card(fb, (EpdRect){36, 356, 612, 278}, 22, UI_GRAY_WHITE, 0x70);
             ui_text(fb, 60, 383, 29, "联网 OTA", EPD_DRAW_ALIGN_LEFT, false);
@@ -1426,11 +1474,11 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         int tab = ui_nav_hit(ev->x0, y);
         if (tab >= 0) { pico_online_cancel_join(); ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
         if (s_upgrade_confirm) {
-            if (y >= 613 && y < 677 &&
-                ((ev->x0 >= 60 && ev->x0 < 320) || (ev->x0 >= 364 && ev->x0 < 624))) {
+            bool accept = ui_rect_hit(upgrade_confirm_button(s_upgrade_online, true), ev->x0, y);
+            if (accept || ui_rect_hit(upgrade_confirm_button(s_upgrade_online, false), ev->x0, y)) {
                 s_upgrade_confirm = false;
                 s_upgrade_offer_pending = false;
-                if (ev->x0 >= 364 && ev->x0 < 624) {
+                if (accept) {
                     if (s_upgrade_online) {
                         if (pico_online_download() != ESP_OK) snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "无法开始升级，请重新检查");
                         pico_online_get_status(&s_update);

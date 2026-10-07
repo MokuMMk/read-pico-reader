@@ -43,6 +43,7 @@ static EpdRect wiped;
 #define UI_GRAY_WHITE 255
 #define UI_GRAY_LIGHT 192
 #define UI_LOCK_WIDTH 684
+#define EPD_DRAW_ALIGN_LEFT 0
 #define EPD_DRAW_ALIGN_RIGHT 1
 #define EPD_DRAW_ALIGN_CENTER 2
 static int ui_text_last_percent,track_width;
@@ -58,8 +59,23 @@ static void draw_favorite_icon(uint8_t *fb,int x,int y,int w,int h,bool favorite
 static void ui_hairline(uint8_t *fb,int y,int x,int width,int gray){(void)fb;(void)y;(void)x;(void)width;(void)gray;}
 static void copy_text(char *out,size_t cap,const char *text){snprintf(out,cap,"%s",text);}
 static void fit_text(char *text,int px,int width){(void)text;(void)px;(void)width;}
+static char note_lines[6][384];
+static int note_count;
+static int ui_text_fixed_width_px(int px,const char *text){
+ int width=0;for(const unsigned char *p=(const unsigned char *)text;*p;++p)
+  if((*p&0xc0)!=0x80)width+=*p<128?px/2:px;
+ return width;
+}
+static void ui_text_fixed(uint8_t *fb,int x,int y,int px,const char *text,int align,bool inverted){
+ (void)fb;(void)align;(void)inverted;
+ assert(note_count<6&&x==60&&y==530+note_count*38&&px==26);
+ assert(ui_text_fixed_width_px(px,text)<=540);
+ snprintf(note_lines[note_count++],384,"%s",text);
+}
+static bool hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
 '''
-for name in ("upgrade_percent", "upgrade_remember", "upgrade_status_redraw", "upgrade_progress_area", "draw_upgrade_progress"):
+for name in ("upgrade_percent", "upgrade_remember", "upgrade_status_redraw", "upgrade_progress_area", "draw_upgrade_progress",
+             "upgrade_note_line", "draw_upgrade_notes", "upgrade_confirm_button"):
     unit += function(name) + "\n"
 unit += function("draw_reader_header", root / "main/apps/app_book.c") + "\n"
 unit += r'''
@@ -81,7 +97,26 @@ int main(void){
  s_update.state=PICO_UPDATE_DOWNLOADING;s_update.busy=true;s_update.received=0;upgrade_remember(UINT32_MAX-2000);s_update.received=60;assert(upgrade_status_redraw(2999)==APP_REDRAW_AREA);
  draw_reader_header(NULL);assert(back_center==title_center&&favorite_center==title_center);
  s_reader_favorite=true;draw_reader_header(NULL);assert(back_center==title_center&&favorite_center==title_center);
+ snprintf(s_update.release.notes,sizeof(s_update.release.notes),"1. 优化图文混排\n2. 支持滑动翻页\n3. 新增自动休眠\n4. 优化蓝牙翻页器\n5. 优化图标与界面\n6. 优化文件管理排版");
+ draw_upgrade_notes(NULL);assert(note_count==6&&!strcmp(note_lines[0],"1. 优化图文混排")&&!strcmp(note_lines[5],"6. 优化文件管理排版"));
+ note_count=0;s_update.release.notes[0]=0;draw_upgrade_notes(NULL);assert(note_count==1&&!strcmp(note_lines[0],"本次更新暂无说明"));
+ const char *cursor="\n\r;；  一；二;三\n四";char line[384];
+ for(int i=0;i<4;++i){assert(upgrade_note_line(&cursor,line,sizeof(line)));assert(strlen(line)==3);}
+ assert(!upgrade_note_line(&cursor,line,sizeof(line)));
+ cursor="中文😀AB";char short_line[5];
+ assert(upgrade_note_line(&cursor,short_line,sizeof(short_line))&&!strcmp(short_line,"中"));
+ assert(upgrade_note_line(&cursor,short_line,sizeof(short_line))&&!strcmp(short_line,"文"));
+ assert(upgrade_note_line(&cursor,short_line,sizeof(short_line))&&!strcmp(short_line,"😀"));
+ assert(upgrade_note_line(&cursor,short_line,sizeof(short_line))&&!strcmp(short_line,"AB"));
+ cursor="中";assert(!upgrade_note_line(&cursor,line,1));
+ note_count=0;memset(s_update.release.notes,'A',sizeof(s_update.release.notes)-1);s_update.release.notes[sizeof(s_update.release.notes)-1]=0;
+ draw_upgrade_notes(NULL);assert(note_count==6&&strstr(note_lines[5],"…"));
+ EpdRect online_yes=upgrade_confirm_button(true,true),online_no=upgrade_confirm_button(true,false);
+ assert(hit(online_yes,500,870)&&hit(online_no,150,870)&&!hit(online_yes,500,640));
+ assert(!hit(online_yes,624,870)&&!hit(online_yes,500,906)&&!hit(online_no,364,870));
+ assert(hit(upgrade_confirm_button(false,true),500,640)&&!hit(upgrade_confirm_button(false,true),500,870));
  puts("PASS: worker cleanup and busy transition, direct one-shot update offer, five-second/5-percent area-only progress, timer wrap and aligned reader header");
+ puts("PASS: six release notes, measured UTF-8 wrapping and overflow, empty notes fallback, online and TF confirmation hit regions");
 }
 '''
 with tempfile.TemporaryDirectory() as folder:

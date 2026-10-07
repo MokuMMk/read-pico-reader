@@ -3,6 +3,19 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.3.3-rc84 · 2026-10-07
+
+- 图文混排：小图与正文在同一页排版，按比例缩放，多图接排。
+- 滑动翻页：默认支持左右滑动，兼容上下翻页模式。
+- 自动休眠：可选 1 分钟、5 分钟、10 分钟或关闭。
+- 蓝牙翻页器优化：学习映射显示识别到的实际按键。
+- 图标 UI 优化：升级、BOOT 和阅读设置使用独立图标。
+- 文件管理排版优化：统一操作和分页按钮，增强文字与线框可读性。
+
+联网更新确认页新增简短更新日志，提供“稍后 / 开始更新”。从 rc84 开始，后续更新可在设备上查看日志；旧固件升级本次版本前可在在线刷机页查看。完整刷机、TF 升级和联网 OTA 使用同一编译，保留兼容的双槽基础包、现有设置与阅读数据。
+
+The release adds inline images, swipe page turns, configurable idle lock, clearer learned Bluetooth keys, distinct UI icons and improved file-management layouts. From rc84 onward, the online update offer displays short release notes before installation. USB, TF-card and online updates share one build and retain the compatible dual-slot layout and user data.
+
 ## 2026-10-07 · Codex
 
 - rc83 本地测试：删除“全局刷新模式”测试项及实验刷新引擎，旧 NVS / TF 备份不再开启该模式，保留标准刷新及阅读全刷设置。晃动翻页改用新加速度采样区分左右：左晃上一页、右晃下一页；一次横向动作触发，过滤倾斜、其他方向及回弹，触摸和工具栏期间禁用，离页恢复传感器睡眠。方向与灵敏度已通过模拟轨迹回归，仍需实机试用。
