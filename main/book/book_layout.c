@@ -627,9 +627,16 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
         if (visible != off) { off = visible; continue; }
         const blk_t *block = block_at(off);
         if (block && block->image >= 0 && off == block->offset) {
-            if (img_at >= img_end || s_images[img_at].image != block->image) return;
-            const layout_image_t *image = &s_images[img_at++];
-            used = (int64_t)image->y + image->height + (image->height < rect.height ? px / 2 : 0);
+            if (img_at < img_end && s_images[img_at].image == block->image) {
+                const layout_image_t *image = &s_images[img_at++];
+                used = (int64_t)image->y + image->height + (image->height < rect.height ? px / 2 : 0);
+            } else {
+                // 缺失插图记录时仍保留其排版空间，让后续正文继续绘制。
+                // If an image record is missing, retain its layout space and keep drawing the following text.
+                int width = rect.width, height = rect.height;
+                bool known = image_display_size(block, &width, &height);
+                used += height + (known && height < rect.height ? px / 2 : 0);
+            }
             off = block->offset + block->len;
             if (off < end && s_text[off] == '\n') ++off;
             continue;

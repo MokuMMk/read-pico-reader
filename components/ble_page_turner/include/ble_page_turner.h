@@ -209,11 +209,17 @@ esp_err_t ble_pt_bind(ble_pt_action_t action, uint32_t code);
 /// Read back an action's bound code; 0 when unbound.
 uint32_t ble_pt_binding(ble_pt_action_t action);
 
-/// 把原始键值折算成动作。内置映射优先，其次是手动绑定。
-/// Resolve a raw code to an action: built-in keys first, then manual bindings.
+/// 把原始键值折算成动作。手动绑定优先，其次是内置映射。
+/// 内置映射含阅星瞳协议：报告号与字节下标都为 0 的 0x01 上一页、0x02 下一页；声明了键盘页
+/// 的外设上 byte 0 是修饰键，那里的 0x01 是左 Ctrl，不算翻页。
+/// Resolve a raw code to an action: manual bindings first, then the built-in map. The built-in map
+/// covers the YueXingTong protocol -- 0x01 previous and 0x02 next with report id and byte index
+/// both zero. On a peripheral that declared a keyboard page, byte 0 is the modifier byte and 0x01
+/// there is left Ctrl, not a page turn.
 ble_pt_action_t ble_pt_action_for_raw(uint32_t code);
 
 /// 把 HID usage 折算成动作（内置映射，不查手动绑定）。真机不带码值所以单列。
+/// 内置映射含阅星瞳协议：0x01 上一页、0x02 下一页。
 /// Resolve a HID usage to an action via the built-in map only; separate because a usage has
-/// no raw code.
+/// no raw code. The built-in map covers the YueXingTong protocol: 0x01 previous, 0x02 next.
 ble_pt_action_t ble_pt_action_for_usage(uint8_t usage, uint8_t mods);

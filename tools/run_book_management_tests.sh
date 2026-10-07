@@ -18,6 +18,7 @@ cc -std=gnu11 -Wall -Wextra -Werror -Itools/settings_backup_stubs \
 build/book-tests/book-history-backup
 python3 tools/book_ui_host_test.py
 python3 tools/reader_images_host_test.py
+python3 tools/book_layout_draw_host_test.py
 python3 tools/ui_font_coverage_host_test.py
 python3 tools/test_home_recent.py
 python3 tools/test_book_toc.py

@@ -1600,5 +1600,14 @@ esp_err_t book_epub_image_dimensions(book_epub_t *book, size_t chapter, const ch
         if (!book_image_dimensions(header, size, png, width, height)) err = ESP_ERR_NOT_SUPPORTED;
     }
     free(header);
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        // 头部不足或 SVG 包装时，复用插图读取路径；缓存到块中，避免每页重复读取。
+        // For a late frame header or SVG wrapper, reuse image loading; callers cache dimensions in blocks.
+        uint8_t *image = NULL; size_t bytes = 0; bool png = false;
+        err = book_epub_image(book, chapter, src, &image, &bytes, &png);
+        if (err == ESP_OK && !book_image_dimensions(image, bytes, png, width, height))
+            err = ESP_ERR_NOT_SUPPORTED;
+        free(image);
+    }
     return err;
 }

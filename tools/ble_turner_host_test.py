@@ -56,12 +56,26 @@ unit = r'''
 #define KEY_RING_LEN 16
 #define RAW_RING_LEN 17
 #define FRAME_MAX 16
+#define YXT_CODE_PREV 0x01u
+#define YXT_CODE_NEXT 0x02u
+#define HID_SVC_UUID 0x1812u
+#define BLE_GAP_EVENT_DISC 1
 #define MALLOC_CAP_INTERNAL 1
 #define MALLOC_CAP_8BIT 2
 #define MALLOC_CAP_SPIRAM 4
 #define BLE_PT_MIN_FREE_INTERNAL (56*1024)
 #define BLE_PT_MIN_LARGEST_INTERNAL (20*1024)
 #define BLE_PT_MIN_FREE_PSRAM (256*1024)
+static ble_pt_device_t s_devices[BLE_PT_MAX_DEVICES];
+static uint8_t s_device_count;
+struct fake_uuid {uint16_t u;};
+struct ble_hs_adv_fields {const uint8_t *name;uint8_t name_len;int num_uuids16;struct fake_uuid *uuids16;};
+struct ble_gap_disc_desc {struct {uint8_t val[6],type;}addr;int rssi;const uint8_t *data;uint8_t length_data;};
+struct ble_gap_event {int type;struct ble_gap_disc_desc disc;};
+static struct ble_hs_adv_fields advertised;
+static int ble_hs_adv_parse_fields(struct ble_hs_adv_fields *out,const uint8_t *data,uint8_t len){(void)data;(void)len;*out=advertised;return 0;}
+static uint16_t ble_uuid_u16(const uint16_t *uuid){return *uuid;}
+static void *bond_find(const char *addr){assert(addr);return NULL;}
 static atomic_flag s_lifecycle=ATOMIC_FLAG_INIT;
 static atomic_uint s_network_users;
 static atomic_bool s_running;
@@ -120,10 +134,13 @@ static void nvs_close(nvs_handle_t h){assert(h==1);binding_handles--;}
 for name in ('lifecycle_take','lifecycle_give','ble_pt_input_serial','key_push','raw_push','extract_primary_code',
              'usage_to_special','emit_usage','ingest_report','ble_pt_pop_key','ble_pt_pop_raw',
              'ble_pt_raw_code','ble_pt_bind','start_locked','stop_locked','ble_pt_start','ble_pt_stop',
-             'ble_pt_network_acquire','ble_pt_network_release'):
+             'ble_pt_network_acquire','ble_pt_network_release','scan_cb','ble_pt_device_count',
+             'ble_pt_device','ble_pt_action_for_raw','ble_pt_action_for_usage'):
     unit += '\n' + function(BLE, name)
 unit += '\n' + function(SETTINGS, 'ble_receive_feedback')
 unit += '\n' + function(SETTINGS, 'format_bound_key')
+for name in ('ble_scan_visible','ble_scan_visible_count','ble_scan_visible_at'):
+    unit += '\n' + function(SETTINGS,name)
 unit += r'''
 static void reset_input(void){
  memset(&s_keys,0,sizeof(s_keys));memset(&s_raws,0,sizeof(s_raws));
@@ -134,6 +151,46 @@ static void reset_input(void){
 }
 static void report(int len,int id,int key){uint8_t data[9]={0};data[len==9?0:8]=(uint8_t)id;data[len==9?3:2]=(uint8_t)key;ingest_report(data,(size_t)len);}
 int main(void){
+ // 同地址的扫描响应补齐名字；过滤后的行仍选择正确设备。
+ // A later scan response supplies a name; filtered rows still select the correct peer.
+ struct ble_gap_event event={.type=BLE_GAP_EVENT_DISC,.disc={.rssi=-50}};
+ assert(!scan_cb(&event,NULL)&&s_device_count==1&&!ble_scan_visible_count());
+ advertised.name=(const uint8_t*)"YueXingTong";advertised.name_len=11;
+ assert(!scan_cb(&event,NULL)&&s_device_count==1&&ble_scan_visible_count()==1);
+ assert(!strcmp(ble_scan_visible_at(0)->name,"YueXingTong"));
+ advertised.name=(const uint8_t*)"YX";advertised.name_len=2;scan_cb(&event,NULL);
+ assert(!strcmp(ble_scan_visible_at(0)->name,"YX"));
+ advertised.name=NULL;advertised.name_len=0;scan_cb(&event,NULL);
+ assert(ble_scan_visible_count()==1);
+ event.disc.addr.val[0]=1;scan_cb(&event,NULL);
+ assert(s_device_count==2&&ble_scan_visible_count()==1&&!ble_scan_visible_at(1)&&!ble_scan_visible_at(-1));
+ event.disc.addr.val[0]=2;advertised.name=(const uint8_t*)"Next";advertised.name_len=4;scan_cb(&event,NULL);
+ assert(ble_scan_visible_count()==2&&!strcmp(ble_scan_visible_at(1)->name,"Next"));
+ for(unsigned i=3;i<BLE_PT_MAX_DEVICES+2;i++){event.disc.addr.val[0]=i;scan_cb(&event,NULL);}
+ assert(s_device_count==BLE_PT_MAX_DEVICES);
+ event.disc.addr.val[0]=1;scan_cb(&event,NULL);assert(s_devices[1].has_name);
+ // 阅星瞳无需学习；手动绑定覆盖默认映射；键盘修饰键不能误翻页。
+ // YueXingTong needs no learning; manual bindings override defaults, and keyboard modifiers cannot turn pages.
+ s_has_keyboard_page=false;
+ assert(ble_pt_action_for_usage(1,0)==BLE_PT_ACTION_PREV&&ble_pt_action_for_usage(2,0)==BLE_PT_ACTION_NEXT);
+ assert(ble_pt_action_for_raw(1)==BLE_PT_ACTION_PREV&&ble_pt_action_for_raw(2)==BLE_PT_ACTION_NEXT);
+ assert(ble_pt_action_for_raw(0x101)==BLE_PT_ACTION_NONE&&ble_pt_action_for_raw(0)==BLE_PT_ACTION_NONE);
+ s_bindings.codes[1]=1;assert(ble_pt_action_for_raw(1)==BLE_PT_ACTION_NEXT);s_bindings.codes[1]=0;
+ s_has_keyboard_page=true;assert(ble_pt_action_for_raw(1)==BLE_PT_ACTION_NONE&&ble_pt_action_for_raw(2)==BLE_PT_ACTION_NONE);
+ s_bindings.codes[0]=1;assert(ble_pt_action_for_raw(1)==BLE_PT_ACTION_PREV);s_bindings.codes[0]=0;
+ // 原生一字节报告的首按、连发、松开及下一次按下；标准键盘继续独立识别。
+ // Native one-byte reports cover first press, duplicates, release and next press; keyboards stay distinct.
+ reset_input();s_has_keyboard_page=false;s_preferred_byte=0;
+ uint8_t native=1;ble_pt_event_t key;ble_pt_raw_t raw;
+ ingest_report(&native,1);assert(ble_pt_pop_key(&key)&&ble_pt_action_for_usage(key.usage,key.mods)==BLE_PT_ACTION_PREV);
+ ingest_report(&native,1);assert(!ble_pt_pop_key(&key));
+ native=0;ingest_report(&native,1);assert(s_rest_known);
+ native=2;ingest_report(&native,1);
+ assert(ble_pt_pop_key(&key)&&ble_pt_action_for_usage(key.usage,key.mods)==BLE_PT_ACTION_NEXT);
+ assert(ble_pt_pop_raw(&raw)&&raw.pressed&&ble_pt_action_for_raw(ble_pt_raw_code(&raw))==BLE_PT_ACTION_NEXT);
+ reset_input();s_has_keyboard_page=true;s_preferred_byte=2;
+ uint8_t keyboard[8]={0};ingest_report(keyboard,8);keyboard[0]=1;ingest_report(keyboard,8);
+ assert(!ble_pt_pop_key(&key)&&ble_pt_pop_raw(&raw)&&ble_pt_action_for_raw(ble_pt_raw_code(&raw))==BLE_PT_ACTION_NONE);
  char label[48];
  format_bound_key(0x88,label,sizeof(label));assert(!strcmp(label,"0x88"));
  format_bound_key(0x288,label,sizeof(label));assert(!strcmp(label,"0x88 b2"));
@@ -181,7 +238,7 @@ int main(void){
  atomic_flag_test_and_set(&s_lifecycle);assert(ble_pt_start()==ESP_ERR_TIMEOUT && !s_running);lifecycle_give();
  for(int n=0;n<100;n++){assert(ble_pt_start()==ESP_OK);assert(ble_pt_network_acquire()==ESP_OK);ble_pt_network_release();}
  assert(!s_running && !atomic_load(&s_network_users));
- puts("PASS: BLE first key, report ID/release, learning feedback, bounded queues, memory/task failures and network resource leases");
+ puts("PASS: named discovery, YueXingTong/manual/modifier mappings, BLE first key, report ID/release, learning feedback, bounded queues, memory/task failures and network resource leases");
 }
 '''
 # Active tick dispatch must consume reports before a state-only redraw can return.

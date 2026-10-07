@@ -166,9 +166,18 @@ int main(int argc, char **argv) {
                 assert(text.image_count == 1 && !strcmp(text.images[0], "../images/pic&one.png"));
                 uint8_t *image = NULL; size_t size = 0; bool png = false;
                 assert(book_epub_image(book, i, text.images[0], &image, &size, &png) == ESP_OK);
-                assert(image && size == 12 && png); free(image);
+                assert(image && size == 24 && png); free(image);
                 assert(book_epub_image(book, i, "../images/wrapper.svg", &image, &size, &png) == ESP_OK);
-                assert(image && size == 12 && png); free(image);
+                assert(image && size == 24 && png); free(image);
+                unsigned width = 0, height = 0;
+                const char *resources[] = {text.images[0], "../images/wrapper.svg", "../images/late.jpg"};
+                for (size_t r = 0; r < sizeof(resources) / sizeof(resources[0]); ++r) {
+                    assert(book_epub_image_dimensions(book, i, resources[r], &width, &height) == ESP_OK);
+                    assert(width == 80 && height == 20);
+                }
+                assert(book_epub_image_dimensions(book, i, "../images/missing.png", &width, &height) == ESP_ERR_NOT_FOUND);
+                assert(book_epub_image_dimensions(book, i, "../images/broken.jpg", &width, &height) != ESP_OK);
+                assert(book_epub_image_dimensions(book, i, "../images/unused.bin", &width, &height) == ESP_ERR_INVALID_SIZE);
                 assert(text.blocks[0].align == 1);
             }
             html_text_free(&text);

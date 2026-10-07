@@ -16,6 +16,14 @@ User-visible changes by date and author; Git retains implementation history. See
 
 The release adds inline images, swipe page turns, configurable idle lock, clearer learned Bluetooth keys, distinct UI icons and improved file-management layouts. From rc84 onward, the online update offer displays short release notes before installation. USB, TF-card and online updates share one build and retain the compatible dual-slot layout and user data.
 
+## 本地测试 · 2026-10-07
+
+- 采纳 PR #9 的图文混排修复：补齐 SVG 包装图片及较长 JPEG 头部的尺寸识别，保留现有章节分页、标点、阅读线和未知图片回退；缺失插图记录不再提前中止正文绘制。
+- 采纳 PR #10：蓝牙扫描隐藏没有广播名称的设备，后续扫描响应补齐名称后可显示，点击列表对应正确设备。
+- 采纳 PR #11：支持阅星瞳 0x01 / 0x02 翻页协议，保留手动映射优先及键盘修饰键保护。
+
+The local test adopts PR #9 image-flow fixes while retaining existing chapter and punctuation rules, PR #10 named-device filtering with scan-response name updates, and PR #11 YueXingTong input support. Manual mappings retain precedence. The firmware version remains rc84 for local testing.
+
 ## 2026-10-07 · Codex
 
 - rc83 本地测试：删除“全局刷新模式”测试项及实验刷新引擎，旧 NVS / TF 备份不再开启该模式，保留标准刷新及阅读全刷设置。晃动翻页改用新加速度采样区分左右：左晃上一页、右晃下一页；一次横向动作触发，过滤倾斜、其他方向及回弹，触摸和工具栏期间禁用，离页恢复传感器睡眠。方向与灵敏度已通过模拟轨迹回归，仍需实机试用。
@@ -30,6 +38,11 @@ The release adds inline images, swipe page turns, configurable idle lock, cleare
 
 - 正文图片改为图文混排：插图不再占据整页，而是作为页面流里的一个块放在正文之间，图下方接着排后续正文；只有当前页放不下时才翻页。图片按栏宽等比缩放、不超过一页高、不放大，水平居中。
 - 排版仍然不依赖图片解码器：尺寸由调用方通过回调提供并在本章缓存；优先使用已缓存的有界头部尺寸，无缓存及回调时保留整页显示。
+
+## 2026-10-07 · mindreset
+
+- 蓝牙扫描列表不再列出没有广播名的设备：那些行只能显示地址，认不出是什么设备，地址还会把信号强度挤掉。
+- 蓝牙翻页器新增阅星瞳协议的原生支持：0x01 上一页、0x02 下一页，无需学习。
 
 ## 2026-10-06 · Codex
 

@@ -341,6 +341,11 @@ static void raw_push(bool pressed, uint8_t report_id, uint8_t byte_index, uint8_
 
 // 报告页提示：报告映射里 0x05 0x07 是键盘页，0x05 0x0C 是消费者页。键盘页的键码在
 // 第 2 字节（修饰键之后），消费者页的用法码在第 1 字节。
+// 阅星瞳协议：一字节报告里 0x01 上一页、0x02 下一页。
+// YueXingTong page turners: a one-byte report where 0x01 is previous and 0x02 is next.
+#define YXT_CODE_PREV 0x01u
+#define YXT_CODE_NEXT 0x02u
+
 // Report-map hints: 0x05 0x07 marks the keyboard page, 0x05 0x0C the consumer page. On the
 // keyboard page the code sits in byte 2 (after the modifier byte), on the consumer page in byte 1.
 static void report_map_hints(const uint8_t *map, size_t len) {
@@ -451,15 +456,17 @@ static int scan_cb(struct ble_gap_event *event, void *arg) {
     snprintf(addr, sizeof(addr), "%02x:%02x:%02x:%02x:%02x:%02x", d->addr.val[5], d->addr.val[4],
              d->addr.val[3], d->addr.val[2], d->addr.val[1], d->addr.val[0]);
 
-    // 同一地址只收一次，否则重复广播会把列表刷满。
-    // Keep one entry per address, or repeated adverts flood the list.
+    // 地址去重，但后续扫描响应仍可补齐名称，避免把有名设备永远隐藏。
+    // Deduplicate addresses while allowing later scan responses to supply names for hidden entries.
+    ble_pt_device_t *slot = NULL;
     for (uint8_t i = 0; i < s_device_count; ++i)
-        if (!strcasecmp(s_devices[i].addr, addr)) return 0;
-    if (s_device_count >= BLE_PT_MAX_DEVICES) return 0;
-
-    ble_pt_device_t *slot = &s_devices[s_device_count];
-    memset(slot, 0, sizeof(*slot));
-    snprintf(slot->addr, sizeof(slot->addr), "%s", addr);
+        if (!strcasecmp(s_devices[i].addr, addr)) { slot = &s_devices[i]; break; }
+    if (!slot) {
+        if (s_device_count >= BLE_PT_MAX_DEVICES) return 0;
+        slot = &s_devices[s_device_count++];
+        memset(slot, 0, sizeof(*slot));
+        snprintf(slot->addr, sizeof(slot->addr), "%s", addr);
+    }
     slot->rssi = d->rssi;
     slot->addr_type = d->addr.type;
 
@@ -469,6 +476,7 @@ static int scan_cb(struct ble_gap_event *event, void *arg) {
             const size_t copy = fields.name_len < sizeof(slot->name) - 1 ? fields.name_len
                                                                         : sizeof(slot->name) - 1;
             memcpy(slot->name, fields.name, copy);
+            slot->name[copy] = '\0';
             slot->has_name = true;
         }
         for (int i = 0; i < fields.num_uuids16; ++i)
@@ -476,7 +484,6 @@ static int scan_cb(struct ble_gap_event *event, void *arg) {
     }
     if (!slot->name[0]) snprintf(slot->name, sizeof(slot->name), "%s", addr);
     slot->bonded = bond_find(slot->addr) != NULL;
-    s_device_count++;
     return 0;
 }
 
@@ -1355,6 +1362,15 @@ uint32_t ble_pt_binding(ble_pt_action_t action) {
 ble_pt_action_t ble_pt_action_for_usage(uint8_t usage, uint8_t mods) {
     (void)mods;
     switch (usage) {
+        // 阅星瞳协议：把 0x01 / 0x02 当作主码值发出。这里写字面量而不是上面的宏：主机测试
+        // 按函数体提取这个函数，文件级宏不会被带过去，引用它们会编不过。
+        // YueXingTong: 0x01 / 0x02 sent as the primary code. Literals rather than the macros above
+        // because the host test extracts this function by body, and file-level macros do not come
+        // with it -- referencing them there would not compile.
+        case 0x01:
+            return BLE_PT_ACTION_PREV;
+        case 0x02:
+            return BLE_PT_ACTION_NEXT;
         case 0x52:  // Up
         case 0x50:  // Left
         case 0x4B:  // PageUp
@@ -1372,7 +1388,17 @@ ble_pt_action_t ble_pt_action_for_usage(uint8_t usage, uint8_t mods) {
 
 ble_pt_action_t ble_pt_action_for_raw(uint32_t code) {
     if (!code) return BLE_PT_ACTION_NONE;
+    // 手动绑定优先：它更具体，也允许用户把内置映射覆盖掉。
+    // Manual bindings win: they are more specific and let the user override the built-in map.
     if (code == s_bindings.codes[0]) return BLE_PT_ACTION_PREV;
     if (code == s_bindings.codes[1]) return BLE_PT_ACTION_NEXT;
+    // 阅星瞳协议：裸的一字节报告，报告号和字节下标都为 0，所以整个码值就是 0x01 / 0x02。
+    // 声明了键盘页的外设上，byte 0 是修饰键字节，那里的 0x01 是左 Ctrl，不能当成翻页。
+    // YueXingTong: a bare one-byte report, so report id and byte index are both zero and the
+    // whole code is 0x01 / 0x02. On a peripheral that declared a keyboard page, payload byte 0 is
+    // the modifier byte and 0x01 there is left Ctrl, which must not turn a page.
+    if (s_has_keyboard_page) return BLE_PT_ACTION_NONE;
+    if (code == YXT_CODE_PREV) return BLE_PT_ACTION_PREV;
+    if (code == YXT_CODE_NEXT) return BLE_PT_ACTION_NEXT;
     return BLE_PT_ACTION_NONE;
 }

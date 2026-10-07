@@ -5,6 +5,7 @@
 冻结：仅测试，不写产品构建。/ Frozen: Tests only, no product build writes.
 """
 from pathlib import Path
+import struct
 import os
 import subprocess
 import tempfile
@@ -222,8 +223,13 @@ def main():
             files['OPS/text/part 1&x.xhtml'] = ('<html><head><link rel="stylesheet" href="../styles/book.css"/></head>'
                 '<body><p class="center">正文</p><img data-src="../images/pic&amp;one.png"/></body></html>')
             files['OPS/styles/book.css'] = '.center{text-align:center}'
-            files['OPS/images/pic&one.png'] = b'\x89PNG\r\n\x1a\nxxxx'
+            files['OPS/images/pic&one.png'] = b'\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR' + struct.pack('>II', 80, 20)
             files['OPS/images/wrapper.svg'] = '<svg><image href="pic&amp;one.png"/></svg>'
+            # SOF follows more than 64 KiB of metadata, past the bounded prefix probe.
+            files['OPS/images/late.jpg'] = (b'\xff\xd8' +
+                (b'\xff\xe1\xff\xff' + b'x' * 65533) * 2 +
+                b'\xff\xc0\x00\x0b\x08\x00\x14\x00\x50\x01\x01\x11\x00\xff\xd9')
+            files['OPS/images/broken.jpg'] = b'\xff\xd8\xff\xe1\x00\x20broken'
             # A genuinely large, incompressible unused asset must not reject the entire book.
             files['OPS/images/unused.bin'] = os.urandom(24 * 1024 * 1024)
         case('good_resources', resources)
