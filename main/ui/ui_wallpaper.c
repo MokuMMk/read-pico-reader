@@ -80,14 +80,9 @@ static bool draw_image(uint8_t *fb, const char *path, EpdRect area, int radius) 
     bool png = ext && !strcasecmp(ext, ".png");
     if (!ext || (!png && strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg"))) return false;
     struct stat st;
-    if (stat(path, &st) || st.st_size <= 0 || st.st_size > 2 * 1024 * 1024) return false;
-    FILE *file = fopen(path, "rb");
-    if (!file) return false;
-    uint8_t *encoded = heap_caps_malloc((size_t)st.st_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    bool ok = encoded && fread(encoded, 1, (size_t)st.st_size, file) == (size_t)st.st_size;
-    fclose(file);
+    if (stat(path, &st) || st.st_size <= 0 || (uint64_t)st.st_size > BOOK_IMAGE_FILE_MAX) return false;
     unsigned source_w = 0, source_h = 0;
-    if (ok) ok = book_image_dimensions(encoded, (size_t)st.st_size, png, &source_w, &source_h);
+    bool ok = book_image_file_dimensions(path, png, &source_w, &source_h);
     unsigned width = (unsigned)area.width, height = (unsigned)area.height;
     bool source_wider = ok && (uint64_t)source_w * height > (uint64_t)source_h * width;
     if (source_wider) width = (unsigned)(((uint64_t)height * source_w + source_h - 1) / source_h);
@@ -114,8 +109,7 @@ static bool draw_image(uint8_t *fb, const char *path, EpdRect area, int radius) 
     }
     uint8_t *gray = ok ? heap_caps_malloc((size_t)width * height, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;
     if (!gray) ok = false;
-    if (ok) ok = book_image_grayscale(encoded, (size_t)st.st_size, png, width, height, gray);
-    free(encoded);
+    if (ok) ok = book_image_file_grayscale(path, png, width, height, gray);
     if (!ok) { free(gray); return false; }
     ui_wallpaper_crop_t center = ui_wallpaper_center_crop(width, height,
                                                            (unsigned)area.width, (unsigned)area.height);
@@ -123,6 +117,7 @@ static bool draw_image(uint8_t *fb, const char *path, EpdRect area, int radius) 
     int crop_w = (int)center.width, crop_h = (int)center.height;
     if (radius > 0) avatar_content_crop(gray, width, height, area,
                                         &crop_x, &crop_y, &crop_w, &crop_h);
+
     for (int y = area.y; y < area.y + area.height; ++y)
         for (int x = area.x; x < area.x + area.width; ++x) {
             if (!inside_rounded(area, radius, x, y)) continue;

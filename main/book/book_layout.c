@@ -38,6 +38,16 @@ static unsigned s_lead_height;
 static const blk_t* s_blocks;
 static size_t s_block_count;
 
+// PR #7 的页内图片池，页起点表划分每页的记录；尺寸优先用有界头部探测结果。
+// PR #7's flat image pool uses page starts to slice records; prefer bounded header probe dimensions.
+typedef struct { int image, y, width, height; } layout_image_t;
+static layout_image_t *s_images;
+static size_t s_image_count, s_image_capacity;
+static uint32_t *s_page_img_start;
+static book_layout_image_dims_fn s_dims_fn;
+static void *s_dims_ctx;
+static uint32_t s_generation;
+
 // 块表是有序字节区间，二分查找当前行样式。/ Blocks are ordered byte ranges; binary-search the line style.
 static const blk_t* block_at(size_t off) {
     if (!s_block_count) return NULL;
@@ -140,9 +150,36 @@ static bool prohibited_line_end(uint32_t cp) {
     }
 }
 
+static bool punctuation_character(uint32_t cp) {
+    return prohibited_line_start(cp) || prohibited_line_end(cp) ||
+           cp == '\'' || cp == '"' || cp == '-' || cp == 0x2013 || cp == 0x2014 ||
+           cp == 0x2025 || cp == 0x00b7 || cp == 0x30fb;
+}
+
+// 连续标点是一个不可拆分的单元，例如 ：“、……、——、！”。
+// Treat a punctuation run as one unbreakable unit; paragraph boundaries still win.
+static size_t punctuation_run_end(size_t start, size_t limit, uint32_t *last) {
+    size_t end = start;
+    while (end < limit && s_text[end] != '\r' && s_text[end] != '\n') {
+        size_t n = codepoint_size(s_text + end, limit - end);
+        if (!n) break;
+        uint32_t cp = codepoint_value(s_text + end, n);
+        if (!punctuation_character(cp)) break;
+        *last = cp;
+        end += n;
+    }
+    return end;
+}
+
 void book_layout_free(void) {
     free(s_pages);
     free(s_line);
+    free(s_images);
+    free(s_page_img_start);
+    s_images = NULL;
+    s_page_img_start = NULL;
+    s_image_count = s_image_capacity = 0;
+    ++s_generation;
     s_pages = NULL;
     s_line = NULL;
     s_text = NULL;
@@ -184,10 +221,54 @@ void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px) {
     s_lead_height = height_px;
 }
 
+void book_layout_set_image_dims(book_layout_image_dims_fn fn, void *ctx) { s_dims_fn = fn; s_dims_ctx = ctx; }
+uint32_t book_layout_generation(void) { return s_generation; }
+int book_layout_page_image_count(size_t page) {
+    if (page >= s_count || !s_page_img_start) return 0;
+    return (int)(s_page_img_start[page + 1] - s_page_img_start[page]);
+}
+bool book_layout_page_image_at(size_t page, int i, int *image, int *y, int *width, int *height) {
+    if (i < 0 || i >= book_layout_page_image_count(page)) return false;
+    const layout_image_t *r = &s_images[s_page_img_start[page] + (uint32_t)i];
+    if (image) *image = r->image;
+    if (y) *y = r->y;
+    if (width) *width = r->width;
+    if (height) *height = r->height;
+    return true;
+}
 int book_layout_page_image(size_t page) {
     if (page >= s_count || !s_block_count) return -1;
-    const blk_t* block = block_at(s_pages[page]);
-    return block && block->offset == s_pages[page] ? block->image : -1;
+    const blk_t *first = block_at(s_pages[page]);
+    if (!s_images_visible) return first && first->offset == s_pages[page] ? first->image : -1;
+    if (book_layout_page_image_count(page) != 1) return -1;
+    size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
+    for (size_t i = (size_t)(first - s_blocks); i < s_block_count && s_blocks[i].offset < end; ++i)
+        if (s_blocks[i].image < 0 && !image_spacing_block(&s_blocks[i])) return -1;
+    return s_images[s_page_img_start[page]].image;
+}
+static bool image_display_size(const blk_t *block, int *width, int *height) {
+    uint64_t w = block->image_width, h = block->image_height;
+    if ((!w || !h) && s_dims_fn) {
+        int iw = 0, ih = 0;
+        if (s_dims_fn(s_dims_ctx, block->image, &iw, &ih) && iw > 0 && ih > 0) { w = iw; h = ih; }
+    }
+    if (!w || !h) return false;
+    if (w > (unsigned)s_rect.width) { h = h * s_rect.width / w; w = s_rect.width; }
+    if (h > (unsigned)s_rect.height) { w = w * s_rect.height / h; h = s_rect.height; }
+    *width = w ? (int)w : 1; *height = h ? (int)h : 1;
+    return true;
+}
+static bool record_page_image(int image, int y, int width, int height) {
+    if (s_image_count == s_image_capacity) {
+        size_t cap = s_image_capacity ? s_image_capacity * 2 : 16;
+        if (cap > HTML_TEXT_MAX_BLOCKS) return false;
+        layout_image_t *grown = heap_caps_realloc(s_images, cap * sizeof(*grown), PSRAM_CAPS);
+        if (!grown) return false;
+        s_images = grown; s_image_capacity = cap;
+    }
+    s_images[s_image_count++] = (layout_image_t){image, y, width, height};
+    s_page_img_start[s_count] = (uint32_t)s_image_count;
+    return true;
 }
 
 static int line_height_for(int px) { return (int)((unsigned)px * s_line_percent / 100); }
@@ -202,9 +283,14 @@ static bool append_page(size_t off) {
         size_t* pages = heap_caps_realloc(s_pages, cap * sizeof(*pages), PSRAM_CAPS);
         if (!pages) return false;
         s_pages = pages;
+        uint32_t *starts = heap_caps_realloc(s_page_img_start, (cap + 1) * sizeof(*starts), PSRAM_CAPS);
+        if (!starts) return false;
+        s_page_img_start = starts;
         s_capacity = cap;
     }
-    s_pages[s_count++] = off;
+    s_pages[s_count] = off;
+    s_page_img_start[s_count++] = (uint32_t)s_image_count;
+    s_page_img_start[s_count] = (uint32_t)s_image_count;
     return true;
 }
 
@@ -278,6 +364,67 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
         size_t n = codepoint_size(s_text + end, s_len - end);
         if (!n) return false;
         uint32_t cp = codepoint_value(s_text + end, n);
+        uint32_t run_last = cp;
+        size_t run_end = punctuation_character(cp)
+            ? punctuation_run_end(end, limit, &run_last) : end;
+        if (run_end > end + n) {
+            bool ends_with_opener = prohibited_line_end(run_last) ||
+                ((run_last == '\'' || run_last == '"') && prohibited_line_start(cp));
+            // 左引号/括号须带上后面的首字，不能把完整标点串单独留在行尾。
+            // A trailing opener travels with the first quoted character.
+            if (ends_with_opener && run_end < limit && s_text[run_end] != '\r' && s_text[run_end] != '\n') {
+                size_t following = codepoint_size(s_text + run_end, limit - run_end);
+                if (!following) return false;
+                run_last = codepoint_value(s_text + run_end, following);
+                run_end += following;
+            }
+            int64_t candidate = width;
+            int run_glyphs = 0;
+            for (size_t at = end; at < run_end;) {
+                size_t bytes = codepoint_size(s_text + at, run_end - at);
+                if (!bytes) return false;
+                char mark[5]; memcpy(mark, s_text + at, bytes); mark[bytes] = 0;
+                candidate += ttf_text_width_px(*px, mark) +
+                             (at > visible_off && !*heading ? s_tracking_px : 0);
+                ++run_glyphs;
+                at += bytes;
+            }
+            if (candidate < 0) return false;
+            if (candidate > available && end > visible_off) {
+                int hang = s_rect.x > 4 ? *px / 3 : 0;
+                if (hang > s_rect.x - 4) hang = s_rect.x - 4;
+                int squeeze = glyph_count + run_glyphs > 1 ? (glyph_count + run_glyphs - 1) * 3 : 0;
+                bool can_hang = prohibited_line_start(cp) && !ends_with_opener &&
+                                candidate <= (int64_t)available + hang + squeeze;
+                if (!can_hang) {
+                    if (prohibited_line_start(cp) && last_start > visible_off) {
+                        // 标点串随前一字一起下移，避免下一行从逗号/冒号开始。
+                        // Carry the preceding character with closing punctuation.
+                        end = last_start;
+                        width = last_width;
+                        s_line[end - visible_off] = 0;
+                    } else if (prohibited_line_start(cp) && last_start == visible_off) {
+                        // 极窄行仍成组前进，防止在同一源偏移无限重排。
+                        // An exceptionally narrow line must still make progress.
+                        memcpy(s_line + end - visible_off, s_text + end, run_end - end);
+                        s_line[run_end - visible_off] = 0;
+                        width = candidate;
+                        end = run_end;
+                    }
+                    break;
+                }
+            }
+            last_width = width;
+            last_start = end;
+            last_cp = run_last;
+            width = candidate;
+            glyph_count += run_glyphs;
+            memcpy(s_line + end - visible_off, s_text + end, run_end - end);
+            s_line[run_end - visible_off] = 0;
+            end = run_end;
+            if (width > available) break;
+            continue;
+        }
         // 字体逐字取整后累加 advance；单字测量避免反复扫描整行前缀。
         // Font advances are rounded per glyph and summed; measure each glyph once instead of every prefix.
         char glyph[5];
@@ -406,9 +553,22 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
         size_t visible = skip_image_spacing(off);
         if (visible != off) { off = visible; continue; }
         const blk_t* block = block_at(off);
+        if (block && block->chapter_start && off == block->offset && used &&
+            s_pages[s_count - 1] != off) {
+            if (!append_page(off)) goto fail;
+            used = 0;
+        }
         if (block && block->image >= 0 && off == block->offset) {
-            if (used && !append_page(off)) goto fail;
-            used = rect.height;
+            int width = rect.width, height = rect.height;
+            bool known = image_display_size(block, &width, &height);
+            if (used && used + height > rect.height) {
+                if (!append_page(off)) goto fail;
+                used = 0;
+            }
+            // 未知尺寸也记录完整图片槽，调用方仍可尝试解码或在槽内显示错误。
+            // Record an unknown-size full-page slot too, allowing decode or a confined failure notice.
+            if (!record_page_image(block->image, (int)used, width, height)) goto fail;
+            used += height + (known && height < rect.height ? px / 2 : 0);
             off = block->offset + block->len;
             if (off < len && utf8[off] == '\n') ++off;
             continue;
@@ -459,12 +619,21 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
         rect.height != s_rect.height || rect.x < 0 || rect.y < 0 ||
         rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height) return;
     size_t off = s_pages[page];
-    if (book_layout_page_image(page) >= 0) return;
     size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
     int64_t used = page == 0 ? s_lead_height : 0;
+    uint32_t img_at = s_page_img_start[page], img_end = s_page_img_start[page + 1];
     while (off < end) {
         size_t visible = skip_image_spacing(off);
         if (visible != off) { off = visible; continue; }
+        const blk_t *block = block_at(off);
+        if (block && block->image >= 0 && off == block->offset) {
+            if (img_at >= img_end || s_images[img_at].image != block->image) return;
+            const layout_image_t *image = &s_images[img_at++];
+            used = (int64_t)image->y + image->height + (image->height < rect.height ? px / 2 : 0);
+            off = block->offset + block->len;
+            if (off < end && s_text[off] == '\n') ++off;
+            continue;
+        }
         size_t next;
         bool paragraph_end, heading;
         int line_px, line_width, indent, margin_before, margin_after;
@@ -511,4 +680,11 @@ void book_layout_draw_page(uint8_t* fb, size_t page, EpdRect rect, int px) {
         if (paragraph_end) used += gap_for(line_height, heading) + margin_after;
         off = next;
     }
+}
+
+bool book_layout_page_image_rect(size_t page, EpdRect *area) {
+    if (!area || !book_layout_page_image_at(page, 0, NULL, &area->y, &area->width, &area->height)) return false;
+    area->x = s_rect.x + (s_rect.width - area->width) / 2;
+    area->y += s_rect.y;
+    return true;
 }

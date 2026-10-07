@@ -40,6 +40,9 @@ typedef struct {
     html_text_t text;
     size_t text_cap, block_cap, start;
     bool active, heading, block_heading, space;
+    bool block_linked, block_auxiliary;
+    uint8_t heading_level, block_heading_level;
+    size_t depth, link_depth, auxiliary_depth;
     css_style_t current_style, block_style;
     css_rule_t rules[CSS_RULE_MAX];
     size_t rule_count;
@@ -221,6 +224,30 @@ static bool class_has(const char* classes, size_t len, const char* wanted) {
     return false;
 }
 
+// 语义目录/版权容器只标记来源，仍保留原文供阅读；不把目录链接当章节。
+// Tag navigation/front-matter provenance without hiding its text or treating links as chapters.
+static bool auxiliary_tag(const char* name, const char* at, const char* end) {
+    if (name_equal(name, "nav")) return true;
+    static const char* const attrs[] = {"epub:type", "type", "role", "id", "class"};
+    static const char* const tokens[] = {"toc", "contents", "doc-toc", "copyright", "doc-copyright",
+        "titlepage", "cover", "frontmatter", "colophon", "imprint", "dedication", "abstract"};
+    for (size_t a = 0; a < sizeof(attrs) / sizeof(attrs[0]); ++a) {
+        const char* value = NULL; size_t length = 0;
+        if (!attr_value(at, end, attrs[a], &value, &length)) continue;
+        for (size_t t = 0; t < sizeof(tokens) / sizeof(tokens[0]); ++t)
+            if (class_has(value, length, tokens[t])) return true;
+    }
+    return false;
+}
+
+static bool void_tag(const char* name) {
+    static const char* const tags[] = {"br", "hr", "img", "image", "svg:image", "meta", "link",
+        "input", "area", "base", "col", "embed", "param", "source", "track", "wbr"};
+    for (size_t i = 0; i < sizeof(tags) / sizeof(tags[0]); ++i)
+        if (name_equal(name, tags[i])) return true;
+    return false;
+}
+
 static css_style_t style_for(writer_t* w, const char* tag, const char* attrs, const char* attrs_end) {
     css_style_t out = {0};
     const char *classes = NULL, *inline_css = NULL;
@@ -285,6 +312,8 @@ static esp_err_t finish_block(writer_t* w) {
     }
     w->text.blocks[w->text.count++] = (blk_t){
         .offset = w->start, .len = w->text.len - w->start, .heading = w->block_heading, .image = -1,
+        .heading_level = w->block_heading_level, .linked = w->block_linked,
+        .auxiliary = w->block_auxiliary,
         .align = w->block_style.align,
         .indent_percent = w->block_style.indent,
         .margin_before_percent = w->block_style.before,
@@ -319,9 +348,14 @@ static esp_err_t emit(writer_t* w, uint32_t cp) {
         w->start = w->text.len;
         w->active = true;
         w->block_heading = w->heading;
+        w->block_heading_level = w->heading_level;
+        w->block_linked = true;
+        w->block_auxiliary = false;
         w->block_style = w->current_style;
     } else if (w->space) w->text.utf8[w->text.len++] = ' ';
     w->space = false;
+    w->block_linked &= w->link_depth != 0;
+    w->block_auxiliary |= w->auxiliary_depth != 0;
     memcpy(w->text.utf8 + w->text.len, bytes, n);
     w->text.len += n;
     return ESP_OK;
@@ -522,6 +556,22 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
                     } else skip[0] = 0;
                     continue;
                 }
+                // 在块结束之前保留其来源；关闭容器后不影响后面的正文块。
+                // Preserve provenance until the block ends; closing a container must not taint later body text.
+                if (closing) {
+                    if (w.depth == w.link_depth) w.link_depth = 0;
+                    if (w.depth == w.auxiliary_depth) w.auxiliary_depth = 0;
+                    if (w.depth) --w.depth;
+                } else if (!self_closing && !void_tag(name) &&
+                           !name_equal(name, "head") && !name_equal(name, "script") && !name_equal(name, "style")) {
+                    ++w.depth;
+                    if (!w.auxiliary_depth && auxiliary_tag(name, html + at, html + end))
+                        w.auxiliary_depth = w.depth;
+                    const char* href = NULL; size_t href_len = 0;
+                    if (!w.link_depth && name_equal(name, "a") &&
+                        attr_value(html + at, html + end, "href", &href, &href_len) && href_len)
+                        w.link_depth = w.depth;
+                }
                 if (!closing && (name_equal(name, "img") || name_equal(name, "image") ||
                                  name_equal(name, "svg:image") || name_equal(name, "object"))) {
                     char path[HTML_IMAGE_PATH_MAX + 1];
@@ -539,6 +589,8 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
                     if (!closing && !self_closing) w.current_style = style_for(&w, name, html + at, html + end);
                     else w.current_style = (css_style_t){0};
                     if (name[0] == 'h' && name[1] >= '1' && name[1] <= '3' && !name[2]) w.heading = !closing && !self_closing;
+                    if (name[0] == 'h' && name[1] >= '1' && name[1] <= '6' && !name[2])
+                        w.heading_level = !closing && !self_closing ? (uint8_t)(name[1] - '0') : 0;
                 }
                 if (!closing && !skip[0] && anchor_offset) {
                     const char *value = NULL; size_t length = 0;

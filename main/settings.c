@@ -29,6 +29,7 @@
 #define NVS_KEY_SLEEP "sleep"
 #define NVS_KEY_SHUTDOWN_MODE "shutdown"
 #define NVS_KEY_HOME_FULL "home_full"
+#define NVS_KEY_AUTO_LOCK "idle_lock"
 #define NVS_KEY_DEVICE_NAME "dev_name"
 #define NVS_KEY_AVATAR "dev_avatar"
 #define NVS_KEY_STATUS_SIGNATURE "status_sig"
@@ -95,6 +96,7 @@ static bool s_ble_turner;
 static bool s_shelf_recent_sort;
 static uint8_t s_book_tracking = 2, s_book_reading_line, s_book_rule_offset = 4;
 static uint8_t s_book_indent = 2;
+static uint8_t s_auto_lock_minutes;
 static uint8_t s_shelf_style = 2;
 static char s_books_dir[MEDIA_DIR_MAX] = "/sdcard/books";
 static char s_fonts_dir[MEDIA_DIR_MAX] = "/sdcard/fonts";
@@ -169,6 +171,10 @@ void app_settings_init(void) {
         s_staged_shutdown = raw == 1;
     raw = 0;
     if (nvs_get_u8(h, NVS_KEY_HOME_FULL, &raw) == ESP_OK) s_home_full_refresh = raw == 1;
+    raw = 0;
+
+    raw = 0;
+    if (nvs_get_u8(h, NVS_KEY_AUTO_LOCK, &raw) == ESP_OK && (raw == 1 || raw == 5 || raw == 10)) s_auto_lock_minutes = raw;
     size_t value_len = sizeof(s_device_name);
     if (nvs_get_str(h, NVS_KEY_DEVICE_NAME, s_device_name, &value_len) != ESP_OK || !s_device_name[0])
         strlcpy(s_device_name, "Pico", sizeof(s_device_name));
@@ -304,6 +310,14 @@ void app_settings_set_staged_shutdown(bool staged) {
 }
 
 bool app_settings_home_full_refresh(void) { return s_home_full_refresh; }
+uint8_t app_settings_auto_lock_minutes(void) { return s_auto_lock_minutes; }
+void app_settings_set_auto_lock_minutes(uint8_t minutes) {
+    if (minutes != 0 && minutes != 1 && minutes != 5 && minutes != 10) return;
+    if (s_auto_lock_minutes == minutes) return;
+    s_auto_lock_minutes = minutes;
+    nvs_put_u8(NVS_KEY_AUTO_LOCK, minutes);
+}
+
 void app_settings_set_home_full_refresh(bool enabled) {
     if (enabled == s_home_full_refresh) return;
     s_home_full_refresh = enabled;
@@ -678,7 +692,7 @@ static bool backup_card_ready(void) {
 esp_err_t app_settings_backup_save(void) {
     if (!backup_card_ready()) return ESP_ERR_INVALID_STATE;
     settings_backup_v1_t backup = {0};
-    memcpy(backup.magic, "PICOSET7", sizeof(backup.magic));
+    memcpy(backup.magic, "PICOSET8", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -703,7 +717,8 @@ esp_err_t app_settings_backup_save(void) {
     strlcpy(backup.books_dir, s_books_dir, sizeof(backup.books_dir));
     strlcpy(backup.fonts_dir, s_fonts_dir, sizeof(backup.fonts_dir));
     backup_seal(&backup);
-    uint8_t extension[7] = {s_book_indent, s_book_rule_offset, s_staged_shutdown ? 1 : 0};
+    uint8_t idle_index = s_auto_lock_minutes == 1 ? 1 : s_auto_lock_minutes == 5 ? 2 : s_auto_lock_minutes == 10 ? 3 : 0;
+    uint8_t extension[7] = {s_book_indent, s_book_rule_offset, (s_staged_shutdown ? 1 : 0) | (idle_index << 1)};
     uint32_t extension_hash = backup_shutdown_checksum(&backup, s_book_indent,
                                                         s_book_rule_offset, extension[2]);
     for (int i = 0; i < 4; ++i) extension[i + 3] = (uint8_t)(extension_hash >> (i * 8));
@@ -773,7 +788,7 @@ static bool backup_valid(const settings_backup_v1_t *backup) {
     if ((memcmp(backup->magic, "PICOSET1", 8) && memcmp(backup->magic, "PICOSET2", 8) &&
          memcmp(backup->magic, "PICOSET3", 8) && memcmp(backup->magic, "PICOSET4", 8) &&
          memcmp(backup->magic, "PICOSET5", 8) && memcmp(backup->magic, "PICOSET6", 8) &&
-         memcmp(backup->magic, "PICOSET7", 8)) ||
+         memcmp(backup->magic, "PICOSET7", 8) && memcmp(backup->magic, "PICOSET8", 8)) ||
         checksum != backup_checksum(backup)) return false;
     if (f[BK_SLEEP] > APP_SLEEP_OFF || f[BK_PICKUP] > 1 ||
         f[BK_SYS_SIZE] < 100 || f[BK_SYS_SIZE] > 200 || f[BK_SYS_SIZE] % 10 ||
@@ -833,18 +848,18 @@ esp_err_t app_settings_backup_restore(void) {
                  stored == backup_rule_offset_checksum(&backup, indent, rule_offset);
         }
     } else if (ok && (!memcmp(backup.magic, "PICOSET4", 8) || !memcmp(backup.magic, "PICOSET5", 8) ||
-                      !memcmp(backup.magic, "PICOSET6", 8) || !memcmp(backup.magic, "PICOSET7", 8))) {
+                      !memcmp(backup.magic, "PICOSET6", 8) || !memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8))) {
         uint8_t extension[7];
         ok = fread(extension, 1, sizeof(extension), file) == sizeof(extension);
         if (ok) {
             indent = extension[0]; rule_offset = extension[1]; staged_shutdown = extension[2];
             uint32_t stored = 0;
             for (int i = 0; i < 4; ++i) stored |= (uint32_t)extension[i + 3] << (i * 8);
-            ok = indent <= 3 && rule_offset <= 8 && staged_shutdown <= 1 &&
+            ok = indent <= 3 && rule_offset <= 8 && staged_shutdown <= (!memcmp(backup.magic, "PICOSET8", 8) ? 7 : 1) &&
                  stored == backup_shutdown_checksum(&backup, indent, rule_offset, staged_shutdown);
         }
         if (ok && ( !memcmp(backup.magic, "PICOSET5", 8) || !memcmp(backup.magic, "PICOSET6", 8) ||
-                    !memcmp(backup.magic, "PICOSET7", 8))) {
+                    !memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8))) {
             ok = fread(&profile, 1, sizeof(profile), file) == sizeof(profile);
             if (ok) {
                 uint32_t stored = 0;
@@ -854,16 +869,17 @@ esp_err_t app_settings_backup_restore(void) {
                      strnlen(profile.device_name, sizeof(profile.device_name)) < sizeof(profile.device_name) &&
                      profile.device_name[0] &&
                      strnlen(profile.status_signature, sizeof(profile.status_signature)) < sizeof(profile.status_signature) &&
-                     profile.home_full_refresh <= 63 &&
+                     // 保留旧备份的位6兼容性，但不再恢复实验刷新。/ Accept legacy bit 6 without restoring the retired mode.
+                     profile.home_full_refresh <= 127 &&
                      backup_path_valid(profile.avatar, sizeof(profile.avatar));
             }
         }
     }
     long history_position = -1;
-    has_wifi = ok && !memcmp(backup.magic, "PICOSET7", 8);
+    has_wifi = ok && (!memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8));
     if (has_wifi) ok = fread(&wifi, 1, sizeof(wifi), file) == sizeof(wifi) && backup_wifi_valid(&wifi);
     bool has_history = ok && (!memcmp(backup.magic, "PICOSET6", 8) ||
-                              !memcmp(backup.magic, "PICOSET7", 8));
+                              !memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8));
     if (has_history) {
         history_position = ftell(file);
         ok = history_position >= 0 && book_history_backup_validate(file);
@@ -893,10 +909,14 @@ esp_err_t app_settings_backup_restore(void) {
 #define BACKUP_SET_U8(key, index) do { if (err == ESP_OK) err = nvs_set_u8(h, key, backup.flags[index]); } while (0)
 #define BACKUP_SET_STR(key, value) do { if (err == ESP_OK) err = nvs_set_str(h, key, value); } while (0)
     BACKUP_SET_U8(NVS_KEY_SLEEP, BK_SLEEP);
-    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHUTDOWN_MODE, staged_shutdown);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHUTDOWN_MODE, staged_shutdown & 1);
+    uint8_t idle_values[] = {0, 1, 5, 10};
+    uint8_t idle_minutes = idle_values[staged_shutdown >> 1];
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_AUTO_LOCK, idle_minutes);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BLE_TURNER, (profile.home_full_refresh & 8) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HOLD_REFRESH, (profile.home_full_refresh & 16) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_VERTICAL_TURN, (profile.home_full_refresh & 32) != 0);
+
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HOME_FULL, profile.home_full_refresh & 1);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HIDE_IMAGES, (profile.home_full_refresh & 2) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHELF_RECENT, (profile.home_full_refresh & 4) != 0);
@@ -935,7 +955,8 @@ esp_err_t app_settings_backup_restore(void) {
 
     const uint8_t *f = backup.flags;
     s_sleep = (app_sleep_mode_t)f[BK_SLEEP];
-    s_staged_shutdown = staged_shutdown != 0;
+    s_staged_shutdown = (staged_shutdown & 1) != 0;
+    s_auto_lock_minutes = idle_minutes;
     s_ble_turner = (profile.home_full_refresh & 8) != 0;
     s_reader_hold_refresh = (profile.home_full_refresh & 16) != 0;
     s_reader_vertical_turn = (profile.home_full_refresh & 32) != 0;

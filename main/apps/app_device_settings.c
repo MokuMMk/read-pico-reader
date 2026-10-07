@@ -35,6 +35,7 @@
 #include "ui_wallpaper.h"
 #include "read_pico_search.h"
 #include "book_store.h"
+#include "book_cover.h"
 #include "ota_update.h"
 #include "ota_online.h"
 #include "esp_app_desc.h"
@@ -53,7 +54,7 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_SYSTEM_SIZE, SETTINGS_SYSTEM_CONTRAST, SETTINGS_LOCK_STYLE,
                SETTINGS_WALLPAPER, SETTINGS_WALLPAPER_PREVIEW,
                SETTINGS_CONFIG, SETTINGS_UPGRADE, SETTINGS_BOOT,
-               SETTINGS_POWER_SLEEP, SETTINGS_PROFILE, SETTINGS_AVATAR,
+               SETTINGS_POWER_SLEEP, SETTINGS_AUTO_LOCK, SETTINGS_PROFILE, SETTINGS_AVATAR,
                SETTINGS_BLUETOOTH, SETTINGS_BLE_SCAN,
                SETTINGS_TEXT_EDIT } settings_page_t;
 static settings_page_t s_page;
@@ -129,14 +130,15 @@ static void upgrade_open(void) {
 static const char *const TAG = "device_settings";
 #define SETTINGS_WIRELESS_Y 315
 #define SETTINGS_DISPLAY_Y 495
-#define SETTINGS_DEVICE_Y 944
 #define SETTINGS_ROW_H 68
+#define SETTINGS_DISPLAY_ROWS 6
+#define SETTINGS_DEVICE_Y (SETTINGS_DISPLAY_Y + SETTINGS_DISPLAY_ROWS * SETTINGS_ROW_H + 41)
 // 「阅读与设备」组的行数。滚动上限由它推导：主页面最后一行必须能完整落在
 // 底部导航栏（UI_NAV_TOP）之上的可点区里，否则最后一行永远露不出来，也点不到。
 // Row count of the 阅读与设备 group. The scroll limit is derived from it: the last main-page row
 // must be able to sit fully inside the tappable band above the bottom nav (UI_NAV_TOP), or it
 // can never be revealed or tapped.
-#define SETTINGS_DEVICE_ROWS 3
+#define SETTINGS_DEVICE_ROWS 4
 #define SETTINGS_MAINTENANCE_Y (SETTINGS_DEVICE_Y + SETTINGS_DEVICE_ROWS * SETTINGS_ROW_H + 66)
 // 设置行图标：32 像素盒，在行高 68 里垂直居中；墨色统一，避免一行一个灰度。
 // Setting row icons: a 32 px box centred in the 68 px row with one shared ink level.
@@ -194,7 +196,7 @@ static void wallpaper_scan_dir(const char *root) {
         wallpaper_item_t *item = &s_wallpapers[s_wallpaper_count];
         if (snprintf(item->path, sizeof(item->path), "%s/%s", root, entry->d_name) >= sizeof(item->path)) continue;
         struct stat st;
-        if (stat(item->path, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > 2 * 1024 * 1024) continue;
+        if (stat(item->path, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || (uint64_t)st.st_size > BOOK_IMAGE_FILE_MAX) continue;
         size_t name_len = strnlen(entry->d_name, sizeof(item->name) - 1);
         memcpy(item->name, entry->d_name, name_len);
         item->name[name_len] = 0;
@@ -476,6 +478,9 @@ static void setting_icon(uint8_t *fb, int index, int cx, int cy) {
         UI_ICON_POWER,             // 9 关机睡眠
         UI_ICON_TEXT_ALIGN_START,  // 10 状态栏签名
         UI_ICON_REFRESH_CW,        // 11 首页强刷
+        UI_ICON_DOWNLOAD,          // 12 系统升级
+        UI_ICON_CPU,               // 13 BOOT 刷机
+        UI_ICON_TIMER,             // 14 自动休眠
     };
     if (index < 0 || index >= (int)(sizeof(icons) / sizeof(icons[0]))) return;
     ui_draw_icon(fb, cx, cy, SETTINGS_ICON_PX, icons[index], SETTINGS_ICON_INK);
@@ -560,6 +565,7 @@ static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     ui_clear_page(fb);
+
     if (s_page == SETTINGS_MAIN || s_page == SETTINGS_SHELF_STYLE)
         epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, 0xe0, fb);
     ui_nav_status(fb);
@@ -782,7 +788,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     }
     if (s_page == SETTINGS_WALLPAPER) {
         back_header(fb, "选择壁纸");
-        section(fb, 244, "TF 卡图片 · JPG / PNG · 不超过 2 MB");
+        section(fb, 244, "TF 卡图片 · JPG / PNG · 不超过 50 MB");
         if (!s_wallpaper_count)
             ui_text(fb, 54, 325, 25, "未找到图片，请放入 TF 卡的 pictures 文件夹", EPD_DRAW_ALIGN_LEFT, false);
         for (int i = 0; i < 8; ++i) {
@@ -852,6 +858,23 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 54, 656, 21, "对时成功后由内部时钟持续走时；无需保持联网。", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 54, 694, 21, "长时间离线可能产生误差，建议定期重新对时。", EPD_DRAW_ALIGN_LEFT, false);
         if (s_notice[0]) ui_text(fb, 54, 772, 22, s_notice, EPD_DRAW_ALIGN_LEFT, false);
+        ui_nav_draw(fb, 3);
+        return;
+    }
+    if (s_page == SETTINGS_AUTO_LOCK) {
+        back_header(fb, "自动休眠锁屏");
+        section(fb, 228, "无操作后自动锁屏");
+        const char *labels[] = {"1 分钟", "5 分钟", "10 分钟", "关闭"};
+        const uint8_t values[] = {1, 5, 10, 0};
+        for (int i = 0; i < 4; ++i) {
+            EpdRect box = {36, 272 + i * 112, 612, 92};
+            bool active = app_settings_auto_lock_minutes() == values[i];
+            settings_card(fb, box, 20, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
+            ui_text_vc(fb, 64, box.y + box.height / 2, 30, labels[i], EPD_DRAW_ALIGN_LEFT, false);
+            if (active) epd_fill_circle(609, box.y + box.height / 2, 8, UI_GRAY_BLACK, fb);
+        }
+        ui_text(fb, 48, 760, 23, "操作后重新计时，传输和升级期间暂停", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 810, 23, "锁屏先浅睡，10 分钟后进入深睡", EPD_DRAW_ALIGN_LEFT, false);
         ui_nav_draw(fb, 3);
         return;
     }
@@ -1104,17 +1127,23 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
                                     signature_value, app_settings_home_full_refresh() ? "开启  ›" : "关闭  ›"};
     static const int reading_icons[] = {2, 3, 7, 4, 10, 11};
     setting_group(fb, SETTINGS_DISPLAY_Y - 30, "显示", SETTINGS_DISPLAY_Y,
-                  reading_icons, reading_labels, reading_values, 6);
-    const char *display_labels[] = {"锁屏样式", "关机睡眠", "日期与时间"};
+                  reading_icons, reading_labels, reading_values, SETTINGS_DISPLAY_ROWS);
+    char idle_value[32];
+    unsigned idle_minutes = app_settings_auto_lock_minutes();
+    if (idle_minutes) snprintf(idle_value, sizeof(idle_value), "%u 分钟  ›", idle_minutes);
+    else strcpy(idle_value, "关闭  ›");
+    const char *display_labels[] = {"锁屏样式", "关机睡眠", "日期与时间", "自动休眠锁屏"};
     const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›",
                                     app_settings_staged_shutdown() ? "先浅后深  ›" : "彻底断电  ›",
-                                    "设置  ›"};
-    static const int display_icons[] = {5, 9, 6};
+                                    "设置  ›", idle_value};
+    static const int display_icons[] = {5, 9, 6, 14};
+    _Static_assert(sizeof(display_icons) / sizeof(display_icons[0]) == SETTINGS_DEVICE_ROWS,
+                   "each device settings row requires an icon");
     setting_group(fb, SETTINGS_DEVICE_Y - 34, "阅读与设备", SETTINGS_DEVICE_Y,
                   display_icons, display_labels, display_values, SETTINGS_DEVICE_ROWS);
     static const char *const maintenance_labels[] = {"系统升级", "保存与恢复", "BOOT 刷机"};
     static const char *const maintenance_values[] = {"OTA / TF 卡  ›", "配置  ›", "电脑刷机  ›"};
-    static const int maintenance_icons[] = {11, 8, 11};
+    static const int maintenance_icons[] = {12, 8, 13};
     setting_group(fb, SETTINGS_MAINTENANCE_Y - 34, "升级和恢复", SETTINGS_MAINTENANCE_Y,
                   maintenance_icons, maintenance_labels, maintenance_values, 3);
     epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, 160}, 0xe0, fb);
@@ -1561,6 +1590,15 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         ble_pt_scan_stop(); s_page = SETTINGS_BLUETOOTH; s_ble_scroll = 0; return APP_REDRAW_PAGE;
     }
     if (s_page != SETTINGS_MAIN && y < 190) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
+    if (s_page == SETTINGS_AUTO_LOCK) {
+        const uint8_t values[] = {1, 5, 10, 0};
+        for (int i = 0; i < 4; ++i) if (ui_rect_hit((EpdRect){36, 272 + i * 112, 612, 92}, ev->x0, y)) {
+            app_settings_set_auto_lock_minutes(values[i]);
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
+
     if (s_page == SETTINGS_WIFI) {
         if (y >= 408 && y < 478) {
             extern const app_desc_t app_transfer;
@@ -1830,6 +1868,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         app_settings_set_home_full_refresh(!app_settings_home_full_refresh());
         return APP_REDRAW_PAGE;
     }
+
     if (y >= SETTINGS_DEVICE_Y && y < SETTINGS_DEVICE_Y + SETTINGS_ROW_H) {
         s_page = SETTINGS_LOCK_STYLE;
         return APP_REDRAW_PAGE;
@@ -1841,6 +1880,9 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     if (y >= SETTINGS_DEVICE_Y + 2 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 3 * SETTINGS_ROW_H) {
         s_page = SETTINGS_TIME;
         return APP_REDRAW_PAGE;
+    }
+    if (y >= SETTINGS_DEVICE_Y + 3 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 4 * SETTINGS_ROW_H) {
+        s_page = SETTINGS_AUTO_LOCK; return APP_REDRAW_PAGE;
     }
     if (y >= SETTINGS_MAINTENANCE_Y && y < SETTINGS_MAINTENANCE_Y + SETTINGS_ROW_H) {
         upgrade_open(); return APP_REDRAW_PAGE;

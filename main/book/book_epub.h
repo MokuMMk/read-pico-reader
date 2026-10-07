@@ -51,3 +51,6 @@ esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, ch
 /// Read an existing metadata cache only; the lock path must not open or parse an EPUB.
 esp_err_t book_epub_metadata_cached(const char *path, char *title, size_t title_cap,
                                     char *author, size_t author_cap);
+
+/// 有界头部读取，仅探测插图尺寸。/ Probe image dimensions from a bounded header.
+esp_err_t book_epub_image_dimensions(book_epub_t *book, size_t chapter, const char *src, unsigned *width, unsigned *height);

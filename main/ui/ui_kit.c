@@ -1191,6 +1191,7 @@ void ui_draw_datamatrix(uint8_t* framebuffer, EpdRect rect, const char* text) {
 }
 
 void ui_clear_page(uint8_t* framebuffer) {
+
     memset(framebuffer, 0xFF, (size_t)epd_width() * epd_height() / 2);
 }
 

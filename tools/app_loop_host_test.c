@@ -24,6 +24,9 @@ static sample_t samples[32];
 static int sample_count, step, ticks, enters, exits, touch_calls, keys[3], events[16];
 static int menus, highlights, restores, fulls, mode, tick_consumed[32];
 static int long_keys;
+static uint8_t idle_minutes;
+static int idle_locks, before_locks;
+static bool online_busy;
 static app_redraw_t long_key(app_ctx_t* c, int k) { assert(k==UI_KEY_2); ++long_keys; c->request_menu=true; return APP_REDRAW_NONE; }
 static app_redraw_t response;
 static bool request_on_touch, request_on_tick, menu_on_tick, menu_on_touch, cancel_clobber;
@@ -31,7 +34,7 @@ static bool home_on_touch, home_on_tick, home_on_key, start_second;
 static int home_enters, home_renders, last_menu_leaf, rendered_leaf;
 static const app_desc_t* menu_background;
 static app_desc_t first, second;
-static bool full_tick, lock_due, font_due;
+static bool full_tick, lock_due, font_due, shake_activity;
 static int64_t time_offset, time_step;
 static int du_areas, gl_areas;
 static bool media_test, sd_font, saved_sd_font;
@@ -61,7 +64,7 @@ bool display_take_white_exit(void) {return false;}
 void rails_idle_check(int64_t n) {(void)n;}
 bool read_pico_pmu_ready(void) {return lock_due;}
 read_pico_pmu_key_action_t read_pico_pmu_take_key_action(void) {return READ_PICO_PMU_KEY_SHORT;}
-void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,bool reader) {(void)h;(void)t;(void)a;(void)reader;lock_due=false;time_offset+=1000000;}
+void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,bool reader) {(void)h;(void)t;(void)a;(void)reader;++idle_locks;lock_due=false;time_offset+=1000000;}
 void app_lock_wait_key_idle(int ms) {(void)ms;}
 void app_enter_host_sleep(app_sleep_mode_t mode) {(void)mode;longjmp(done,1);}
 void app_restart_host(void) {longjmp(done,1);}
@@ -112,18 +115,20 @@ static app_redraw_t gesture(app_ctx_t*c,const ui_gesture_event_t*e) {
 static app_redraw_t key(app_ctx_t*c,int k) {keys[k]++;if(home_on_key)c->request_return=true;return APP_REDRAW_NONE;}
 static app_redraw_t tick(app_ctx_t*c) {
     ticks++;tick_consumed[step]=c->consumed;
+    if (shake_activity && step == 0) c->user_activity = true;
     if(request_on_tick)c->request_app=&second;
     if(menu_on_tick)c->request_menu=true;
     if(home_on_tick){c->request_return=true;home_on_tick=false;}
     return full_tick ? APP_REDRAW_FULL : APP_REDRAW_NONE;
 }
 static void reset(void) {
+    idle_minutes=0;idle_locks=before_locks=0;online_busy=false;
     media_test=sd_font=saved_sd_font=false;media_lost=media_ready=builtin_opens=font_opens=probes=0;loss_step=-1;
     memset(mounted_steps,0,sizeof(mounted_steps));memset(present_steps,0,sizeof(present_steps));
     long_keys=0;
     home_on_touch=home_on_tick=home_on_key=start_second=false;
     home_enters=home_renders=0;rendered_leaf=-1;last_menu_leaf=-1;menu_background=NULL;
-    full_tick=lock_due=font_due=false;time_offset=0;time_step=10000;du_areas=gl_areas=0;
+    full_tick=lock_due=font_due=shake_activity=false;time_offset=0;time_step=10000;du_areas=gl_areas=0;
     memset(samples,0,sizeof(samples));memset(keys,0,sizeof(keys));memset(events,0,sizeof(events));memset(tick_consumed,0,sizeof(tick_consumed));
     sample_count=step=ticks=enters=exits=touch_calls=menus=highlights=restores=fulls=mode=0;
     request_on_touch=request_on_tick=menu_on_tick=menu_on_touch=cancel_clobber=false;response=APP_REDRAW_NONE;
@@ -140,6 +145,8 @@ static void home_case(void) {
     second=first;second.title="transfer";
     first.on_enter=home_enter;first.render=home_render;first.on_tick=NULL;first.on_touch=NULL;
 }
+static bool product_menu_disabled(app_ctx_t *ctx) {(void)ctx;return false;}
+static void before_lock(app_ctx_t *ctx) {(void)ctx;++before_locks;}
 int main(void) {
     reset();add(100,400,1,0);add(110,400,1,0);add(0,0,0,0);run();
     assert(touch_calls==1&&ticks==3&&!tick_consumed[0]);
@@ -260,7 +267,25 @@ int main(void) {
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=mounted_steps[2]=true;time_step=4000000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(media_lost==2&&builtin_opens==2&&!probes&&font_opens==1);
-    puts("app_loop: 42 scheduler scenarios passed");
+    reset();idle_minutes=1;time_step=60000000;first.on_before_lock=before_lock;
+    add(0,0,0,0);add(0,0,0,0);run();
+    assert(idle_locks==1&&before_locks==1); // Real scheduler flushes before automatic lock.
+    reset();idle_minutes=1;time_step=60000000;shake_activity=true;
+    add(0,0,0,0);run();assert(!idle_locks);
+    reset();idle_minutes=1;time_step=60000000;shake_activity=true;
+    add(0,0,0,0);add(0,0,0,0);run();assert(idle_locks==1); /* Activity is consumed once, not latched. */
+    reset();idle_minutes=0;time_step=600000000;
+    add(0,0,0,0);add(0,0,0,0);run();assert(!idle_locks);
+    reset();idle_minutes=1;time_step=600000000;online_busy=true;
+    add(0,0,0,0);add(0,0,0,0);run();assert(!idle_locks);
+    reset();idle_minutes=1;time_step=600000000;first.holds_pmu=true;
+    add(0,0,0,0);add(0,0,0,0);run();assert(!idle_locks);
+    reset();idle_minutes=1;time_step=30000000;
+    add(100,400,1,0);add(100,400,1,0);add(0,0,0,0);add(0,0,0,0);run();assert(!idle_locks);
+    reset();first.owns_keys=true;first.on_gesture=gesture;first.menu_handle_enabled=product_menu_disabled;
+    add(636,1150,1,0);add(0,0,0,0);run();
+    assert(!menus&&events[UI_GESTURE_PRESS]==1&&events[UI_GESTURE_TAP]==1);
+    puts("app_loop: 50 scheduler scenarios passed, including automatic lock, save callback, input reset and busy guards");
     return 0;
 }
 
@@ -268,4 +293,7 @@ int main(void) {
 const app_desc_t app_weread = { .title = "WeRead test" };
 void ble_pt_sync(bool enabled) { (void)enabled; }
 void ble_pt_poll(void) {}
-bool pico_online_busy(void) { return false; }
+bool pico_online_busy(void) { return online_busy; }
+
+uint8_t app_settings_auto_lock_minutes(void){return idle_minutes;}
+uint32_t ble_pt_input_serial(void){return 0;}

@@ -76,6 +76,10 @@ ICONS = (
     "rotate-cw",         # 电源弹窗·重启 / power dialog, restart
     "radio-tower",       # 传书页·创建热点 / transfer page, create hotspot
     "chevron-right",     # 书架下一页 / next shelf page
+    "download",          # 系统升级 / system upgrade
+    "cpu",               # BOOT 刷机 / boot flashing
+    "book-open",         # 阅读设置 / reading settings
+    "timer",             # 自动休眠 / idle lock
 )
 
 _NUMBER = re.compile(r"[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")

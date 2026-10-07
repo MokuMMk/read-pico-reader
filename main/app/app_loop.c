@@ -24,6 +24,7 @@
  */
 
 #include "app_loop.h"
+#include "auto_lock.h"
 
 #include <string.h>
 
@@ -292,6 +293,9 @@ void app_loop_run(const app_loop_config_t* config) {
     int64_t last_font_retry_ms = 0;
     int64_t last_media_poll_ms = 0;
     int64_t last_network_poll_ms = 0;
+    int64_t last_input_ms = esp_timer_get_time() / 1000;
+    uint32_t last_ble_input = ble_pt_input_serial();
+    unsigned idle_minutes = app_settings_auto_lock_minutes();
     read_pico_sd_info_t initial_media = {0};
     (void)read_pico_sd_get_info(&initial_media);
     bool media_mounted = initial_media.mounted || (ttf_font_ready() && !ttf_font_is_builtin());
@@ -320,6 +324,7 @@ void app_loop_run(const app_loop_config_t* config) {
         const bool released = !touch.touched && was_touched;
         debounce_touch(&latest, &touch, released);
         ctx.now_ms = esp_timer_get_time() / 1000;
+        if (err == ESP_OK && (touch.touched || released)) last_input_ms = ctx.now_ms;
         if (ctx.now_ms - last_network_poll_ms >= 500) {
             last_network_poll_ms = ctx.now_ms;
             read_pico_transfer_service_poll();
@@ -372,6 +377,7 @@ void app_loop_run(const app_loop_config_t* config) {
                         enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
                                              current == &app_book && app_book_reader_body_visible());
                         ctx.now_ms = esp_timer_get_time() / 1000;
+                        last_input_ms = ctx.now_ms;
                         poll_media(&ctx, current, &media_mounted, &media_invalidated);
                         last_media_poll_ms = ctx.now_ms;
                         ctx.pressed = false;
@@ -493,6 +499,7 @@ void app_loop_run(const app_loop_config_t* config) {
             last_lock_poll_ms = ctx.now_ms;
             read_pico_pmu_key_action_t key_action = read_pico_pmu_take_key_action();
             if (key_action != READ_PICO_PMU_KEY_NONE) {
+                last_input_ms = ctx.now_ms;
                 if (ctx.now_ms < s_lock_ignore_until_ms) {
                     ESP_LOGI(TAG, "ignore boot power-key action %d", (int)key_action);
                 } else if (key_action == READ_PICO_PMU_KEY_LONG) {
@@ -507,6 +514,7 @@ void app_loop_run(const app_loop_config_t* config) {
                         if (current->on_before_lock) current->on_before_lock(&ctx);
                         enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, true);
                         ctx.now_ms = esp_timer_get_time() / 1000;
+                        last_input_ms = ctx.now_ms;
                         poll_media(&ctx, current, &media_mounted, &media_invalidated);
                         last_media_poll_ms = ctx.now_ms;
                         ctx.consumed = true;
@@ -536,6 +544,7 @@ void app_loop_run(const app_loop_config_t* config) {
                         enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
                                              !menu_open && current == &app_book && app_book_reader_body_visible());
                         ctx.now_ms = esp_timer_get_time() / 1000;
+                        last_input_ms = ctx.now_ms;
                         poll_media(&ctx, current, &media_mounted, &media_invalidated);
                         last_media_poll_ms = ctx.now_ms;
                         ctx.consumed = true;
@@ -611,6 +620,33 @@ void app_loop_run(const app_loop_config_t* config) {
             app_redraw_t redraw = current->on_tick(&ctx);
             if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) held_key = -1;
             present_page(&ctx, current, &gesture, redraw);
+        }
+        if (ctx.user_activity) { last_input_ms = ctx.now_ms; ctx.user_activity = false; }
+        uint32_t ble_input = ble_pt_input_serial();
+        if (ble_input != last_ble_input) { last_ble_input = ble_input; last_input_ms = ctx.now_ms; }
+        unsigned requested_idle = app_settings_auto_lock_minutes();
+        bool idle_blocked = usb_storage_active() || wifi_busy || current == &app_transfer ||
+            current->holds_pmu || power_dialog_open || touch.touched ||
+            ctx.request_app || ctx.request_menu || ctx.request_return;
+        if (idle_blocked || requested_idle != idle_minutes) last_input_ms = ctx.now_ms;
+        idle_minutes = requested_idle;
+        if (!idle_blocked && ctx.now_ms >= s_lock_ignore_until_ms &&
+            auto_lock_due(ctx.now_ms, last_input_ms, idle_minutes)) {
+            held_key = -1;
+            cancel_gesture(&ctx, current, &gesture);
+            if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
+            menu_pressed = UI_MENU_HIT_NONE;
+            if (current->on_before_lock) current->on_before_lock(&ctx);
+            extern const app_desc_t app_book;
+            enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
+                                 !menu_open && current == &app_book && app_book_reader_body_visible());
+            ctx.now_ms = esp_timer_get_time() / 1000;
+            last_input_ms = ctx.now_ms;
+            poll_media(&ctx, current, &media_mounted, &media_invalidated);
+            last_media_poll_ms = ctx.now_ms;
+            ctx.pressed = ctx.released = false;
+            if (menu_open) present_menu(&ctx, current, menu_leaf, &feedback);
+            else app_present(&ctx, current, APP_REDRAW_PAGE);
         }
         if (menu_open && feedback.updates > 0
             && ctx.now_ms - feedback.last_ms >= UI_SETTLE_IDLE_MS) {

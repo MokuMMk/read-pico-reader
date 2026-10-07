@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix="pico-weread-") as directory:
                    "-I" + str(ROOT / "tools/book_epub_stubs"), "-I" + str(ROOT / "tools/zip_host_stubs"),
                    "-I" + str(ROOT / "main/book"), str(ROOT / "tools/weread_epub_reader_test.c"),
                    *[str(ROOT / "main/book" / name) for name in
-                     ("book_epub.c", "zip_reader.c", "html_text.c", "book_index_cache.c")],
+                     ("book_epub.c", "book_image_header.c", "zip_reader.c", "html_text.c", "book_index_cache.c")],
                    "-lz", "-o", str(reader)], check=True, timeout=60)
     subprocess.run([str(reader), str(work / "books/test.epub")], check=True, timeout=20)
 

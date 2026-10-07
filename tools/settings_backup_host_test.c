@@ -62,13 +62,14 @@ static bool card_mounted = true;
 static bool commit_fails;
 static int commit_count;
 static uint8_t test_loaded_system_size;
+static uint8_t test_loaded_fast;
 esp_err_t read_pico_sd_get_info(read_pico_sd_info_t *info) { info->mounted = card_mounted; return ESP_OK; }
 esp_err_t nvs_flash_init(void) { return ESP_OK; }
 esp_err_t nvs_flash_erase(void) { return ESP_OK; }
 esp_err_t nvs_open(const char *ns, int mode, nvs_handle_t *h) { (void)ns; (void)mode; *h = 1; return ESP_OK; }
 void nvs_close(nvs_handle_t h) { (void)h; }
-esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } return ESP_FAIL; }
-esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) { (void)h; (void)key; (void)value; return ESP_OK; }
+esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; if (!strcmp(key, "ui_fast")) { *value = test_loaded_fast; return ESP_OK; } if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } return ESP_FAIL; }
+esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) { (void)h; if (!strcmp(key, "ui_fast")) test_loaded_fast=value; return ESP_OK; }
 esp_err_t nvs_get_str(nvs_handle_t h, const char *key, char *value, size_t *size) { (void)h; (void)key; (void)value; (void)size; return ESP_FAIL; }
 esp_err_t nvs_set_str(nvs_handle_t h, const char *key, const char *value) { (void)h; (void)key; (void)value; return ESP_OK; }
 esp_err_t nvs_erase_key(nvs_handle_t h, const char *key) { (void)h; (void)key; return ESP_OK; }
@@ -77,6 +78,9 @@ esp_err_t nvs_commit(nvs_handle_t h) { (void)h; ++commit_count; return commit_fa
 int main(void) {
     assert(app_settings_system_contrast() == 100);
     assert(app_settings_book_line_spacing() == 130); /* New installations start at the middle slider stop. */
+
+    test_loaded_fast = 1;
+    app_settings_init();
     (void)mkdir(APP_SETTINGS_BACKUP_ROOT, 0700);
     (void)remove(BACKUP_FILE);
     (void)remove(BACKUP_PREVIOUS);
@@ -95,11 +99,13 @@ int main(void) {
     s_reader_immersive = true;
     s_shelf_style = 3;
     s_staged_shutdown = true;
+    s_auto_lock_minutes = 5;
     s_home_full_refresh = true;
     s_ble_turner = true;
     s_reader_hold_refresh = true;
     app_settings_set_reader_vertical_turn(true);
     assert(app_settings_reader_vertical_turn());
+
     strlcpy(s_device_name, "Kiiko Pico", sizeof(s_device_name));
     strlcpy(s_status_signature, "今天也要读书", sizeof(s_status_signature));
     strlcpy(s_avatar, "/sdcard/pictures/missing-avatar.jpg", sizeof(s_avatar));
@@ -118,9 +124,23 @@ int main(void) {
     assert(!strcmp(saved_profile.device_name, "Kiiko Pico") &&
            !strcmp(saved_profile.status_signature, "今天也要读书") &&
            !strcmp(saved_profile.avatar, "/sdcard/pictures/missing-avatar.jpg"));
+    assert(!(saved_profile.home_full_refresh & 64));
+    assert(test_loaded_fast == 1);
     assert(backup_wifi_valid(&saved_network) && saved_network.credentials.configured &&
            !strcmp(saved_network.credentials.ssid, "Home_2.4G") &&
            !strcmp(saved_network.credentials.password, "password123"));
+    // 旧备份仍可恢复，但退出的极速测试位被忽略；其他配置与网络继续恢复。
+    // Accept old backups while ignoring the retired fast-test bit; restore other settings and WiFi.
+    saved = fopen(BACKUP_FILE, "r+b");
+    settings_backup_v1_t legacy_header; uint8_t legacy_ext[7];
+    assert(saved && fread(&legacy_header, 1, sizeof(legacy_header), saved) == sizeof(legacy_header));
+    assert(fread(legacy_ext, 1, sizeof(legacy_ext), saved) == sizeof(legacy_ext));
+    saved_profile.home_full_refresh |= 64;
+    uint32_t legacy_hash = backup_profile_checksum(&legacy_header, legacy_ext[0], legacy_ext[1], legacy_ext[2], &saved_profile);
+    for (int i=0;i<4;++i) saved_profile.checksum[i]=(uint8_t)(legacy_hash>>(8*i));
+    assert(fseek(saved, sizeof(legacy_header) + sizeof(legacy_ext), SEEK_SET) == 0);
+    assert(fwrite(&saved_profile, 1, sizeof(saved_profile), saved) == sizeof(saved_profile));
+    assert(fclose(saved) == 0);
     memset(&saved_wifi, 0, sizeof(saved_wifi));
     saved = fopen(BACKUP_FILE, "r+b");
     assert(saved && fseek(saved, sizeof(settings_backup_v1_t) + 7 +
@@ -145,15 +165,18 @@ int main(void) {
     s_reader_immersive = false;
     s_shelf_style = 2;
     s_staged_shutdown = false;
+    s_auto_lock_minutes = 0;
     s_home_full_refresh = false;
     s_ble_turner = false;
     s_reader_hold_refresh = false;
     app_settings_set_reader_vertical_turn(false);
+
     strlcpy(s_device_name, "Pico", sizeof(s_device_name));
     s_status_signature[0] = 0;
     s_avatar[0] = 0;
     s_lock_style = 0;
     s_wallpaper[0] = 0;
+    const int prior_restore_commits = commit_count;
     assert(app_settings_backup_restore() == ESP_OK);
     assert(history_restores == 1);
     assert(app_settings_system_font_size() == 200);
@@ -163,16 +186,17 @@ int main(void) {
     assert(s_book_px == 62 && s_book_tracking == 4 && s_book_indent == 3 &&
            s_book_rule_offset == 7 && s_reader_full_pages == 5);
     assert(s_reader_turn_effect == 1 && s_reader_power_turn && s_reader_immersive && s_shelf_style == 3);
-    assert(s_staged_shutdown);
+    assert(s_staged_shutdown&&app_settings_auto_lock_minutes()==5);
     assert(s_ble_turner);
     assert(s_reader_hold_refresh);
     assert(app_settings_reader_vertical_turn());
+
     assert(s_home_full_refresh && !strcmp(s_device_name, "Kiiko Pico") &&
            !strcmp(s_status_signature, "今天也要读书"));
     assert(!s_avatar[0]); /* Missing avatar falls back to the default mark. */
     assert(!s_font[0]); /* Missing external font falls back to built-in. */
     assert(s_lock_style == 0 && !s_wallpaper[0]); /* Missing wallpaper uses ticket. */
-    assert(commit_count == 3); /* Two mode changes and one restore commit. */
+    assert(commit_count == prior_restore_commits + 1); /* Restore commits exactly once. */
     app_settings_set_reader_full_pages(30);
     assert(s_reader_full_pages == 30);
     app_settings_set_reader_full_pages(0);
@@ -213,6 +237,7 @@ int main(void) {
     assert(fwrite(v3_extension, 1, sizeof(v3_extension), file) == sizeof(v3_extension));
     assert(fclose(file) == 0);
     assert(app_settings_backup_restore() == ESP_OK && !s_staged_shutdown);
+
     assert(!s_home_full_refresh && !strcmp(s_device_name, "Pico") && !s_status_signature[0]);
     assert(!strcmp(saved_wifi.ssid, "Home_2.4G")); /* Old backups leave network alone. */
 
@@ -276,6 +301,8 @@ int main(void) {
     app_settings_init(); assert(app_settings_system_font_size() == 180);
     test_loaded_system_size = 200; s_system_size = 120;
     app_settings_init(); assert(app_settings_system_font_size() == 200);
+
+
     puts("settings backup host test passed (including 200% size persistence and restore)");
     return 0;
 }

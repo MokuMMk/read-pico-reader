@@ -31,3 +31,10 @@ book_crop_t book_cover_crop(unsigned src_width, unsigned src_height,
 bool book_cover_load_gray(const char *path, const char *title, const char *author,
                           uint8_t out[BOOK_COVER_W * BOOK_COVER_H],
                           bool allow_decode, bool *pending);
+
+// TF 图片按文件流解码；输入最多 50 MiB，输出仍限制为一屏。/ Stream TF images up to 50 MiB, with a one-screen output bound.
+#define BOOK_IMAGE_FILE_MAX (50u * 1024u * 1024u)
+bool book_image_file_dimensions(const char *path, bool png, unsigned *width, unsigned *height);
+bool book_image_file_grayscale(const char *path, bool png, unsigned width, unsigned height, uint8_t *out);
+
+bool book_jpeg_frame(const uint8_t *data, size_t size, uint8_t *sof, unsigned *width, unsigned *height);

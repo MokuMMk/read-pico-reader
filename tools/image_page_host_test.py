@@ -62,6 +62,9 @@ static void *app_home_page(void){return NULL;}
 static int ui_nav_hit(int x,int y){(void)x;(void)y;return -1;}
 static void ui_nav_request(app_ctx_t *ctx,int tab){(void)ctx;(void)tab;}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&y>=r.y&&x<r.x+r.width&&y<r.y+r.height;}
+#define BOOK_IMAGE_FILE_MAX (50u*1024u*1024u)
+static bool book_image_file_dimensions(const char *path,bool png,unsigned *w,unsigned *h){(void)path;return book_image_dimensions((const uint8_t*)"IMG!",4,png,w,h);}
+static bool book_image_file_grayscale(const char *path,bool png,unsigned w,unsigned h,uint8_t *out){(void)path;return book_image_grayscale((const uint8_t*)"IMG!",4,png,w,h,out);}
 """ + source + r"""
 static void image_fixture(const char *name){FILE *f=fopen(name,"wb");assert(f);assert(fwrite("IMG!",1,4,f)==4);assert(!fclose(f));}
 int main(void){
@@ -78,7 +81,7 @@ int main(void){
  // 名单达到上限时，文件管理选择的文件仍必须能直接打开。/ Directly selected Files images must open even after the list limit.
  char fixture[256];for(int i=0;i<100;++i){snprintf(fixture,sizeof(fixture),"%s/image%03d.jpg",root,i);image_fixture(fixture);}
  assert(app_image_request_open(other));on_enter(&ctx);assert(s_count==IMAGE_MAX&&s_viewing&&s_selected==0&&!strcmp(s_items[0].path,other));image_on_exit(&ctx);
- for(int fail=1;fail<=2;++fail){test_malloc_fail=fail;assert(app_image_request_open(path));on_enter(&ctx);assert(!s_gray&&!s_viewing&&s_message[0]);}
+ for(int fail=1;fail<=1;++fail){test_malloc_fail=fail;assert(app_image_request_open(path));on_enter(&ctx);assert(!s_gray&&!s_viewing&&s_message[0]);}
  test_dimensions_fail=1;assert(app_image_request_open(path));on_enter(&ctx);assert(!s_gray&&!s_viewing);test_dimensions_fail=0;
  test_decode_fail=1;assert(app_image_request_open(path));on_enter(&ctx);assert(!s_gray&&!s_viewing);test_decode_fail=0;
  assert(app_image_request_open(path));on_enter(&ctx);assert(s_viewing);on_media_lost(&ctx);assert(!s_gray&&!s_viewing);

@@ -14,6 +14,26 @@
 #include "jpeg_decoder.h"
 #include "JPEGDEC.h"
 #include "png.h"
+#if defined(ESP_PLATFORM) && CONFIG_JD_USE_ROM
+#include "rom/tjpgd.h"
+typedef unsigned int stream_jpeg_result_t;
+typedef unsigned int stream_jpeg_size_t;
+#else
+#include "tjpgd.h"
+typedef int stream_jpeg_result_t;
+typedef size_t stream_jpeg_size_t;
+#endif
+#ifdef ESP_PLATFORM
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
+static void decode_yield(unsigned at) {
+#ifdef ESP_PLATFORM
+    if ((at & 63u) == 0) vTaskDelay(1);
+#else
+    (void)at;
+#endif
+}
 
 static void *cover_alloc(size_t n) {
     return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -53,32 +73,7 @@ book_crop_t book_cover_crop(unsigned src_width, unsigned src_height,
 // Walk the marker segments and read the SOF marker plus the frame size. 0xC0 is baseline and
 // 0xC2 is progressive; the ROM TJpgDec decodes baseline only, so progressive frames go to
 // JPEGDEC.
-static bool jpeg_frame(const uint8_t *data, size_t size, uint8_t *sof,
-                       unsigned *width, unsigned *height) {
-    if (!data || size < 4 || data[0] != 0xFF || data[1] != 0xD8) return false;
-    size_t at = 2;
-    while (at + 1 < size) {
-        if (data[at] != 0xFF) { ++at; continue; }   // 段间的填充字节 / fill bytes between segments
-        uint8_t marker = data[at + 1];
-        if (marker == 0xFF) { ++at; continue; }
-        // 无长度字段的标记。/ Markers without a length field.
-        if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD9)) { at += 2; continue; }
-        if (at + 4 > size) return false;
-        size_t length = ((size_t)data[at + 2] << 8) | data[at + 3];
-        if (length < 2) return false;
-        // SOF0..SOF15，跳过 DHT(0xC4)、JPG(0xC8)、DAC(0xCC)。
-        // SOF0..SOF15, skipping DHT (0xC4), JPG (0xC8) and DAC (0xCC).
-        if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
-            if (at + 9 > size) return false;
-            if (height) *height = ((unsigned)data[at + 5] << 8) | data[at + 6];
-            if (width) *width = ((unsigned)data[at + 7] << 8) | data[at + 8];
-            if (sof) *sof = marker;
-            return true;
-        }
-        at += 2 + length;
-    }
-    return false;
-}
+
 
 /* ---- 渐进式 JPEG / Progressive JPEG ---- */
 
@@ -157,7 +152,7 @@ static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
     if (size > UINT32_MAX) return false;
     uint8_t sof = 0;
     unsigned frame_width = 0, frame_height = 0;
-    if (jpeg_frame(data, size, &sof, &frame_width, &frame_height) && sof == 0xC2)
+    if (book_jpeg_frame(data, size, &sof, &frame_width, &frame_height) && sof == 0xC2)
         return jpegdec_gray(data, size, frame_width, frame_height, out_width, out_height, out);
     esp_jpeg_image_cfg_t cfg = { .indata = (uint8_t *)data, .indata_size = (uint32_t)size,
                                  .out_format = JPEG_IMAGE_FORMAT_RGB565 };
@@ -199,21 +194,22 @@ static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
     return decoded;
 }
 
-typedef struct { const uint8_t *data; size_t size, pos; } png_input_t;
+typedef struct { const uint8_t *data; size_t size, pos; FILE *file; } png_input_t;
 static void png_read_mem(png_structp png, png_bytep dst, png_size_t count) {
     png_input_t *input = png_get_io_ptr(png);
     if (count > input->size - input->pos) png_error(png, "truncated PNG");
-    memcpy(dst, input->data + input->pos, count);
+    if (input->file) { if (fread(dst, 1, count, input->file) != count) png_error(png, "truncated PNG file"); }
+    else memcpy(dst, input->data + input->pos, count);
     input->pos += count;
 }
-static bool png_gray(const uint8_t *data, size_t size, unsigned out_width,
+static bool png_gray_input(const uint8_t *data, size_t size, FILE *file, unsigned out_width,
                      unsigned out_height, uint8_t *out) {
     png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if (!png) return false;
     png_infop info = png_create_info_struct(png);
     if (!info) { png_destroy_read_struct(&png, NULL, NULL); return false; }
     uint8_t *volatile row = NULL;
-    png_input_t input = {data, size, 0};
+    png_input_t input = {data, size, 0, file};
     bool ok = false;
     if (setjmp(png_jmpbuf(png))) goto done;
     png_set_read_fn(png, &input, png_read_mem);
@@ -240,6 +236,7 @@ static bool png_gray(const uint8_t *data, size_t size, unsigned out_width,
     const book_crop_t crop = book_cover_crop(width, height, out_width, out_height);
     for (png_uint_32 y = 0; y < height; ++y) {
         png_read_row(png, row, NULL);
+        decode_yield((unsigned)y);
         while (next_y < out_height &&
                crop.y + (uint64_t)next_y * crop.height / out_height == y) {
             for (unsigned x = 0; x < out_width; ++x) {
@@ -268,29 +265,11 @@ bool book_image_grayscale(const uint8_t *data, size_t size, bool png,
     if (!data || !size || !out || !out_width || !out_height ||
         out_width > 1216 || out_height > 1216 || (size_t)out_width * out_height > 684u * 1216u)
         return false;
-    return png ? png_gray(data, size, out_width, out_height, out)
+    return png ? png_gray_input(data, size, NULL, out_width, out_height, out)
                : jpeg_gray(data, size, out_width, out_height, out);
 }
 
-bool book_image_dimensions(const uint8_t *data, size_t size, bool png,
-                           unsigned *width, unsigned *height) {
-    if (!data || !width || !height) return false;
-    *width = *height = 0;
-    if (png) {
-        static const uint8_t signature[8] = {137,80,78,71,13,10,26,10};
-        if (size < 24 || memcmp(data, signature, 8) || memcmp(data + 12, "IHDR", 4)) return false;
-        *width = (uint32_t)data[16] << 24 | (uint32_t)data[17] << 16 | (uint32_t)data[18] << 8 | data[19];
-        *height = (uint32_t)data[20] << 24 | (uint32_t)data[21] << 16 | (uint32_t)data[22] << 8 | data[23];
-    } else {
-        unsigned frame_width = 0, frame_height = 0;
-        // 帧头对基线、渐进式都能给出尺寸，而 esp_jpeg 只认基线。
-        // The frame header yields the size for baseline and progressive alike, where esp_jpeg
-        // only handles baseline.
-        if (!jpeg_frame(data, size, NULL, &frame_width, &frame_height)) return false;
-        *width = frame_width; *height = frame_height;
-    }
-    return *width > 0 && *height > 0 && *width <= 8192 && *height <= 8192;
-}
+
 
 /* ---- 共享封面缓存 / Shared cover cache ---- */
 
@@ -393,4 +372,136 @@ bool book_cover_load_gray(const char *path, const char *title, const char *autho
     if (!good) good = book_auto_cover_render(path, title, author, BOOK_COVER_W, BOOK_COVER_H, out);
     if (good && cache_result) cover_cache_write(cache_path, &key, out);
     return good;
+}
+
+static bool file_frame(FILE *file, bool png, uint8_t *sof, unsigned *width, unsigned *height) {
+    if (fseek(file, 0, SEEK_SET)) return false;
+    if (png) {
+        uint8_t header[24];
+        return fread(header, 1, sizeof(header), file) == sizeof(header) && book_image_dimensions(header, sizeof(header), true, width, height);
+    }
+    if (fgetc(file) != 0xff || fgetc(file) != 0xd8) return false;
+    for (unsigned segment = 0; segment < 4096; ++segment) {
+        int first = fgetc(file);
+        if (first == EOF) return false;
+        if (first != 0xff) continue;
+        int marker;
+        do { marker = fgetc(file); } while (marker == 0xff);
+        if (marker == EOF || marker == 0xda || marker == 0xd9) return false;
+        if (marker == 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
+        int high = fgetc(file), low = fgetc(file);
+        if (high < 0 || low < 0) return false;
+        unsigned length = (unsigned)high * 256 + (unsigned)low;
+        if (length < 2) return false;
+        if (marker >= 0xc0 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8 && marker != 0xcc) {
+            uint8_t frame[5];
+            if (length < 7 || fread(frame, 1, sizeof(frame), file) != sizeof(frame)) return false;
+            *height = (unsigned)frame[1] * 256 + frame[2];
+            *width = (unsigned)frame[3] * 256 + frame[4];
+            if (sof) *sof = (uint8_t)marker;
+            return *width && *height && *width <= 8192 && *height <= 8192 && frame[0] == 8;
+        }
+        if (fseek(file, (long)length - 2, SEEK_CUR)) return false;
+    }
+    return false;
+}
+bool book_image_file_dimensions(const char *path, bool png, unsigned *width, unsigned *height) {
+    if (!path || !width || !height) return false;
+    struct stat st;
+    if (stat(path, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || (uint64_t)st.st_size > BOOK_IMAGE_FILE_MAX) return false;
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    *width = *height = 0;
+    bool ok = file_frame(file, png, NULL, width, height);
+    fclose(file);
+    return ok;
+}
+typedef struct {
+    uint8_t *out;
+    unsigned width, height, source_w, source_h;
+    size_t pixels;
+    unsigned blocks;
+    FILE *file;
+} jpeg_file_plane_t;
+static int jpeg_file_collect(JPEGDRAW *draw) {
+    jpeg_file_plane_t *plane = draw->pUser;
+    if (!plane || !draw->pPixels || draw->iBpp != 8 || draw->iWidth <= 0 || draw->iHeight <= 0 || draw->x < 0 || draw->y < 0) return 0;
+    book_crop_t crop = book_cover_crop(plane->source_w, plane->source_h, plane->width, plane->height);
+    const uint8_t *block = (const uint8_t *)draw->pPixels;
+    // 只绘制映射到当前 MCU 的目标采样点；输出最多一屏，不创建源图平面。
+    // Sample only destination pixels mapped into this MCU, without a source-sized plane.
+    decode_yield(++plane->blocks);
+    unsigned y0 = (unsigned)draw->y > crop.y ? ((uint64_t)(draw->y - crop.y) * plane->height + crop.height - 1) / crop.height : 0;
+    unsigned y1 = (unsigned)(draw->y + draw->iHeight) > crop.y ? ((uint64_t)(draw->y + draw->iHeight - crop.y) * plane->height + crop.height - 1) / crop.height : 0;
+    unsigned x0 = (unsigned)draw->x > crop.x ? ((uint64_t)(draw->x - crop.x) * plane->width + crop.width - 1) / crop.width : 0;
+    unsigned x1 = (unsigned)(draw->x + draw->iWidthUsed) > crop.x ? ((uint64_t)(draw->x + draw->iWidthUsed - crop.x) * plane->width + crop.width - 1) / crop.width : 0;
+    if (y1 > plane->height) y1 = plane->height;
+    if (x1 > plane->width) x1 = plane->width;
+    for (unsigned y = y0; y < y1; ++y) {
+        unsigned sy = crop.y + (uint64_t)y * crop.height / plane->height;
+        if (sy < (unsigned)draw->y || sy >= (unsigned)(draw->y + draw->iHeight)) continue;
+        for (unsigned x = x0; x < x1; ++x) {
+            unsigned sx = crop.x + (uint64_t)x * crop.width / plane->width;
+            if (sx < (unsigned)draw->x || sx >= (unsigned)(draw->x + draw->iWidthUsed)) continue;
+            plane->out[(size_t)y * plane->width + x] = block[(size_t)(sy - draw->y) * draw->iWidth + sx - draw->x];
+            ++plane->pixels;
+        }
+    }
+    return 1;
+}
+static stream_jpeg_size_t jpeg_stream_read(JDEC *decoder, uint8_t *bytes, stream_jpeg_size_t count) {
+    jpeg_file_plane_t *plane = decoder->device;
+    if (!plane || !plane->file) return 0;
+    if (!bytes) return fseek(plane->file, (long)count, SEEK_CUR) == 0 ? count : 0;
+    return (stream_jpeg_size_t)fread(bytes, 1, count, plane->file);
+}
+static stream_jpeg_result_t jpeg_stream_collect(JDEC *decoder, void *bitmap, JRECT *rect) {
+    jpeg_file_plane_t *plane = decoder->device;
+    unsigned width = rect->right - rect->left + 1, height = rect->bottom - rect->top + 1;
+    if (!width || !height || width * height > 256) return 0;
+    uint8_t gray[256];
+    const uint8_t *rgb = bitmap;
+    for (unsigned i = 0; i < width * height; ++i) gray[i] = luminance(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+    JPEGDRAW draw = {.x = rect->left, .y = rect->top, .iWidth = (int)width, .iHeight = (int)height,
+        .iWidthUsed = (int)width, .iBpp = 8, .pPixels = (uint16_t *)gray, .pUser = plane};
+    return (stream_jpeg_result_t)jpeg_file_collect(&draw);
+}
+static bool jpeg_baseline_file(FILE *file, unsigned source_w, unsigned source_h,
+                               unsigned width, unsigned height, jpeg_file_plane_t *plane) {
+    unsigned scale = 0;
+    while (scale < 3 && source_w / (2u << scale) >= width && source_h / (2u << scale) >= height) ++scale;
+    plane->file = file; plane->source_w = source_w >> scale; plane->source_h = source_h >> scale;
+    void *workspace = cover_alloc(4096);
+    if (!workspace) return false;
+    JDEC decoder;
+    bool ok = jd_prepare(&decoder, jpeg_stream_read, workspace, 4096, plane) == JDR_OK &&
+              jd_decomp(&decoder, jpeg_stream_collect, (uint8_t)scale) == JDR_OK;
+    free(workspace);
+    return ok;
+}
+extern int jpegdec_gray_file(FILE *, int, unsigned, unsigned, unsigned, unsigned, bool,
+                             JPEG_DRAW_CALLBACK *, void *, unsigned *, unsigned *);
+bool book_image_file_grayscale(const char *path, bool png, unsigned width, unsigned height, uint8_t *out) {
+    if (!path || !out || !width || !height || width > 1216 || height > 1216 || (uint64_t)width * height > 684u * 1216u) return false;
+    struct stat st;
+    if (stat(path, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || (uint64_t)st.st_size > BOOK_IMAGE_FILE_MAX) return false;
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    bool ok = false;
+    if (png) ok = png_gray_input(NULL, (size_t)st.st_size, file, width, height, out);
+    else {
+        uint8_t sof = 0;
+        unsigned source_w = 0, source_h = 0;
+        if (file_frame(file, false, &sof, &source_w, &source_h) && !fseek(file, 0, SEEK_SET)) {
+            jpeg_file_plane_t plane = {.out = out, .width = width, .height = height};
+            memset(out, 255, (size_t)width * height);
+            if (sof == 0xc2)
+                ok = jpegdec_gray_file(file, (int)st.st_size, source_w, source_h, width, height, true,
+                    jpeg_file_collect, &plane, &plane.source_w, &plane.source_h) != 0;
+            else ok = jpeg_baseline_file(file, source_w, source_h, width, height, &plane);
+            ok = ok && plane.pixels >= (size_t)width * height;
+        }
+    }
+    fclose(file);
+    return ok;
 }

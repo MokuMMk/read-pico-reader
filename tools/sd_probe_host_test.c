@@ -13,7 +13,7 @@
 #include "freertos/task.h"
 
 static bool test_present;
-static int mount_calls, unmount_calls;
+static int mount_calls, unmount_calls, test_fail_above_khz;
 static sdmmc_card_t test_card = {
     .cid.name = "TEST64G", .csd.capacity = 1024, .csd.sector_size = 512,
 };
@@ -39,6 +39,8 @@ esp_err_t esp_vfs_fat_sdmmc_mount(const char* path, const sdmmc_host_t* host,
     (void)path; (void)host; (void)slot; (void)config;
     ++mount_calls;
     assert(test_present);
+    assert(!config->format_if_mount_failed);
+    if(test_fail_above_khz && host->max_freq_khz > test_fail_above_khz){*out=NULL;return ESP_ERR_TIMEOUT;}
     *out = &test_card;
     return ESP_OK;
 }
@@ -79,6 +81,12 @@ int main(void) {
     assert(read_pico_sd_remount() == ESP_ERR_NOT_FINISHED);
     assert(read_pico_sd_get_info(&info) == ESP_OK);
     assert(info.mounted && mount_calls == 2 && unmount_calls == 1);
+    test_card.csd.capacity = 536870912u; // 256 GiB / 512 byte sectors, exceeds 32-bit byte range.
+    test_fail_above_khz=10000;
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    assert(read_pico_sd_get_info(&info)==ESP_OK&&info.mounted);
+    assert(info.capacity_bytes==256ull*1024*1024*1024);
+    assert(mount_calls==5);
     puts("sd_probe: empty boot, insertion, removal and explicit remount passed");
     return 0;
 }

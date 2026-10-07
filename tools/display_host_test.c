@@ -13,6 +13,8 @@
 #include "display.h"
 #include "app_config.h"
 #include "e0470_epaper_waveform.h"
+int epd_rotated_display_width(void) { return 684; }
+int epd_rotated_display_height(void) { return 1216; }
 
 #define FB_BYTES 128
 const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_GRAY8_WAVEFORM = {2}, E0470_FULL_WAVEFORM = {3};

@@ -36,8 +36,27 @@ void book_layout_set_images_visible(bool visible);
 /// EPUB 章节首页预留标题区并跳过已经在题头显示的前置标题块；每章重排前调用。
 /// Reserve a first-page chapter heading and skip heading blocks already shown there; call before each chapter layout.
 void book_layout_set_chapter_lead(size_t skip_bytes, unsigned height_px);
-/// 返回该页的 EPUB 图片序号；文字页为 -1。/ Return an EPUB image index for this page, or -1 for text.
+/// 查询插图尺寸；先用块表的缓存尺寸，无尺寸时回调，失败保留整页图片槽。
+/// Query dimensions after consulting block metadata; failure reserves a full-page image slot.
+typedef bool (*book_layout_image_dims_fn)(void* ctx, int image, int* width, int* height);
+/// 注册尺寸回调；传 NULL 取消。排版不持有它，调用方负责生命周期。
+/// Register the dimensions callback; NULL clears it. Layout borrows it, the caller owns it.
+void book_layout_set_image_dims(book_layout_image_dims_fn fn, void* ctx);
+
+/// 本页插图张数；越界返回 0。
+/// Number of images placed on this page; 0 when out of range.
+int book_layout_page_image_count(size_t page);
+/// 取本页第 i 张图：序号、页内 y、显示宽高。越界返回 false。
+/// Image i of this page: index, y within the page, and display width/height.
+bool book_layout_page_image_at(size_t page, int i, int* image, int* y, int* width, int* height);
+
+/// 纯插图页的序号，混排或文字页为 -1；关闭图片后保留纯图章跳过标记。
+/// Image index for an image-only page, -1 for mixed/text pages; hidden image-only chapters retain a skip marker.
 int book_layout_page_image(size_t page);
+/// 第一张图片的屏幕坐标，兼容旧调用方。/ First image screen coordinates for legacy callers.
+bool book_layout_page_image_rect(size_t page, EpdRect *area);
+/// 布局代次，重排或释放后改变，用于使页内位图缓存失效。/ Layout generation changes after rebuild/free, invalidating page bitmap caches.
+uint32_t book_layout_generation(void);
 /// 释放页表，不释放原文。/ Free layout storage, never the borrowed text.
 void book_layout_free(void);
 /// 返回页数；未建立布局时为零。/ Return page count, zero without a layout.

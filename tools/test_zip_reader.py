@@ -51,10 +51,12 @@ def main():
         for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
             for data in (b"", b"hello", payload, bytes(range(256)) * 100, os.urandom(128 * 1024)):
                 run("read", archive(data, method), expected=data)
+                run("prefix", archive(data, method), expected=data)
         run("read", archive(payload, stream=True), expected=payload)
         run("read", archive(payload, comment=b"x" * 65535), expected=payload)
         run("read", archive(b"x" * (8 * 1024 * 1024)), expected=b"x" * (8 * 1024 * 1024))
         run("reject-extract", archive(b"x" * (8 * 1024 * 1024 + 1)))
+        run("prefix", archive(b"x" * (8 * 1024 * 1024 + 1)), expected=b"x" * 257)
         good = archive(payload)
         cd = good.index(b"PK\x01\x02")
         eocd = good.rindex(b"PK\x05\x06")

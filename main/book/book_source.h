@@ -50,3 +50,5 @@ uint32_t book_total_bytes(void);
 uint32_t book_chapter_byte_offset(size_t i);
 /// 当前类型；关闭时默认 TXT。/ Current kind, defaulting to TXT when closed.
 book_kind_t book_kind(void);
+
+esp_err_t book_chapter_image_dimensions(size_t chapter, const char *src, unsigned *width, unsigned *height);

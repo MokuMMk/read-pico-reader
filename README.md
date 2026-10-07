@@ -43,9 +43,17 @@ TXT books and EPUB books without a valid embedded cover receive a deterministic 
 
 In Reading settings → Typography, first-line indent can be set to 0, 1, 2, or 3 characters (2 by default). Body text is centered by whole-character columns to balance the side margins, and common Chinese punctuation is kept away from prohibited line starts and ends.
 
+Horizontal swipes turn reading pages in either tap-area mode. With vertical tap areas selected, vertical swipes also turn pages. Continuous punctuation groups stay together at line boundaries. Small JPG/PNG illustrations may share a page with surrounding text; large illustrations and image-only chapters keep their own pages.
+
+**Settings → Reading & device → Automatic lock** offers 1, 5, or 10 minutes of inactivity, or Off (default). Touch and button input restart the timer. Transfers and upgrades pause it. Automatic locking saves the current reading state and uses the existing light-sleep/deep-sleep lock behavior. This choice is included in settings backups.
+
+TF-card JPG/PNG files can be up to **50 MiB**, with source dimensions up to 8,192 pixels per side. They are read as streams rather than loaded entirely into memory; decoded output stays within one screen. Progressive JPEG uses the existing reduced-resolution DC decoder, and interlaced PNG remains unsupported. These TF-file limits do not change the EPUB image-resource limit below.
+
 To back up personal settings, open **Settings → Save & restore → Save to TF card**. The device writes `Pico-settings.backup` to the TF-card root. Put that file back at the root and choose **Restore from TF card** to recover fonts, typography, display and lock settings, profile and status signature, saved Wi-Fi name and password, book progress, reading time, bookmarks, favorites, custom book names, and shelf removals. Book, font, avatar, and wallpaper files remain on the TF card. The backup contains the Wi-Fi password in plaintext, so keep the TF card private. Missing external fonts and images fall back to built-in options. Older backups remain readable and leave the current network configuration unchanged.
 
 EPUB metadata is allocated for the actual book size. ZIP entries and chapters each have an 8,192-item limit; covers, images, and navigation also consume ZIP entries. A book may exceed 32 MB overall, while each XHTML resource remains limited to 4 MB and each decompressed image to 8 MB; available device memory and standard ZIP limits also apply.
+
+EPUB body chapters begin on a new page, keeping the title with the opening text when it fits. This also applies to recognized chapter headings within one XHTML resource. TOC links, introductory information and copyright metadata are excluded from body chapter detection; ordinary subheadings continue on the current page. Detection uses authored navigation, standalone numbered headings and body structure; books without reliable markers may still need individual compatibility fixes.
 
 ## Licenses and credit
 
@@ -60,3 +68,5 @@ File management groups its launchers as WiFi/hotspot, USB and WeRead transfer. W
 ### 微读书架多选下载
 
 在微信书架点「多选」，可跨页选择书籍或「全选本页」，再点「下载 N 本」进入批量下载页。每次只下载一本；取消、离页或锁屏会停止队列，已完成书籍保留。封面始终下载，正文插图可选；封面获取失败会提示重试。文件名使用微信书架的书名，仅替换文件系统禁用字符；每批最多选择 1024 本。单本详情返回微信书架，微信书架返回文件管理。
+
+Shake-to-turn is off by default and enabled in reader Font Settings. A horizontal left/right impulse turns to the previous/next page. Slow tilts, other axes, touch and rebounds are filtered; wait through an 800 ms cooldown and rest before the next gesture. Direction and sensitivity still need device validation. The global refresh test option is removed and ignored in older configurations.

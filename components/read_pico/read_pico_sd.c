@@ -127,17 +127,20 @@ static esp_err_t mount_card(bool format_if_failed) {
         .allocation_unit_size = 16 * 1024,
     };
 
-    esp_err_t err = esp_vfs_fat_sdmmc_mount(
-        SD_MOUNT_POINT, &host, &slot, &mount_config, &card
-    );
-    // 上电后首次时钟协商常超时，等卡就绪再挂一次。
-    // / First clock negotiate after power-up often times out; wait and remount.
-    if (err == ESP_ERR_TIMEOUT) {
+    // 高容量卡对高速协商及信号裕量更敏感；失败后降速重试，绝不在探测时格式化。
+    // Retry high-capacity cards at slower bus clocks; probing never formats media.
+    const int clocks[] = {SDMMC_FREQ_HIGHSPEED, 20000, 10000};
+    esp_err_t err = ESP_FAIL;
+    for (size_t attempt = 0; attempt < sizeof(clocks) / sizeof(clocks[0]); ++attempt) {
+        if (!read_pico_sd_present()) return ESP_ERR_NOT_FOUND;
+        host.max_freq_khz = clocks[attempt];
         card = NULL;
-        vTaskDelay(pdMS_TO_TICKS(200));
-        err = esp_vfs_fat_sdmmc_mount(
-            SD_MOUNT_POINT, &host, &slot, &mount_config, &card
-        );
+        err = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT, &host, &slot, &mount_config, &card);
+        if (err == ESP_OK) break;
+        if (err == ESP_ERR_NO_MEM || err == ESP_ERR_INVALID_ARG || err == ESP_ERR_INVALID_STATE) break;
+        ESP_LOGW(TAG, "SD probe at %d kHz failed: %s; retry slower", clocks[attempt], esp_err_to_name(err));
+        card = NULL;
+        vTaskDelay(pdMS_TO_TICKS(250));
     }
     if (err != ESP_OK) {
         card = NULL;

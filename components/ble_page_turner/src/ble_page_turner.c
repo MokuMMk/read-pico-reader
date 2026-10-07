@@ -297,8 +297,16 @@ static void bindings_load(const char *addr) {
 
 /* ---- 环形缓冲操作 / Ring operations ---- */
 
+static uint32_t s_input_serial;
+uint32_t ble_pt_input_serial(void) {
+    portENTER_CRITICAL(&s_ring_lock);
+    uint32_t serial = s_input_serial;
+    portEXIT_CRITICAL(&s_ring_lock);
+    return serial;
+}
 static void key_push(const ble_pt_event_t *ev) {
     portENTER_CRITICAL(&s_ring_lock);
+    ++s_input_serial;
     const uint8_t next = (uint8_t)((s_keys.head + 1) % KEY_RING_LEN);
     if (next != s_keys.tail) {
         s_keys.items[s_keys.head] = *ev;
@@ -313,6 +321,7 @@ static void key_push(const ble_pt_event_t *ev) {
 static void raw_push(bool pressed, uint8_t report_id, uint8_t byte_index, uint8_t value,
                      bool was_rest) {
     portENTER_CRITICAL(&s_ring_lock);
+    if (pressed) ++s_input_serial;
     const uint8_t used = (uint8_t)((s_raws.head - s_raws.tail + RAW_RING_LEN) % RAW_RING_LEN);
     const uint8_t keep = pressed ? 1 : 0;  // 按下要给自己的释放留位 / a press reserves room for its release
     if ((uint8_t)(RAW_RING_LEN - 1 - used) > keep) {

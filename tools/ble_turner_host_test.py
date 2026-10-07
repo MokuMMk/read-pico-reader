@@ -72,7 +72,7 @@ static void *s_host_task;
 static char s_failure[128];
 static bool s_has_keyboard_page=true,s_rest_known;
 static uint8_t s_preferred_byte=2,s_held_usage,s_held_mods;
-static uint32_t s_held_since,s_last_repeat;
+static uint32_t s_held_since,s_last_repeat,s_input_serial;
 static uint8_t s_rest[FRAME_MAX],s_last[FRAME_MAX];
 static size_t s_frame_len;
 static int s_ring_lock;
@@ -117,12 +117,13 @@ static esp_err_t nvs_commit(nvs_handle_t h){assert(h==1);return binding_error==3
 static void nvs_close(nvs_handle_t h){assert(h==1);binding_handles--;}
 
 '''
-for name in ('lifecycle_take','lifecycle_give','key_push','raw_push','extract_primary_code',
+for name in ('lifecycle_take','lifecycle_give','ble_pt_input_serial','key_push','raw_push','extract_primary_code',
              'usage_to_special','emit_usage','ingest_report','ble_pt_pop_key','ble_pt_pop_raw',
              'ble_pt_raw_code','ble_pt_bind','start_locked','stop_locked','ble_pt_start','ble_pt_stop',
              'ble_pt_network_acquire','ble_pt_network_release'):
     unit += '\n' + function(BLE, name)
 unit += '\n' + function(SETTINGS, 'ble_receive_feedback')
+unit += '\n' + function(SETTINGS, 'format_bound_key')
 unit += r'''
 static void reset_input(void){
  memset(&s_keys,0,sizeof(s_keys));memset(&s_raws,0,sizeof(s_raws));
@@ -133,6 +134,13 @@ static void reset_input(void){
 }
 static void report(int len,int id,int key){uint8_t data[9]={0};data[len==9?0:8]=(uint8_t)id;data[len==9?3:2]=(uint8_t)key;ingest_report(data,(size_t)len);}
 int main(void){
+ char label[48];
+ format_bound_key(0x88,label,sizeof(label));assert(!strcmp(label,"0x88"));
+ format_bound_key(0x288,label,sizeof(label));assert(!strcmp(label,"0x88 b2"));
+ format_bound_key(0x10288,label,sizeof(label));assert(!strcmp(label,"0x88 r1 b2"));
+ format_bound_key(0xffffff,label,sizeof(label));assert(!strcmp(label,"0xFF r255 b255"));
+ char tiny[3];format_bound_key(0x10288,tiny,sizeof(tiny));assert(tiny[2]==0);
+ char sentinel='x';format_bound_key(0x88,&sentinel,0);assert(sentinel=='x');
  // 首次按下、重复帧、释放和报告 ID 不需要先点屏幕。/ First presses, duplicate frames, releases and report IDs need no touch.
  for(int len=8;len<=9;len++){
   reset_input();s_ble_learning=1;report(len,len==9?7:0,0x4b);
@@ -140,6 +148,7 @@ int main(void){
   saved_code=s_bindings.codes[0];saved_action=BLE_PT_ACTION_PREV;
   assert(!s_ble_learning && s_ble_scroll==0 && saved_action==BLE_PT_ACTION_PREV);
   assert(saved_code==((uint32_t)0x4b | (uint32_t)(len==9?3:2)<<8 | (uint32_t)(len==9?7:0)<<16));
+  format_bound_key(saved_code,label,sizeof(label));assert(!strcmp(label,len==9?"0x4B r7 b3":"0x4B b2"));
   assert(strstr(s_ble_feedback,"识别成功")&&strstr(s_ble_feedback,"上一页"));
   report(len,len==9?7:0,0x4b);assert(!ble_receive_feedback());
   report(len,len==9?7:0,0);assert(!s_held_usage && !ble_receive_feedback());

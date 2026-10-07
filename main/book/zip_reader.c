@@ -205,28 +205,29 @@ size_t zip_entry_size(const zip_reader_t* z, int index) {
     return z && index >= 0 && index < z->count ? z->entries[index].unpacked : 0;
 }
 
-esp_err_t zip_extract(zip_reader_t* z, int index, void* dst, size_t cap) {
+static esp_err_t extract_impl(zip_reader_t* z, int index, void* dst, size_t cap, bool prefix) {
     if (!z || index < 0 || index >= z->count) return ESP_ERR_INVALID_ARG;
     const zip_entry_t* entry = &z->entries[index];
-    if (entry->unpacked > ZIP_OUTPUT_MAX || entry->packed > ZIP_INPUT_MAX ||
-        cap < entry->unpacked || (!dst && entry->unpacked)) return ESP_ERR_INVALID_SIZE;
+    if ((!prefix && (entry->unpacked > ZIP_OUTPUT_MAX || entry->packed > ZIP_INPUT_MAX)) ||
+        (!prefix && cap < entry->unpacked) || (prefix && (!cap || cap > 65536)) || (!dst && entry->unpacked)) return ESP_ERR_INVALID_SIZE;
     uint8_t h[30];
     if (!read_at(z, entry->offset, h, sizeof(h)) || u32(h) != UINT32_C(0x04034b50) ||
         u16(h + 6) != entry->flags || u16(h + 8) != entry->method ||
         u32(h + 18) == UINT32_MAX || u32(h + 22) == UINT32_MAX) return ESP_ERR_INVALID_SIZE;
     uint16_t name_len = u16(h + 26), extra_len = u16(h + 28);
-    uint32_t prefix = 30U + name_len + extra_len;
-    if (name_len != strlen(entry->name) || prefix > z->directory - entry->offset ||
-        entry->packed > z->directory - entry->offset - prefix) return ESP_ERR_INVALID_SIZE;
+    uint32_t header_size = 30U + name_len + extra_len;
+    if (name_len != strlen(entry->name) || header_size > z->directory - entry->offset ||
+        entry->packed > z->directory - entry->offset - header_size) return ESP_ERR_INVALID_SIZE;
     if (!(entry->flags & 8) && (u32(h + 14) != entry->crc || u32(h + 18) != entry->packed || u32(h + 22) != entry->unpacked)) return ESP_ERR_INVALID_SIZE;
     uint8_t name[NAME_MAX_BYTES];
     if (!read_at(z, entry->offset + 30, name, name_len) || memcmp(name, entry->name, name_len) ||
         !extras_valid(z, entry->offset + 30 + name_len, extra_len)) return ESP_ERR_INVALID_SIZE;
-    uint32_t data_pos = entry->offset + prefix;
+    uint32_t data_pos = entry->offset + header_size;
+    size_t target = prefix && cap < entry->unpacked ? cap : entry->unpacked;
     uint8_t empty_output;
     uint8_t* output = dst ? dst : &empty_output;
     if (entry->method == 0) {
-        if (!read_at(z, data_pos, output, entry->unpacked)) return ESP_FAIL;
+        if (!read_at(z, data_pos, output, target)) return ESP_FAIL;
     } else {
         uint8_t* input = heap_caps_malloc(INFLATE_CHUNK, PSRAM);
         tinfl_decompressor* state = heap_caps_malloc(sizeof(*state), PSRAM);
@@ -243,13 +244,14 @@ esp_err_t zip_extract(zip_reader_t* z, int index, void* dst, size_t cap) {
                     consumed = 0;
                 }
                 size_t in_size = buffered - consumed;
-                size_t out_size = entry->unpacked - produced;
+                size_t out_size = target - produced;
                 tinfl_status status = tinfl_decompress(state, input + consumed, &in_size,
                     output, output + produced, &out_size,
                     TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF |
                     (remaining ? TINFL_FLAG_HAS_MORE_INPUT : 0));
                 consumed += in_size;
                 produced += out_size;
+                if (prefix && produced == target && status >= 0) { ok = true; break; }
                 if (status == TINFL_STATUS_DONE) {
                     ok = !remaining && consumed == buffered && produced == entry->unpacked;
                     break;
@@ -265,5 +267,9 @@ esp_err_t zip_extract(zip_reader_t* z, int index, void* dst, size_t cap) {
         free(input); free(state);
         if (!ok) return ESP_ERR_INVALID_SIZE;
     }
+    if (prefix && target < entry->unpacked) return ESP_OK;
     return zip_crc32(output, entry->unpacked) == entry->crc ? ESP_OK : ESP_ERR_INVALID_CRC;
 }
+
+esp_err_t zip_extract(zip_reader_t *z, int index, void *dst, size_t cap) { return extract_impl(z, index, dst, cap, false); }
+esp_err_t zip_extract_prefix(zip_reader_t *z, int index, void *dst, size_t cap) { return extract_impl(z, index, dst, cap, true); }

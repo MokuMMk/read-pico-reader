@@ -34,3 +34,7 @@ size_t zip_entry_size(const zip_reader_t* reader, int index);
 /// 解压并校验 CRC；调用方持有 dst，不补 NUL。失败后缓冲内容未定义。
 /// Extract and verify CRC; caller owns dst, with no NUL appended. Buffer contents are undefined on failure.
 esp_err_t zip_extract(zip_reader_t* reader, int index, void* dst, size_t cap);
+
+/// 只读取资源前缀（最多 64 KiB），仅供尺寸探测，不代替完整提取的 CRC 校验。
+/// Read at most 64 KiB for advisory dimensions; full extraction still verifies CRC.
+esp_err_t zip_extract_prefix(zip_reader_t *reader, int index, void *dst, size_t cap);

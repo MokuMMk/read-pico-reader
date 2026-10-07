@@ -26,7 +26,7 @@
 #include "ui_nav.h"
 
 #define IMAGE_MAX 96
-#define IMAGE_BYTES_MAX (2u * 1024u * 1024u)
+#define IMAGE_BYTES_MAX BOOK_IMAGE_FILE_MAX
 #define IMAGE_ROWS 8
 extern const uint8_t display_test_png_start[] asm("_binary_display_test_png_start");
 extern const uint8_t display_test_png_end[] asm("_binary_display_test_png_end");
@@ -130,31 +130,24 @@ static bool load_image(int index) {
     const image_item_t *item = &s_items[index];
     const uint8_t *data = display_test_png_start;
     size_t size = (size_t)(display_test_png_end - display_test_png_start);
-    uint8_t *file_data = NULL;
-    if (item->path[0]) {
+    unsigned width = 0, height = 0;
+    bool from_file = item->path[0] != 0;
+    if (from_file) {
         struct stat st;
-        if (stat(item->path, &st) || st.st_size <= 0 || st.st_size > IMAGE_BYTES_MAX) {
-            strcpy(s_message, "图片超过 2 MB 或无法读取"); return false;
+        if (stat(item->path, &st) || st.st_size <= 0 || (uint64_t)st.st_size > IMAGE_BYTES_MAX) {
+            strcpy(s_message, "图片超过 50 MB 或无法读取"); return false;
         }
-        FILE *f = fopen(item->path, "rb");
-        if (!f) { strcpy(s_message, "图片无法打开"); return false; }
-        file_data = heap_caps_malloc((size_t)st.st_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        bool ok = file_data && fread(file_data, 1, (size_t)st.st_size, f) == (size_t)st.st_size;
-        fclose(f);
-        if (!ok) { free(file_data); strcpy(s_message, "读取图片失败或内存不足"); return false; }
-        data = file_data; size = (size_t)st.st_size;
     }
-    unsigned width, height;
-    if (!book_image_dimensions(data, size, item->png, &width, &height) || !width || !height) {
-        free(file_data); strcpy(s_message, "图片格式不支持"); return false;
-    }
+    bool dimensions_ok = from_file ? book_image_file_dimensions(item->path, item->png, &width, &height)
+                                  : book_image_dimensions(data, size, item->png, &width, &height);
+    if (!dimensions_ok || !width || !height) { strcpy(s_message, "图片格式不支持"); return false; }
     unsigned fit_w = UI_LOCK_WIDTH, fit_h = (uint64_t)height * fit_w / width;
     if (fit_h > UI_LOCK_HEIGHT) { fit_h = UI_LOCK_HEIGHT; fit_w = (uint64_t)width * fit_h / height; }
     if (!fit_w) fit_w = 1;
     if (!fit_h) fit_h = 1;
     s_gray = heap_caps_malloc((size_t)fit_w * fit_h, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    bool ok = s_gray && book_image_grayscale(data, size, item->png, fit_w, fit_h, s_gray);
-    free(file_data);
+    bool ok = s_gray && (from_file ? book_image_file_grayscale(item->path, item->png, fit_w, fit_h, s_gray)
+                                  : book_image_grayscale(data, size, item->png, fit_w, fit_h, s_gray));
     if (!ok) { free(s_gray); s_gray = NULL; strcpy(s_message, "解码失败或内存不足"); return false; }
     s_width = fit_w; s_height = fit_h; s_selected = index; s_viewing = true;
     s_message[0] = 0;

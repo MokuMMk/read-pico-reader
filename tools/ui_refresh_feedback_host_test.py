@@ -65,6 +65,8 @@ static EpdRect pushed_area;
 enum {DIFF=1,AREA,FULL,WHOLE,FAST,WATER,READER};
 static int shelf_rows(void){return 9;}
 static EpdRect row_rect(int row){return (EpdRect){42+(row%3)*210,220+(row/3)*272,176,240};}
+static const char *s_text;
+static void prepare_inline_image(void){}
 static void render(app_ctx_t *ctx,uint8_t *fb){(void)ctx;(void)fb;}
 static void prepare_covers(app_ctx_t *ctx){(void)ctx;}
 static bool kick_prep(void){return false;}

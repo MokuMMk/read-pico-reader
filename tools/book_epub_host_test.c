@@ -19,6 +19,34 @@ int main(int argc, char **argv) {
             printf("epub rejection passed: %s\n", argv[a]); continue;
         }
         assert(book_epub_open(argv[a], &book) == ESP_OK && book);
+        if (strstr(argv[a], "good_chapter_breaks_")) {
+            bool auxiliary = strstr(argv[a], "auxiliary") != NULL;
+            bool named = strstr(argv[a], "named") != NULL;
+            assert(book_epub_chapter_count(book) == 1);
+            assert(book_epub_navigation_count(book) == 2);
+            char title[160];
+            assert(book_epub_navigation_title(book, 0, title, sizeof(title)) == ESP_OK);
+            assert(!strcmp(title, named ? "出发" : "第一章 起点"));
+            html_text_t text = {0}; size_t offset = 0;
+            assert(book_epub_load_anchor(book, 0, "two", &offset, &text) == ESP_OK);
+            size_t marked = 0;
+            for (size_t i = 0; i < text.count; ++i) {
+                const blk_t *block = &text.blocks[i];
+                if (block->chapter_start) {
+                    assert(!block->linked && !block->auxiliary && block->heading_level == 1);
+                    const char *expected = marked ? (named ? "归来" : "第2章 第二站") : (named ? "出发" : "第一章 起点");
+                    assert(block->len == strlen(expected));
+                    assert(!memcmp(text.utf8 + block->offset, expected, block->len));
+                    if (marked) assert(offset == block->offset);
+                    ++marked;
+                }
+            }
+            assert(marked == (auxiliary ? 0u : 2u));
+            html_text_free(&text);
+            book_epub_close(book);
+            printf("epub chapter boundary fixture passed: %s\n", argv[a]);
+            continue;
+        }
         if (strstr(argv[a], "good_dual_samefile_partial_ncx")) {
             assert(book_epub_chapter_count(book) == 1);
             assert(book_epub_navigation_count(book) == 2);

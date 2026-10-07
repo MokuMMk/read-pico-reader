@@ -237,6 +237,7 @@ static int home_title_px(const char *title, int width) {
 }
 
 static void draw_cover(uint8_t *fb, const home_book_t *item, EpdRect box) {
+
     epd_fill_rect(box, UI_GRAY_LIGHT, fb);
     if (item->cover) {
         // 封面缓冲固定 176×240，而卡片未必同比例；按长边铺满再居中裁剪，避免拉伸变形。

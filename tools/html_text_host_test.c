@@ -27,6 +27,21 @@ int main(void) {
     html_text_t t = parse("<HEAD><title>隐</title><style>x</style></HEAD><div><div></div><H1>标题 <i>甲</i></H1><p>A  B\n C</p><div></div><p>乙<br/>丙</p></div>", "标题 甲\nA B C\n乙\n丙");
     assert(t.count == 4 && t.blocks[0].heading && !t.blocks[1].heading);
     html_text_free(&t);
+    t = parse("<body><nav><p><a href='#one'>第一章 起点</a></p></nav>"
+              "<div role='doc-toc'><h2>第二章 继续</h2></div>"
+              "<section epub:type='copyright'><h1>作者资料</h1></section>"
+              "<h1 id='one'><a id='anchor'/><span>第一章 起点</span></h1><p>真正正文</p></body>",
+              "第一章 起点\n第二章 继续\n作者资料\n第一章 起点\n真正正文");
+    assert(t.count == 5 && t.blocks[0].linked && t.blocks[0].auxiliary);
+    assert(t.blocks[1].heading_level == 2 && t.blocks[1].auxiliary);
+    assert(t.blocks[2].auxiliary && t.blocks[2].heading_level == 1);
+    assert(!t.blocks[3].linked && !t.blocks[3].auxiliary && t.blocks[3].heading_level == 1);
+    assert(!t.blocks[4].heading_level && !t.blocks[4].auxiliary);
+    html_text_free(&t);
+    t = parse("<h1>第一章 <a href='#note'>注</a> 起点</h1><p>正文<a href='#note'>注</a>继续</p>",
+              "第一章 注 起点\n正文注继续");
+    assert(!t.blocks[0].linked && !t.blocks[1].linked);
+    html_text_free(&t);
     t = parse("a<script>if(a < b){x='<p>fake</p>'}</script><style>p{content:'<x>'}</style><!-- hidden > -->b", "ab");
     html_text_free(&t);
     t = parse("<head><script>var x='</head>';</script><title>hidden</title></head><p>visible</p>", "visible");

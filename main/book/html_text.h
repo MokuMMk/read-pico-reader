@@ -21,11 +21,16 @@ typedef struct {
     size_t offset; ///< UTF-8 字节起点 / UTF-8 byte start
     size_t len; ///< 不含段间换行的字节数 / Bytes excluding the block separator
     bool heading; ///< h1–h3 标题块 / h1-h3 heading block
+    bool chapter_start; ///< 已核实的正文章首，另起一页 / Verified body chapter start, begins a new page
+    bool linked; ///< 全段为链接文字，不能仅凭书名当正文题头 / Entire block is linked text, not a body heading by label alone
+    bool auxiliary; ///< 目录及书前信息容器内的文字 / Text inside navigation or front-matter containers
     int image; ///< 图片序号，文字为 -1 / Image index, -1 for text
+    uint32_t image_width, image_height; ///< 有界头部探测，未知为零 / Probed dimensions, zero when unknown
     uint8_t align; ///< 0 左/两端，1 居中，2 右 / 0 left/justify, 1 center, 2 right
     uint8_t indent_percent; ///< 首行缩进，相对字号百分比 / First-line indent as a percentage of font size
     uint8_t margin_before_percent; ///< 段前距，相对字号百分比 / Leading margin as a percentage of font size
     uint8_t margin_after_percent; ///< 段后距，相对字号百分比 / Trailing margin as a percentage of font size
+    uint8_t heading_level; ///< 原文 h1–h6 层级，普通文字为零 / Original h1-h6 level, zero for ordinary text
 } blk_t;
 
 typedef struct {

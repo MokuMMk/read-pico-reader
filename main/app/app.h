@@ -76,6 +76,9 @@ typedef struct {
     /// 本轮已经被别的分支处理掉了，页内的跟随逻辑要跳过这一轮。
     /// / Another branch already handled this tick; skip in-page tracking.
     bool consumed;
+    /// 页面识别到输入时置位，主循环消费后清除，避免晃动翻页被当成空闲。
+    /// Set for recognized input; the loop consumes and clears it so shake turns reset idle time.
+    bool user_activity;
     /// 页面想跳到别的页时填这里，主循环会在本轮末尾切过去。
     /// / Request a page switch; the loop applies it at the end of the tick.
     const struct app_desc_s* request_app;

@@ -151,6 +151,8 @@ void ble_pt_network_release(void);
 /// 主循环每次迭代泵一次：驱动自动重连与按键自动重复。很轻，不阻塞。
 /// Pump once per main-loop iteration: drives auto-reconnect and key auto-repeat. Cheap.
 void ble_pt_poll(void);
+/// 用户按键序号；只观察，不消费队列。/ Observe user input without consuming key events.
+uint32_t ble_pt_input_serial(void);
 
 /* ---- 扫描 / Discovery ---- */
 

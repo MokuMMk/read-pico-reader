@@ -49,6 +49,11 @@ a generated cover. JPEGDEC decodes progressive JPEG from the DC scan at 1/8 scal
 
 ## 升级上游时 / When updating upstream
 
+`src/jpegdec_shim.cpp` 还提供 `FILE*` 回调包装，渐进式 TF 图片按块读取和输出，
+不把整个压缩文件读入内存。基线 TF JPEG 使用 ROM TJpgDec 的流式接口。
+The C wrapper also accepts `FILE*` callbacks for streaming progressive TF images;
+baseline TF JPEG uses the ROM TJpgDec streaming interface.
+
 用新版本覆盖 `src/`，重新套用上面三项改动，并保持 `CMakeLists.txt` 只注册可移植路径。
 Re-copy `src/`, re-apply the three changes above, and keep `CMakeLists.txt` on the portable
 path only.

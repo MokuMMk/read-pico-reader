@@ -11,7 +11,11 @@
 #include <string.h>
 #include "book_layout.h"
 #include "ttf_font.h"
+int test_heap_fail_after = -1;
 static char drawn[20000];
+static bool capture_lines;
+static char captured[128][512];
+static unsigned captured_count;
 static size_t measured_codepoints;
 static size_t measure_calls;
 static int first_draw_px, last_draw_px, first_draw_x, last_draw_x;
@@ -19,6 +23,13 @@ static int last_tracking_px;
 static int fitted_target;
 static int test_cjk_advance;
 static int test_opener_bearing;
+static int image_probe_count;
+static bool probe_image(void *ctx, int image, int *width, int *height) {
+    assert(ctx == &image_probe_count && image >= 0);
+    ++image_probe_count;
+    *width = 80; *height = 20;
+    return true;
+}
 int test_guide_segments;
 int test_guide_first_y;
 int test_guide_height;
@@ -47,6 +58,7 @@ void ttf_draw_text_px(uint8_t* fb, int x, int y, int px, const char* text,
     last_draw_x = x;
     assert(strlen(drawn) + strlen(text) < sizeof(drawn));
     strcat(drawn, text);
+    if(capture_lines){assert(captured_count<128&&strlen(text)<512);strcpy(captured[captured_count++],text);}
 }
 void ttf_draw_text_px_spaced(uint8_t* fb, int x, int y, int px, const char* text,
                              int tracking_px, uint8_t fg, uint8_t bg) {
@@ -138,6 +150,27 @@ int main(void) {
     book_layout_draw_page(&fb, 0, r, 10);
     book_layout_draw_page(&fb, 1, r, 10);
     assert(!strcmp(drawn, "Titlebody") && first_draw_px == 18 && last_draw_px == 10);
+    const char chapters[] = "One\nalpha\nTwo\nbeta";
+    blk_t chapter_blocks[] = {
+        {.offset = 0, .len = 3, .heading = true, .chapter_start = true, .image = -1},
+        {.offset = 4, .len = 5, .image = -1},
+        {.offset = 10, .len = 3, .heading = true, .chapter_start = true, .image = -1},
+        {.offset = 14, .len = 4, .image = -1},
+    };
+    EpdRect chapter_rect = {0, 0, 300, 120};
+    assert(book_layout_build_blocks(chapters, strlen(chapters), chapter_blocks, 4, chapter_rect, 10));
+    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(0) == 0);
+    assert(book_layout_page_start_offset(1) == 10 && book_layout_page_for_offset(9) == 0);
+    assert(book_layout_page_for_offset(10) == 1 && book_layout_page_for_offset(14) == 1);
+    drawn[0] = 0; book_layout_draw_page(&fb, 0, chapter_rect, 10);
+    assert(!strcmp(drawn, "Onealpha"));
+    drawn[0] = 0; book_layout_draw_page(&fb, 1, chapter_rect, 10);
+    assert(!strcmp(drawn, "Twobeta"));
+    book_layout_set_chapter_lead(4, 30);
+    assert(book_layout_build_blocks(chapters, strlen(chapters), chapter_blocks, 4, chapter_rect, 10));
+    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(0) == 4);
+    assert(book_layout_page_start_offset(1) == 10);
+    book_layout_set_chapter_lead(0, 0);
     const char illustrated[] = "IMG\nAA\nIMG\nBB";
     blk_t illustrated_blocks[] = {
         {.offset = 0, .len = 3, .image = 0},
@@ -373,6 +406,99 @@ int main(void) {
     drawn[0] = 0;
     book_layout_draw_page(&fb, 1, r, 10);
     assert(first_center_x == first_draw_x);
+    const char *punct_cases[]={"甲乙丙丁：“戊己”庚辛", "甲乙丙丁……戊己庚辛", "甲乙丙丁——戊己庚辛", "甲乙丙丁”，戊己庚辛", "甲乙丙丁：‘戊己’庚辛"};
+    const char *groups[]={"：“", "……", "——", "”，", "：‘"};
+    book_layout_set_first_line_indent(0);
+    for(unsigned c=0;c<5;++c)for(int w=20;w<=80;w+=10)for(int tracking=-4;tracking<=4;tracking+=2){
+        EpdRect box={40,0,w,30};
+        book_layout_set_typography(tracking);capture_lines=true;captured_count=0;drawn[0]=0;
+        assert(book_layout_build(punct_cases[c],strlen(punct_cases[c]),box,10));
+        for(size_t page=0;page<book_layout_page_count();++page)book_layout_draw_page(&fb,page,box,10);
+        assert(!strcmp(drawn,punct_cases[c]));
+        bool grouped=false;for(unsigned line=0;line<captured_count;++line)if(strstr(captured[line],groups[c]))grouped=true;
+        assert(grouped);capture_lines=false;
+    }
+    html_text_t composed={0};
+    const char *html="<p>甲乙丙丁</p><img src='small.png'/><p>戊己庚辛</p>";
+    assert(html_to_blocks(html,strlen(html),&composed)==ESP_OK);
+    for(size_t i=0;i<composed.count;++i)if(composed.blocks[i].image>=0){composed.blocks[i].image_width=60;composed.blocks[i].image_height=15;}
+    EpdRect mixed_box={40,20,100,100};
+    book_layout_set_typography(0);book_layout_set_spacing(150,25);book_layout_set_chapter_lead(0,0);
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
+    assert(book_layout_page_count()==1&&book_layout_page_image(0)==-1&&book_layout_page_image_count(0)==1);
+    EpdRect placed;assert(book_layout_page_image_rect(0,&placed));
+    assert(placed.width==60&&placed.height==15&&placed.y>mixed_box.y&&placed.y+placed.height<mixed_box.y+mixed_box.height);
+    drawn[0]=0;book_layout_draw_page(&fb,0,mixed_box,10);assert(!strcmp(drawn,"甲乙丙丁戊己庚辛"));
+    book_layout_set_images_visible(false);
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
+    assert(book_layout_page_count()==1&&book_layout_page_image(0)==-1&&!book_layout_page_image_rect(0,&placed));
+    book_layout_set_images_visible(true);html_text_free(&composed);
+
+    // 多图同页、比例缩小、未知尺寸与章首分页，正文前后不遗漏。
+    // Cover multiple images, aspect-fit, unknown sizes and chapter starts without losing adjacent prose.
+    const char *multi = "<p>甲</p><img src='a.png'/><img src='b.png'/><p>乙</p>";
+    assert(html_to_blocks(multi, strlen(multi), &composed) == ESP_OK);
+    for (size_t i=0;i<composed.count;++i) if (composed.blocks[i].image>=0) {
+        composed.blocks[i].image_width=60; composed.blocks[i].image_height=15;
+    }
+    uint32_t before_generation=book_layout_generation();
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
+    assert(book_layout_generation()!=before_generation);
+    assert(book_layout_page_count()==1 && book_layout_page_image_count(0)==2 && book_layout_page_image(0)==-1);
+    int index,y,w,h,first_y;
+    assert(book_layout_page_image_at(0,0,&index,&first_y,&w,&h)&&index==0&&w==60&&h==15);
+    assert(book_layout_page_image_at(0,1,&index,&y,&w,&h)&&index==1&&y==first_y+20);
+    assert(!book_layout_page_image_at(0,-1,NULL,NULL,NULL,NULL));
+    assert(!book_layout_page_image_at(0,2,NULL,NULL,NULL,NULL)&&book_layout_page_image_count(99)==0);
+    drawn[0]=0;book_layout_draw_page(&fb,0,mixed_box,10);assert(!strcmp(drawn,"甲乙"));
+    // 剩余高度不足时整张图移到下一页。/ Move a whole image when remaining height is insufficient.
+    EpdRect short_box={40,20,100,45};
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,short_box,10));
+    assert(book_layout_page_count()==2&&book_layout_page_image_count(0)==1&&book_layout_page_image_count(1)==1);
+    assert(book_layout_page_start_offset(1)==composed.blocks[2].offset);
+    assert(book_layout_page_image_at(1,0,&index,&y,&w,&h)&&index==1&&y==0);
+    drawn[0]=0;for(size_t i=0;i<2;++i)book_layout_draw_page(&fb,i,short_box,10);assert(!strcmp(drawn,"甲乙"));
+    book_layout_set_images_visible(false);
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
+    assert(book_layout_page_count()==1&&book_layout_page_image_count(0)==0);
+    drawn[0]=0;book_layout_draw_page(&fb,0,mixed_box,10);assert(!strcmp(drawn,"甲乙"));
+    book_layout_set_images_visible(true);
+    composed.blocks[3].chapter_start=true;
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
+    assert(book_layout_page_count()==2&&book_layout_page_start_offset(1)==composed.blocks[3].offset);
+    html_text_free(&composed);
+    const char *large="<img src='big.png'/>";
+    assert(html_to_blocks(large,strlen(large),&composed)==ESP_OK);
+    composed.blocks[0].image_width=1000;composed.blocks[0].image_height=2000;
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
+    assert(book_layout_page_image_at(0,0,&index,&y,&w,&h)&&w==50&&h==100&&y==0);
+    assert(book_layout_page_image(0)==0);
+    composed.blocks[0].image_width=composed.blocks[0].image_height=0;
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
+    assert(book_layout_page_image_count(0)==1&&book_layout_page_image_at(0,0,&index,&y,&w,&h)&&w==100&&h==100);
+    book_layout_set_image_dims(probe_image,&image_probe_count);
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
+    assert(image_probe_count==1&&book_layout_page_image_at(0,0,&index,&y,&w,&h)&&w==80&&h==20);
+    book_layout_set_image_dims(NULL,NULL);html_text_free(&composed);
+    char many_images[2000]="<p>甲</p>";
+    for(int i=0;i<40;++i)strcat(many_images,"<img src='small.png'/>");
+    strcat(many_images,"<p>乙</p>");
+    assert(html_to_blocks(many_images,strlen(many_images),&composed)==ESP_OK);
+    for(size_t i=0;i<composed.count;++i)if(composed.blocks[i].image>=0){composed.blocks[i].image_width=10;composed.blocks[i].image_height=1;}
+    EpdRect many_box={0,0,100,400};
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,many_box,10));
+    assert(book_layout_page_count()==1&&book_layout_page_image_count(0)==40);
+    assert(book_layout_page_image_at(0,39,&index,&y,&w,&h)&&index==39);
+    // 每一处分配失败后布局清空，可以安全重建。/ Allocation failures clear ownership and permit a clean rebuild.
+    for(int fail=0;fail<6;++fail){
+        test_heap_fail_after=fail;
+        assert(!book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,many_box,10));
+        assert(!book_layout_page_count()&&!book_layout_page_image_count(0));
+    }
+    test_heap_fail_after=-1;
+    assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,many_box,10));
+    drawn[0]=0;book_layout_draw_page(&fb,0,many_box,10);assert(!strcmp(drawn,"甲乙"));
+    html_text_free(&composed);
     book_layout_free();
     puts("book_layout_host_test: PASS");
 }

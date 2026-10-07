@@ -15,11 +15,15 @@ layout_source = Path(__file__).resolve().parents[1] / "main/book/book_layout.c"
 def function(name, path=source):
     text = path.read_text(encoding="utf-8")
     import re
+    # 注释中的引号/花括号不是 C 语法，保持位置后再匹配函数边界。
+    # Quotes/braces in comments are not C syntax; mask comments while preserving positions.
+    tokens = r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
+    scan = re.sub(tokens, lambda m: ' ' * len(m[0]) if m[0].startswith(('//', '/*')) else m[0], text)
     found = re.search(r"^(?:static )?[^\n]+\b" + name + r"\([^;{}]*?\)\s*\{", text, re.M)
     assert found, name
     start, at, depth, quote, escape = found.start(), found.end(), 1, None, False
     while depth:
-        c = text[at]
+        c = scan[at]
         if quote:
             if escape: escape = False
             elif c == "\\": escape = True
@@ -31,6 +35,7 @@ def function(name, path=source):
     return text[start:at]
 
 unit = r'''
+typedef enum { UI_GESTURE_SWIPE_L, UI_GESTURE_SWIPE_R, UI_GESTURE_SWIPE_U, UI_GESTURE_SWIPE_D, UI_GESTURE_TAP, UI_GESTURE_CANCEL } ui_gesture_type_t;
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -79,6 +84,7 @@ typedef struct {uint16_t chapter,reserved;uint32_t byte_off,saved_s;} reader_boo
 typedef struct {uint32_t magic,file_size;uint16_t count,reserved;char path[288];reader_bookmark_entry_t entries[BOOKMARK_MAX];} reader_bookmarks_t;
 #define BOOK_STORE_PATH_MAX 288
 #define UI_BTN_H 84
+#define UI_GAP 12
 static EpdRect ui_row_rect(int i,int count,int y,int height){EpdRect r=ui_bar_rect(i,count);r.y=y;r.height=height;return r;}
 static char s_query[65],s_search_draft[65],s_batch_message[128];
 typedef enum {BATCH_DELETE,BATCH_CLEAR,BATCH_UNSHELF} batch_kind_t;
@@ -94,6 +100,7 @@ static bool s_recent_sort;
 static int test_shelf_style;
 static int app_settings_shelf_style(void){return test_shelf_style;}
 static bool app_settings_shelf_recent_sort(void){return s_recent_sort;}
+static void app_settings_set_shelf_recent_sort(bool value){s_recent_sort=value;}
 typedef int nvs_handle_t;
 #define NVS_READONLY 0
 #define NVS_READWRITE 1
@@ -233,9 +240,16 @@ static bool s_reader_fullscreen,test_reader_immersive,test_hold_refresh,test_hid
 static bool test_images_visible=true;
 static int test_reflow_failures,test_reflows,test_image_preparations;
 static size_t s_text_len=4,s_block_count;
-static const void* s_blocks;
-static uint8_t* s_inline_gray;
-static int s_inline_index=-1;
+typedef struct {int image;unsigned image_width,image_height;} blk_t;
+static blk_t* s_blocks;
+static char **s_images;
+static size_t s_image_count;
+static unsigned test_image_probes;
+static int book_chapter_image_dimensions(size_t chapter,const char *name,unsigned *width,unsigned *height){
+    (void)chapter;assert(!test_draw_locked);assert(name);++test_image_probes;*width=60;*height=15;return ESP_OK;
+}
+static void vTaskDelay(unsigned ticks){(void)ticks;}
+static void release_page_images(void){}
 static char s_reader_notice[96];static int64_t s_reader_notice_until;
 static int64_t esp_timer_get_time(void){return 1000000;}
 static void prepare_inline_image(void){test_image_preparations++;}
@@ -315,13 +329,28 @@ static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bo
 unit += function("book_layout_balanced_rect", layout_source) + "\n"
 unit += function("set_reader_view") + "\n"
 unit += function("ble_pt_action_for_usage", source.parents[2] / "components/ble_page_turner/src/ble_page_turner.c") + "\n"
-for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_hidden_key", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_rows", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "reader_manual_refresh", "apply_reader_option", "reader_return", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
+for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_hidden_key", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_rows", "row_rect", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
+             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "bulk_nav_rect", "bulk_nav_hit", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "bulk_turn_page", "bulk_finish", "bulk_action", "bulk_control_at", "menu_handle_enabled", "reader_manual_refresh", "apply_reader_option", "reader_return", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
-for name in ("book_remote_direction", "shelf_turn_page", "shelf_page_arrow_rect", "reader_vertical_tap"):
+for name in ("book_remote_direction", "shelf_turn_page", "shelf_page_arrow_rect", "reader_vertical_tap", "reader_swipe_direction"):
     unit += function(name) + "\n"
 unit += r'''
 int main(void) {
+    for(int i=0;i<3;++i){
+        EpdRect r=bulk_nav_rect(i);
+        assert(r.x+r.width/2==134+i*208);
+        assert(r.y+r.height/2==1144);
+        assert(bulk_nav_hit(r.x+r.width/2,r.y+r.height/2)==i);
+    }
+    assert(bulk_nav_hit(30,1144)==-1&&bulk_nav_hit(655,1144)==-1);
+    for(int vertical=0;vertical<2;++vertical){
+        assert(reader_swipe_direction(UI_GESTURE_SWIPE_L,vertical)==1);
+        assert(reader_swipe_direction(UI_GESTURE_SWIPE_R,vertical)==-1);
+        assert(reader_swipe_direction(UI_GESTURE_SWIPE_U,vertical)==(vertical?1:0));
+        assert(reader_swipe_direction(UI_GESTURE_SWIPE_D,vertical)==(vertical?-1:0));
+        assert(reader_swipe_direction(UI_GESTURE_TAP,vertical)==0);
+        assert(reader_swipe_direction(UI_GESTURE_CANCEL,vertical)==0);
+    }
     // 普通与沉浸正文的三分区及边界。/ Thirds and boundaries in normal and immersive bodies.
     const EpdRect bodies[] = {{36,180,612,900},{24,24,636,1182},{36,170,612,901}};
     for(size_t i=0;i<sizeof(bodies)/sizeof(bodies[0]);++i){
@@ -490,7 +519,35 @@ int main(void) {
     test_progress_count=0;test_recent_path[0]=test_favorite_key[0]=0;
     assert(unlink(outside)==0&&unlink(changed)==0&&rmdir(outside_dir)==0);
     scan_shelf(&ctx);assert(s_count==65);
-    ctx.leaf=3;s_view=MANAGE;s_clear_confirm=false;s_file_removed=false;
+    // 真实批量路由覆盖旧菜单重叠区、跨页勾选、边界、确认与退出。
+    // Exercise real batch routing across the former menu overlap, selections, bounds and exit.
+    s_view=BULK;ctx.leaf=0;ctx.request_menu=false;clear_selection();s_batch_confirm=false;
+    assert(!menu_handle_enabled(&ctx));
+    EpdRect entry=row_rect(0),hit;
+    assert(bulk_control_at(&ctx,entry.x+10,entry.y+10,&hit)==0);
+    assert(bulk_action(&ctx,entry.x+10,entry.y+10)==APP_REDRAW_PAGE&&selected_count()==1);
+    for(int page=1;page<=10;++page){
+        assert(bulk_control_at(&ctx,636,1150,&hit)==102);
+        assert(bulk_action(&ctx,636,1150)==APP_REDRAW_PAGE&&ctx.leaf==page);
+        assert(s_view==BULK&&!ctx.request_menu&&selected_count()==1);
+    }
+    assert(bulk_action(&ctx,636,1150)==APP_REDRAW_NONE&&ctx.leaf==10);
+    assert(bulk_action(&ctx,entry.x+10,entry.y+10)==APP_REDRAW_PAGE&&selected_count()==2);
+    assert(s_shelf[0].selected&&s_shelf[60].selected);
+    s_batch_confirm=true;
+    assert(bulk_control_at(&ctx,636,1150,&hit)==-1);
+    assert(bulk_action(&ctx,636,1150)==APP_REDRAW_NONE&&ctx.leaf==10);
+    EpdRect circle_button=manage_back_rect();
+    assert(bulk_action(&ctx,circle_button.x+10,circle_button.y+10)==APP_REDRAW_PAGE);
+    assert(!s_batch_confirm&&s_view==BULK&&selected_count()==2);
+    EpdRect finish=bulk_nav_rect(1);
+    assert(bulk_action(&ctx,finish.x+10,finish.y+10)==APP_REDRAW_PAGE);
+    assert(s_view==SHELF&&!selected_count()&&!ctx.request_menu&&ctx.leaf==6);
+    for(int view=SHELF;view<=EDIT;++view){s_view=view;assert(!menu_handle_enabled(&ctx));}
+    s_view=BULK;ctx.leaf=0;
+    assert(bulk_turn_page(&ctx,-1)==APP_REDRAW_NONE);
+    s_scan_pending=true;assert(bulk_turn_page(&ctx,1)==APP_REDRAW_NONE);s_scan_pending=false;
+        ctx.leaf=3;s_view=MANAGE;s_clear_confirm=false;s_file_removed=false;
     EpdRect back=manage_rect(0,3);manage_action(&ctx,back.x+1,back.y+1);
     assert(s_view==SHELF&&ctx.leaf==3);
     EpdRect circle=manage_back_rect();assert(circle.y==92&&circle.height==44);

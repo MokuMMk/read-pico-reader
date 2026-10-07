@@ -33,6 +33,9 @@ void app_settings_set_staged_shutdown(bool staged);
 /// 首页进入时强制全刷；默认关闭。/ Full refresh when entering Home; off by default.
 bool app_settings_home_full_refresh(void);
 void app_settings_set_home_full_refresh(bool enabled);
+/// 无操作自动锁屏分钟数：0 关闭，1/5/10。/ Idle lock timeout: off, 1/5/10 minutes.
+uint8_t app_settings_auto_lock_minutes(void);
+void app_settings_set_auto_lock_minutes(uint8_t minutes);
 const char *app_settings_device_name(void);
 void app_settings_set_device_name(const char *name);
 const char *app_settings_avatar_path(void);

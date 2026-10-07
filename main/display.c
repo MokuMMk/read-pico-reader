@@ -17,6 +17,7 @@
 #include "e0470_epaper_waveform.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "settings.h"
 
 static const char* TAG = "read_pico";
 static bool s_bulk_io;
@@ -77,7 +78,6 @@ static enum EpdDrawError hl_update(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode, bool full,
     const EpdRect* area, bool allow_gl16_diff
 ) {
-    full = full || ((mode & 0xF) == MODE_GL16 && !allow_gl16_diff);
     if (waveform != &E0470_FOLLOW_WAVEFORM && area == NULL) {
         if ((mode & 0xF) == MODE_GC16) {
             s_page_refreshes = 0;
@@ -88,17 +88,22 @@ static enum EpdDrawError hl_update(
             ESP_LOGI(TAG, "promote to GC16 after %d page transitions", APP_UI_GC16_EVERY);
         }
     }
+    full = full || ((mode & 0xF) == MODE_GL16 && !allow_gl16_diff);
+    // 比较完成后只切换一次扫描档，避免快刷前先切 FULL 再切 FAST。
+    // Select scan timing once after comparison, without a FULL-to-FAST round trip before fast updates.
+    use_scan_for(waveform, mode);
+    enum EpdDrawError result;
     if (area != NULL) {
-        return full ? epd_hl_update_area_full(hl, mode, 25, *area)
+        result = full ? epd_hl_update_area_full(hl, mode, 25, *area)
                     : epd_hl_update_area(hl, mode, 25, *area);
-    }
-    return full ? epd_hl_update_screen_full(hl, mode, 25) : epd_hl_update_screen(hl, mode, 25);
+    } else result = full ? epd_hl_update_screen_full(hl, mode, 25) : epd_hl_update_screen(hl, mode, 25);
+
+    return result;
 }
 
 enum EpdDrawError update_display_mode(
     EpdiyHighlevelState* hl, enum EpdDrawMode mode
 ) {
-    use_scan_for(&E0470_WAVEFORM, mode);
     epd_poweron();
     enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL, false);
     rails_keepalive();
@@ -108,7 +113,6 @@ enum EpdDrawError update_display_mode(
 enum EpdDrawError update_display_mode_diff(
     EpdiyHighlevelState* hl, enum EpdDrawMode mode
 ) {
-    use_scan_for(&E0470_WAVEFORM, mode);
     epd_poweron();
     enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, mode, false, NULL, true);
     rails_keepalive();
@@ -121,6 +125,7 @@ enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl) {
         use_scan_for(&E0470_WAVEFORM, MODE_GC16);
         epd_poweron();
         enum EpdDrawError result = epd_hl_update_screen_full(hl, MODE_GC16, 25);
+
         rails_keepalive();
         ESP_LOGI(TAG, "fast navigation cleanup after %d transitions", APP_UI_FAST_GC16_EVERY);
         return result;
@@ -134,6 +139,7 @@ enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl) {
                         s_page_refreshes % APP_UI_FAST_GL16_SETTLE_EVERY == 0;
     enum EpdDrawError result = settle ? epd_hl_update_screen_full(hl, MODE_GL16, 25)
                                       : epd_hl_update_screen(hl, MODE_GL16, 25);
+
     rails_keepalive();
     return result;
 }
@@ -145,6 +151,7 @@ enum EpdDrawError update_display_from_white_with(
     epd_poweron();
     epd_hl_waveform(hl, waveform);
     enum EpdDrawError result = epd_hl_update_screen_from_white(hl, mode, 25);
+
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     s_page_refreshes = 0;
     rails_keepalive();
@@ -173,7 +180,6 @@ bool display_take_white_exit(void) {
 }
 
 enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
-    use_scan_for(&E0470_WAVEFORM, MODE_GC16);
     epd_poweron();
     enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, MODE_GC16, true, NULL, false);
     rails_keepalive();
@@ -188,6 +194,7 @@ enum EpdDrawError update_display_image_gray(EpdiyHighlevelState* hl) {
     epd_clear();
     epd_hl_waveform(hl, &E0470_FULL_WAVEFORM);
     enum EpdDrawError result = epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
+
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     s_page_refreshes = 0;
     rails_keepalive();
@@ -199,7 +206,6 @@ enum EpdDrawError update_display_image_gray(EpdiyHighlevelState* hl) {
 enum EpdDrawError update_display_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 ) {
-    use_scan_for(waveform, mode);
     epd_poweron();
     epd_hl_waveform(hl, waveform);
     enum EpdDrawError result = hl_update(hl, waveform, mode, false, NULL, false);
@@ -212,7 +218,6 @@ enum EpdDrawError update_display_area_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 ) {
-    use_scan_for(waveform, mode);
     epd_poweron();
     epd_hl_waveform(hl, waveform);
     enum EpdDrawError result = hl_update(hl, waveform, mode, false, &area, false);
@@ -225,7 +230,6 @@ enum EpdDrawError update_display_area_diff_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 ) {
-    use_scan_for(waveform, mode);
     epd_poweron();
     epd_hl_waveform(hl, waveform);
     enum EpdDrawError result = hl_update(hl, waveform, mode, false, &area, true);
@@ -238,7 +242,6 @@ enum EpdDrawError update_display_area_full_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 ) {
-    use_scan_for(waveform, mode);
     epd_poweron();
     epd_hl_waveform(hl, waveform);
     enum EpdDrawError result = hl_update(hl, waveform, mode, true, &area, false);
@@ -271,6 +274,7 @@ enum EpdDrawError update_display_water_turn(EpdiyHighlevelState* hl, EpdRect are
     use_scan_for(&E0470_WAVEFORM, MODE_GC16);
     epd_clear();
     enum EpdDrawError recovered = epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
+
     s_page_refreshes = 0;
     rails_keepalive();
     ESP_LOGW(TAG, "water turn failed (%d), recovery=%d", result, recovered);
@@ -290,8 +294,10 @@ void guard_draw_result(EpdiyHighlevelState* hl, enum EpdDrawError result) {
     epd_clear();
     // 清物理屏后仅重置旧帧基准，保留目标页；否则局部刷新会留下整页白屏。
     // Reset only the old-frame baseline after clearing; preserving the target prevents blank pages after partial updates.
-    epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
+    enum EpdDrawError recovered = epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
+
+    if (recovered != EPD_DRAW_SUCCESS) ESP_LOGW(TAG, "underrun recovery failed (%d)", recovered);
     s_page_refreshes = 0;
     rails_keepalive();
-    ESP_LOGW(TAG, "line queue underrun, pclk back to %d MHz", DISPLAY_PCLK_SAFE_MHZ);
+    ESP_LOGW(TAG, "line queue underrun, pclk back to %d MHz, recovery=%d", DISPLAY_PCLK_SAFE_MHZ, recovered);
 }
