@@ -405,6 +405,18 @@ static ble_layout_t ble_layout(void) {
 // 一行的左标签 + 让出按钮后的右值，外加分隔线。与 row() 同高，但右端不会压到按钮。
 // A row's left label plus a right value that stops short of the button, with the usual divider.
 // Same height as row(), but the value never runs under the button.
+// 学到的键按原始边沿显示：字节值为主，字节下标和报告号非零时才补上，免得两个键看起来一样。
+// Show a learned key as its raw edge: the byte value carries it, and the byte index and report id
+// are appended only when they are non-zero so two keys never read alike.
+static void format_bound_key(uint32_t code, char *out, size_t size) {
+    const unsigned value = code & 0xFFu;
+    const unsigned byte_index = (code >> 8) & 0xFFu;
+    const unsigned report_id = (code >> 16) & 0xFFu;
+    if (!byte_index && !report_id) snprintf(out, size, "0x%02X", value);
+    else if (!report_id) snprintf(out, size, "0x%02X b%u", value, byte_index);
+    else snprintf(out, size, "0x%02X r%u b%u", value, report_id, byte_index);
+}
+
 static void ble_row(uint8_t *fb, int y, const char *label, const char *value) {
     if (y + BLE_ROW_H < 190 || y >= UI_NAV_TOP) return;
     settings_card(fb, (EpdRect){36, y, 612, BLE_ROW_H - 8}, 18, UI_GRAY_WHITE, 0x70);
@@ -1020,7 +1032,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         static const char *const learn_names[] = {"上一页", "下一页"};
         const uint32_t bound[] = {ble_pt_binding(BLE_PT_ACTION_PREV), ble_pt_binding(BLE_PT_ACTION_NEXT)};
         for (int i = 0; i < 2; ++i) {
-            ble_row(fb, l.learn_top[i], learn_names[i], bound[i] ? "自定义按键" : "内置按键");
+            // 学到的键直接显示出来；没学过就走内置映射。
+            // Show the learned key itself; with none, the built-in map applies.
+            char bound_label[40];
+            if (bound[i]) format_bound_key(bound[i], bound_label, sizeof(bound_label));
+            else snprintf(bound_label, sizeof(bound_label), "内置按键");
+            ble_row(fb, l.learn_top[i], learn_names[i], bound_label);
             ui_draw_button(fb, ble_button_rect(l.learn_top[i]), "学习", false);
         }
         ui_text(fb, 48, l.footer_top, 20, "上下、左右及 PageUp / PageDown 均可翻页", EPD_DRAW_ALIGN_LEFT, false);
