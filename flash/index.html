@@ -6,6 +6,26 @@
   <meta name="theme-color" content="#e9e8e2">
   <meta name="description" content="Pico 阅读固件图文刷机指南：连接设备、选择串口、等待安装完成。">
   <title>Pico 阅读固件 · 图文刷机指南</title>
+  <script>
+    // 打包好的安装器直接调 navigator.serial.requestPort()，不带任何过滤，于是浏览器能看到的
+    // 串口都会列出来，包括刷不了机的蓝牙虚拟串口。这里在它之前补一层 Espressif 厂商过滤：
+    // Pico 的 USB Serial/JTAG（VID 303A）会列出来，蓝牙那些不会。放在独立脚本里是因为它必须
+    // 早于下面那个 deferred 模块执行，而页面末尾那段脚本在本地 file:// 预览时会提前返回。
+    // The bundled installer calls navigator.serial.requestPort() with no filters, so every port the
+    // browser can see is offered, Bluetooth virtual COM ports included, and those cannot flash
+    // anything. Add an Espressif vendor filter ahead of it: Pico's USB Serial/JTAG (VID 303A) is
+    // listed and the Bluetooth entries are not. This lives in its own script because it must run
+    // before the deferred module below, and the script at the end of the page returns early when
+    // previewing over file://.
+    if (navigator.serial && navigator.serial.requestPort) {
+      const requestPort = navigator.serial.requestPort.bind(navigator.serial);
+      navigator.serial.requestPort = options => {
+        const next = Object.assign({}, options);
+        if (!next.filters) next.filters = [{ usbVendorId: 0x303a }];
+        return requestPort(next);
+      };
+    }
+  </script>
   <script type="module" src="./vendor/web/install-button.js"></script>
   <style>
     :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans SC", sans-serif; }
