@@ -25,6 +25,19 @@ License terms apply to their respective material. The repository's top-level
 Apache-2.0 license does not replace those component licenses.
 
 各组件继续适用各自的许可，不能把整个固件简称为其中某一个组件的许可。
+
+阅读翻页适配参考 CrossMux `1512e8e049f2b1a4efc7c004a5b1a93cbc5e3f9f`
+及其 FreeInk SDK `96de1be6ce08eb732909e6e8149af8f892b9a2c5`。
+`components/e0470_epaper_waveform/e0470_epaper_waveform.c` 中文字翻页表的组装移植自
+FreeInk `libs/display/EpdiyLcd/src/e0470/e0470_epaper_waveform.c`，保留原有
+`Copyright 2026 mindreset` / Apache-2.0 文件头；FreeInk `Copyright (c) 2026 FreeInk`
+及 CrossMux MIT 全文分别保留在上述 LICENSE-FreeInk-SDK.txt 和 LICENSE-CrossMux.txt。
+仅普通文字翻页启用此表，原始波形数据表、驱动扫描时序与其他界面保持原样。
+The text-turn assembly is adapted from the pinned FreeInk source above,
+retaining its mindreset Apache-2.0 file notice and the complete FreeInk/CrossMux
+MIT notices linked above. Only ordinary text turns select it; vendor LUTs,
+scan timing and other screens are unchanged. Panel validation remains required.
+
 The firmware bundles only the embedded Noto Sans SC subset; users may supply
 their own fonts on a TF card. The repository and flashing site do not provide
 additional font packages.

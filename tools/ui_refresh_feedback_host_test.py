@@ -38,20 +38,22 @@ shelf = r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+#include <stddef.h>
 typedef struct {int x,y,width,height;} EpdRect;
-typedef struct {void *hl;uint8_t *fb;} app_ctx_t;
+typedef struct {void *hl;uint8_t *fb;int64_t now_ms;unsigned leaf;} app_ctx_t;
 typedef enum {APP_REDRAW_NONE,APP_REDRAW_DONE,APP_REDRAW_AREA,APP_REDRAW_PAGE,APP_REDRAW_FULL} app_redraw_t;
-enum {SHELF,MANAGE,READING,READER_PANEL_NONE};
+enum {SHELF,MANAGE,READING,READER_PANEL_NONE,TOC};
 enum EpdDrawMode {MODE_GL16,MODE_DU,MODE_GC16};
-enum EpdDrawError {EPD_DRAW_SUCCESS};
+enum EpdDrawError {EPD_DRAW_SUCCESS,EPD_DRAW_ERROR};
 #define APP_PAGE_REFRESH_MODE MODE_GL16
 #define SHELF_BOOK_LIFT_PX 16
 #define portMAX_DELAY 0
-static const int E0470_WAVEFORM=0,E0470_FULL_WAVEFORM=1,E0470_FOLLOW_WAVEFORM=2;
+static const int E0470_WAVEFORM=0,E0470_FULL_WAVEFORM=1,E0470_FOLLOW_WAVEFORM=2,E0470_TEXTTURN_WAVEFORM=3;
 static const char *TAG="test";
 static int s_view,s_presented_view,s_reader_panel,s_pressed_control;
 static bool s_shelf_feedback_pending,s_reader_cleanup,s_reader_image_refresh_pending,s_toolbar,s_clear_confirm;
-static bool s_reader_fullscreen,s_water_turn_pending,s_reader_footer_pending;
+static bool s_reader_fullscreen,s_water_turn_pending,s_reader_footer_pending,s_reader_turn_pending,s_reader_text_frame;
 static enum EpdDrawMode s_mode;
 static EpdRect s_area,s_du_area;
 static unsigned s_du_count;
@@ -62,6 +64,9 @@ static unsigned pushes;
 static int route;
 static enum EpdDrawMode pushed_mode;
 static EpdRect pushed_area;
+static int trace_route[256], trace_mode[256], trace_wave[256];
+static EpdRect trace_area[256];
+static unsigned trace_count;
 enum {DIFF=1,AREA,FULL,WHOLE,FAST,WATER,READER};
 static int shelf_rows(void){return 9;}
 static EpdRect row_rect(int row){return (EpdRect){42+(row%3)*210,220+(row/3)*272,176,240};}
@@ -74,16 +79,44 @@ static int64_t esp_timer_get_time(void){return 1000000;}
 static void test_log(const char *tag,const char *format,...){(void)tag;(void)format;}
 #define ESP_LOGI test_log
 static void xSemaphoreTake(void *done,int timeout){(void)done;(void)timeout;}
-static void guard_draw_result(void *hl,int error){(void)hl;assert(error==EPD_DRAW_SUCCESS);}
+static void guard_draw_result(void *hl,int error){(void)hl;assert(error==EPD_DRAW_SUCCESS||error==EPD_DRAW_ERROR);}
 static EpdRect reader_area(void){return (EpdRect){36,176,612,856};}
 static EpdRect progress_rect(void){return (EpdRect){36,1040,612,42};}
 static EpdRect reader_fullscreen_progress_area(void){return (EpdRect){0,1200,684,4};}
 static unsigned percent(unsigned page){return page;}
-static unsigned s_page;
+static unsigned s_page,s_chapter;
+static bool test_hide_images,test_load_failed,s_save_failed;
+static int test_types[2][2],test_push_error,test_effect;
+static uint8_t test_full_pages;
+static unsigned s_turns,s_unsaved,s_stats_pending_turns,s_session_turns;
+static size_t s_jump_offset;
+static int64_t s_last_turn_ms,s_stats_activity_ms;
+static uint8_t *s_next_fb;
+static int s_next_page=-1;
+static struct {uint8_t *gray;} test_image={.gray=(uint8_t*)"gray"},*s_page_images=&test_image;
+#define BOOK_TOC_ROWS 12
+#define E0470_TURN_RTL 1
+#define E0470_TURN_LTR -1
+static int book_layout_page_image_count(unsigned page){return !test_hide_images&&test_types[s_chapter][page]?1:0;}
+static int book_layout_page_image(unsigned page){return !test_hide_images&&test_types[s_chapter][page]==2?0:-1;}
+static unsigned book_layout_page_count(void){return 2;}
+static unsigned book_chapter_count(void){return 2;}
+static bool app_settings_reader_hide_images(void){return test_hide_images;}
+static uint8_t app_settings_reader_full_pages(void){return test_full_pages;}
+static int app_settings_reader_turn_effect(void){return test_effect;}
+static void save_progress(void){}
+static void skip_hidden_image_pages(app_ctx_t *ctx,int dir){(void)ctx;(void)dir;}
+static bool load_chapter(app_ctx_t *ctx,unsigned chapter,int off,bool last){(void)ctx;(void)off;if(test_load_failed)return false;s_chapter=chapter;s_page=last?1:0;return true;}
+static void set_reader_view(int view){s_view=view;}
+static void lock_draw(void){}
+static void unlock_draw(void){}
+static size_t fb_bytes(void){return 1;}
+static void draw_reader(uint8_t *fb,unsigned page){*fb=(uint8_t)page;}
+
 static EpdRect ui_rect_union(EpdRect a,EpdRect b){(void)b;return a;}
-static enum EpdDrawError record(int kind,enum EpdDrawMode mode,EpdRect area){++pushes;route=kind;pushed_mode=mode;pushed_area=area;return EPD_DRAW_SUCCESS;}
-static enum EpdDrawError update_display_area_diff_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;(void)wave;return record(DIFF,mode,area);}
-static enum EpdDrawError update_display_area_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;(void)wave;return record(AREA,mode,area);}
+static enum EpdDrawError record(int kind,enum EpdDrawMode mode,EpdRect area){assert(trace_count<256);trace_route[trace_count]=kind;trace_mode[trace_count]=mode;trace_area[trace_count++]=area;++pushes;route=kind;pushed_mode=mode;pushed_area=area;return (enum EpdDrawError)test_push_error;}
+static enum EpdDrawError update_display_area_diff_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;trace_wave[trace_count]=*wave;return record(DIFF,mode,area);}
+static enum EpdDrawError update_display_area_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;trace_wave[trace_count]=*wave;return record(AREA,mode,area);}
 static enum EpdDrawError update_display_with(void *hl,const int *wave,enum EpdDrawMode mode){(void)hl;(void)wave;return record(WHOLE,mode,(EpdRect){0});}
 static enum EpdDrawError update_display_full(void *hl){(void)hl;return record(FULL,MODE_GC16,(EpdRect){0});}
 static enum EpdDrawError update_display_fast_page(void *hl){(void)hl;return record(FAST,MODE_GL16,(EpdRect){0});}
@@ -91,7 +124,9 @@ static enum EpdDrawError update_display_mode_diff(void *hl,enum EpdDrawMode mode
 static enum EpdDrawError update_display_water_turn(void *hl,EpdRect area,int dir){(void)hl;(void)dir;return record(WATER,MODE_GL16,area);}
 '''
 shelf += function("main/apps/app_book.c", "paint_control") + "\n"
-shelf += function("main/apps/app_book.c", "present") + r'''
+for name in ("present", "paint_reading", "turn_page"):
+    shelf += function("main/apps/app_book.c", name) + "\n"
+shelf += r'''
 int main(void){
  uint8_t fb=0;app_ctx_t ctx={.fb=&fb};s_view=s_presented_view=SHELF;
  for(int repeat=0;repeat<80;++repeat){
@@ -110,6 +145,87 @@ int main(void){
  s_view=s_presented_view=SHELF;paint_control(&ctx,row_rect(0));
  assert(present(&ctx,APP_REDRAW_FULL)&&route==FULL&&pushed_mode==MODE_GC16&&!s_shelf_feedback_pending);
  puts("PASS: 80 cover lift/cancel feedbacks use one grayscale differential, preserve the union and never force cleanup; buttons, view transitions and manual refresh retain their paths");
+ // 阅读翻页只有一次正文灰阶推屏；页脚、清残影、图片、水波纹与设置面板保持原路由。
+ // One grayscale body commit per text turn; footer, cleanup, images, water and settings keep their routes.
+ s_view=s_presented_view=READING;s_text="text";s_reader_panel=READER_PANEL_NONE;
+ s_area=reader_area();s_mode=MODE_GL16;s_reader_turn_pending=s_reader_footer_pending=true;
+ trace_count=0;assert(present(&ctx,APP_REDRAW_AREA));
+ assert(trace_count==2&&trace_route[0]==DIFF&&trace_mode[0]==MODE_GL16&&trace_wave[0]==E0470_TEXTTURN_WAVEFORM);
+ assert(trace_area[0].y==reader_area().y&&trace_area[0].height==reader_area().height);
+ assert(trace_route[1]==AREA&&trace_mode[1]==MODE_DU&&trace_wave[1]==E0470_FOLLOW_WAVEFORM);
+ assert(trace_area[1].y==progress_rect().y&&!s_reader_turn_pending);
+ for(int full=0;full<2;++full){
+   s_reader_fullscreen=full;s_reader_turn_pending=true;s_reader_cleanup=true;
+   s_reader_footer_pending=!full;trace_count=0;
+   assert(present(&ctx,APP_REDRAW_AREA)&&trace_count==1&&route==FULL&&pushed_mode==MODE_GC16);
+   s_reader_turn_pending=true;trace_count=0;
+   assert(present(&ctx,APP_REDRAW_FULL)&&trace_count==1&&route==FULL);
+ }
+ s_reader_fullscreen=false;s_reader_turn_pending=true;s_reader_image_refresh_pending=true;
+ trace_count=0;assert(present(&ctx,APP_REDRAW_AREA));
+ assert(trace_count==1&&route==AREA&&pushed_mode==MODE_GC16&&trace_wave[0]==E0470_FULL_WAVEFORM);
+ s_reader_turn_pending=s_water_turn_pending=true;trace_count=0;
+ assert(present(&ctx,APP_REDRAW_AREA)&&trace_count==1&&route==WATER);
+ // 翻页标志已消费，下一次设置绘制不能误走翻页差分。
+ // The consumed turn flag must not affect the next settings repaint.
+ s_reader_panel=99;trace_count=0;
+ assert(present(&ctx,APP_REDRAW_AREA)&&trace_count==1&&route==AREA&&pushed_mode==MODE_GL16&&trace_wave[0]==E0470_WAVEFORM);
+ s_reader_panel=READER_PANEL_NONE;s_reader_fullscreen=true;s_reader_turn_pending=true;trace_count=0;
+ assert(present(&ctx,APP_REDRAW_AREA)&&trace_count==2&&trace_route[0]==DIFF&&trace_route[1]==DIFF&&trace_wave[0]==E0470_TEXTTURN_WAVEFORM&&trace_wave[1]==E0470_WAVEFORM);
+ puts("PASS: text turn/body/footer, periodic/manual cleanup, grayscale image, water effect, settings and full-screen routes");
+ // 实际翻页、绘制和推屏函数共用页类型；混排与跨章不靠纯图标志判定。
+ // Actual turn/paint/present functions share page types; mixed and cross-chapter guards do not rely on the pure-image flag.
+ for(int full=0;full<2;++full)for(int hidden=0;hidden<2;++hidden)
+ for(int from=0;from<3;++from)for(int to=0;to<3;++to){
+   s_reader_fullscreen=full;test_hide_images=hidden;test_types[0][0]=from;test_types[0][1]=to;
+   s_view=s_presented_view=READING;s_reader_panel=READER_PANEL_NONE;s_chapter=s_page=0;
+   trace_count=0;present(&ctx,paint_reading(&ctx,MODE_GL16));
+   assert(s_reader_text_frame==(hidden||from==0));
+   app_redraw_t redraw=turn_page(&ctx,1);
+   bool eligible=hidden||(from==0&&to==0);
+   assert(redraw==APP_REDRAW_AREA&&s_reader_turn_pending==eligible);
+   trace_count=0;present(&ctx,redraw);
+   if(eligible)assert(trace_route[0]==DIFF&&trace_wave[0]==E0470_TEXTTURN_WAVEFORM);
+   else if(to==2)assert(trace_mode[0]==MODE_GC16&&trace_wave[0]==E0470_FULL_WAVEFORM);
+   else assert(trace_wave[0]==E0470_WAVEFORM&&trace_route[0]==(full?DIFF:AREA));
+   assert(!s_reader_turn_pending&&s_reader_text_frame==(hidden||to==0));
+ }
+ s_reader_fullscreen=false;test_hide_images=false;
+ for(int from=0;from<3;++from)for(int to=0;to<3;++to)for(int dir=-1;dir<=1;dir+=2){
+   int old=dir>0?0:1,new=1-old;
+   test_types[old][dir>0?1:0]=from;test_types[new][dir>0?0:1]=to;
+   s_chapter=old;s_page=dir>0?1:0;trace_count=0;
+   present(&ctx,paint_reading(&ctx,MODE_GL16));
+   app_redraw_t redraw=turn_page(&ctx,dir);
+   assert(s_chapter==(unsigned)new&&s_reader_turn_pending==(from==0&&to==0));
+   trace_count=0;present(&ctx,redraw);
+   assert(trace_wave[0]!=(int)E0470_TEXTTURN_WAVEFORM||(from==0&&to==0));
+ }
+ // 失败推屏、面板及离开阅读会失效旧基准；下一次正常绘制后恢复。
+ // Failed presents, panels and leaving reading invalidate history; a successful body restores it.
+ memset(test_types,0,sizeof(test_types));s_chapter=s_page=0;
+ test_push_error=EPD_DRAW_ERROR;trace_count=0;present(&ctx,paint_reading(&ctx,MODE_GL16));
+ assert(!s_reader_text_frame);test_push_error=0;
+ assert(turn_page(&ctx,1)==APP_REDRAW_AREA&&!s_reader_turn_pending);
+ trace_count=0;present(&ctx,APP_REDRAW_AREA);assert(s_reader_text_frame);
+ s_reader_panel=99;trace_count=0;present(&ctx,APP_REDRAW_PAGE);assert(!s_reader_text_frame);
+ s_reader_panel=READER_PANEL_NONE;s_page=0;
+ assert(turn_page(&ctx,1)==APP_REDRAW_AREA&&!s_reader_turn_pending);
+ trace_count=0;present(&ctx,APP_REDRAW_AREA);assert(s_reader_text_frame);
+ s_view=SHELF;trace_count=0;present(&ctx,APP_REDRAW_PAGE);assert(!s_reader_text_frame);
+ s_view=s_presented_view=READING;s_chapter=0;s_page=1;test_load_failed=true;
+ assert(turn_page(&ctx,1)==APP_REDRAW_PAGE&&!s_reader_turn_pending&&s_view==TOC);
+ test_load_failed=false;s_view=s_presented_view=READING;s_page=0;
+ for(int policy=0;policy<2;++policy){
+   s_page=0;trace_count=0;present(&ctx,paint_reading(&ctx,MODE_GL16));
+   test_full_pages=policy?1:0;test_effect=policy?0:1;s_turns=0;
+   app_redraw_t redraw=turn_page(&ctx,1);trace_count=0;present(&ctx,redraw);
+   assert(trace_route[0]==(policy?FULL:WATER));
+ }
+ test_full_pages=0;test_effect=0;s_page=0;test_types[0][0]=1;test_image.gray=NULL;
+ trace_count=0;present(&ctx,paint_reading(&ctx,MODE_GL16));assert(!s_reader_text_frame);
+ assert(turn_page(&ctx,1)==APP_REDRAW_AREA&&!s_reader_turn_pending);
+ puts("PASS: 36 text/mixed/image/hidden/full-screen combinations, 18 bidirectional chapter transitions, failed image/display/load guards and actual cleanup/water turns");
 }
 '''
 

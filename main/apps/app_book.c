@@ -25,7 +25,7 @@
  * 用户修订：书架只在封面下显示书名；首次打开时先显示书架，再逐本生成封面缓存。
  * 用户修订：字号和间距重排只保存最终进度，字号使用现有闲置灰阶整理。
  * 用户修订：阅读设置滑杆可拖动并在松手后重排；字体选择可纵向翻页；统计入口显示真实明细与近30天数据。
- * 用户修订：默认翻页保持原刷新规则；刷新设置可选真实错相 GL16 水波纹，阅读字体面板保持紧凑。
+ * 用户修订：为减少翻页文字闪动，仅前后均为纯文字的翻页使用 CrossMux 文字波形与 GL16 差分；插图与混排转换、周期全刷及水波纹保持原规则。
  * 用户修订：目录由独立模块整页绘制与命中；目录标题清理换行并限制为单行，翻页不再沿用书架的局部刷新。
  * 用户修订：书架封面抽出与取消仅驱动变化像素，保持灰阶，不在点按时强制清屏。
  * Frozen: Phase4b uses the shared gesture entry and owns previous/tools/next keys; the toolbar keeps full refresh. Screen turns commit on release without pressed decoration.
@@ -48,7 +48,7 @@
  * User revision: the shelf shows titles without author rows; first visits paint the shelf before filling cached covers.
  * User revision: size and spacing reflow saves final progress only; size uses the existing idle grayscale settle.
  * User revision: reader sliders drag and reflow on release; font selection pages vertically; statistics entries show real details and recent-30-day data.
- * User revision: default turns keep their refresh policy; Refresh Settings may enable staggered GL16 water turns, while the font sheet stays compact.
+ * User revision: turns between text-only frames use the CrossMux text waveform with differential GL16; transitions involving images/mixed pages, periodic cleanup and water turns retain their policies.
  * User revision: a standalone module owns full-page TOC rendering and hit testing; normalized single-line titles cannot leak into another row.
  * User revision: cover lift and cancellation drive changed pixels in grayscale, without forced cleanup during a tap.
  */
@@ -152,6 +152,10 @@ static const char* TAG = "book";
 static book_view_t s_view;
 static int s_presented_view = -1;
 static bool s_reader_image_refresh_pending;
+static bool s_reader_turn_pending;
+// 只记录成功推屏的纯正文基准，避免跨章或退出插图时误用文字波形。
+// Track only successfully presented text-only bodies, protecting chapter and image transitions.
+static bool s_reader_text_frame;
 static char s_requested_open[BOOK_STORE_PATH_MAX];
 static bool s_requested_open_home;
 static bool s_reader_return_home;
@@ -2252,8 +2256,11 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
         // The turn effect is independent of the footer: full-screen turns still use the selected water effect.
         err = s_water_turn_pending
             ? update_display_water_turn(ctx->hl, s_area, s_water_turn_dir)
-            : s_reader_fullscreen && s_mode == MODE_GL16
-                ? update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM, s_mode, s_area)
+            // 普通翻页与全屏阅读都只驱动变化像素；设置面板等局部绘制保留原路径。
+            // Ordinary turns and full-screen reading drive changed pixels only; other local UI keeps its path.
+            : (s_reader_fullscreen || s_reader_turn_pending) && s_mode == MODE_GL16
+                ? update_display_area_diff_with(ctx->hl,
+                    s_reader_turn_pending ? &E0470_TEXTTURN_WAVEFORM : &E0470_WAVEFORM, s_mode, s_area)
                 : update_display_area_with(ctx->hl, &E0470_WAVEFORM, s_mode, s_area);
         if (s_reader_fullscreen && err == EPD_DRAW_SUCCESS) {
             // 百分比不变时差分直接跳过；变化时只驱动最底部的少量像素。
@@ -2283,17 +2290,22 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     ESP_LOGI(TAG, "present draw=%lld display=%lld join=%lld ms", (drawn - start) / 1000,
              (displayed - drawn) / 1000, (esp_timer_get_time() - displayed) / 1000);
     guard_draw_result(ctx->hl, err);
+    s_reader_text_frame = err == EPD_DRAW_SUCCESS && s_view == READING && s_text &&
+        s_reader_panel == READER_PANEL_NONE && !s_toolbar && !s_clear_confirm &&
+        book_layout_page_image_count(s_page) == 0;
     s_reader_cleanup = false;
     s_reader_image_refresh_pending = false;
     s_presented_view = (int)s_view;
     s_reader_footer_pending = false;
     s_water_turn_pending = false;
     s_shelf_feedback_pending = false;
+    s_reader_turn_pending = false;
     s_mode = MODE_GL16;
     return true;
 }
 static app_redraw_t paint_reading(app_ctx_t* ctx, enum EpdDrawMode mode) {
     s_water_turn_pending = false;
+    s_reader_turn_pending = false;
     int64_t started = esp_timer_get_time();
     prepare_inline_image();
     s_reader_image_refresh_pending = !app_settings_reader_hide_images() &&
@@ -2336,6 +2348,7 @@ static void free_book(void) {
     flush_ticket_stats();
     e0470_page_turn_release();
     s_water_turn_pending = false;
+    s_reader_turn_pending = s_reader_text_frame = false;
     pending_progress_t* pending = pending_find(s_path);
     if (pending && !pending->dirty) pending_discard(s_path);
     invalidate_prep();
@@ -3065,6 +3078,9 @@ static void sensor_set(app_ctx_t* ctx, bool on) {
 }
 static app_redraw_t turn_page(app_ctx_t* ctx, int dir) {
     if (!s_text || s_clear_confirm) return APP_REDRAW_NONE;
+    // 页面图片表可能随跨章加载替换，旧页资格以实际成功显示的画面为准。
+    // Chapter loads may replace the image table; the old-page eligibility comes from the displayed frame.
+    bool from_text_frame = s_reader_text_frame;
     bool changed = true;
     if (dir > 0 && s_page + 1 < book_layout_page_count()) ++s_page;
     else if (dir < 0 && s_page) --s_page;
@@ -3089,6 +3105,8 @@ static app_redraw_t turn_page(app_ctx_t* ctx, int dir) {
     // 预渲染未命中时也使用 GL16；到达设定页数后在本次翻页整屏全刷。
     // A cache miss still uses GL16; the selected turn count triggers a full-screen refresh on this turn.
     app_redraw_t redraw = paint_reading(ctx, MODE_GL16);
+    s_reader_turn_pending = redraw == APP_REDRAW_AREA && from_text_frame &&
+        book_layout_page_image_count(s_page) == 0;
     s_water_turn_pending = redraw == APP_REDRAW_AREA && !s_reader_cleanup &&
                            app_settings_reader_turn_effect() == 1;
     s_water_turn_dir = dir > 0 ? E0470_TURN_RTL : E0470_TURN_LTR;

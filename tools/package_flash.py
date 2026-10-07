@@ -35,7 +35,7 @@ def package(build: Path, output: Path):
     release={'schema':1,'version':version,'project':'Read_Pico','board':'RDP-G01-W','layout':'pico-dual-4m-v1',
         'minimum_base_version':'0.3.3-rc72','url':f'https://wegooo-cell.github.io/read-pico-reader/{upgrade_name}',
         'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),
-        'notes':'1. 优化图文混排\n2. 支持滑动翻页\n3. 新增自动休眠\n4. 优化蓝牙翻页器\n5. 优化图标与界面\n6. 优化文件管理排版'}
+        'notes':'1. 优化文字翻页，减少闪动\n2. 修复部分 EPUB 插图兼容\n3. 蓝牙扫描隐藏无名设备\n4. 翻页器适配'}
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
     (output/'update.json').write_text(json.dumps(release,ensure_ascii=False,indent=2)+'\n')
     check(output)

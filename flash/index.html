@@ -168,7 +168,17 @@
       <p>升级到 rc79 后，也可在系统升级页连接 WiFi，检查并安装官网后续更新。在线更新需要官网发布新版清单；升级期间请保持供电。</p>
     </section>
     <section class="release" aria-labelledby="release-title">
-      <div class="eyebrow">0.3.3-rc84 · 阅读与界面优化</div><h2 id="release-title">这次更新了什么</h2>
+      <div class="eyebrow">0.3.3-rc85 · 阅读翻页与兼容优化</div><h2 id="release-title">这次更新了什么</h2>
+      <ul>
+        <li>文字翻页优化：普通与全屏阅读减少重复擦白和新字等待；图片与图文混排保留原灰阶刷新。</li>
+        <li>EPUB 图文兼容：改善 SVG 包装图片、较长 JPEG 头部的识别，缺失插图记录时正文继续显示。</li>
+        <li>蓝牙扫描隐藏没有广播名称的设备；后续收到设备名称时正常显示。</li>
+        <li>翻页器适配，保留自定义映射优先。</li>
+      </ul>
+      <p>体验文字翻页优化：在“阅读设置 → 翻页效果”选择“默认效果”。水波纹、周期全刷与手动全刷继续可用。</p>
+      <p>rc84 及以后的固件，在“检查更新”发现新版本后会显示简短更新日志与“稍后 / 开始更新”按钮。</p>
+      <details><summary>上一版 rc84 的更新</summary>
+
       <ul>
         <li>图文混排：小图与正文同页显示，图片按比例缩放，多图和后续文字连续排版。</li>
         <li>滑动翻页：默认支持左右滑动，兼容上下翻页模式。</li>
@@ -178,6 +188,7 @@
         <li>文件管理排版优化：操作和分页按钮统一对齐，增强文字与线框可读性。</li>
       </ul>
       <p>rc84 开始，发现新版本时会在设备上显示简短更新日志，并提供“稍后 / 开始更新”。使用旧版固件更新到 rc84 前，请在本页查看本次日志。</p>
+      </details>
       <details><summary>上一版 rc83 的更新</summary>
       <ul>
         <li>书架封面抽出与取消仅刷新变化的像素，保留灰阶，减少点击时的黑闪。</li>
@@ -220,7 +231,7 @@
         <li>统一采用 PMU 软件油量表与有效位，状态栏和资料卡电量取整保持一致。</li>
       </ul>
       </details>
-      <p>rc79 及以后版本可在“设置 → 升级和恢复 → 系统升级”检查联网更新到 rc84。在线刷机、TF 升级 Bin 和联网 OTA 来自同一次编译，保留已有设置与阅读数据。</p>
+      <p>rc79 及以后版本可在“设置 → 升级和恢复 → 系统升级”检查联网更新到 rc85。在线刷机、TF 升级 Bin 和联网 OTA 来自同一次编译，保留已有设置与阅读数据。</p>
       <img src="./weread-preview.png" alt="微读跨页选择与逐本下载界面" style="display:block;width:100%;height:auto;margin-top:24px;border-radius:16px;">
     </section>
     <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点、USB 或微读传书导入书籍和文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>

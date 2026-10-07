@@ -6,6 +6,10 @@ An independent, open-source reading firmware for the **MindReset Read Pico (RDP-
 
 The current interface has Home, Bookshelf, Files, and Settings. It reads EPUB and TXT books from a TF card, remembers reading progress, and supports Wi-Fi, hotspot, or USB file transfer. The online flasher installs the same firmware image as the local `flash/` bundle.
 
+## Current release: rc85
+
+Improved text-only page turns in normal and full-screen reading, EPUB image compatibility, named-device Bluetooth scanning and Bluetooth pager compatibility. Choose **Reading settings → Page-turn effect → Default effect** to try the text-turn optimization. Water turns and periodic/manual cleanup remain available. See the [changelog](docs/CHANGELOG.md).
+
 ## Online installation
 
 Visit the [HTTPS web flasher](https://wegooo-cell.github.io/read-pico-reader/). Use a desktop Chrome or Edge browser with a USB data cable. Select the Read Pico serial device and follow the prompts. **Check the board model before flashing.** Ordinary installation preserves the device's settings and reading records, as well as TF-card contents. It does not include books or sample reading history.

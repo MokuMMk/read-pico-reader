@@ -71,6 +71,10 @@ extern const EpdWaveform E0470_GRAY8_WAVEFORM;
 #define E0470_WAVEFORM_FRAME_US 11090
 extern const EpdWaveform E0470_WAVEFORM;
 
+/// CrossMux/FreeInk 普通文字翻页 GL16；仅配合真实 4bpp 历史帧差分使用，定期 GC16 保留。
+/// CrossMux/FreeInk text-turn GL16; use with actual 4bpp history differentials and retain periodic GC16.
+extern const EpdWaveform E0470_TEXTTURN_WAVEFORM;
+
 /// 触摸笔迹跟手用的 8 帧短 DU，走 FAST 扫描（帧周期约 7ms）。
 /// 推动次数按 |to-from| 比例分配，满幅迁移往黑推 7 相、往白推 8 相。
 /// / 8-frame short DU for touch ink, FAST scan (~7 ms/frame). Push count

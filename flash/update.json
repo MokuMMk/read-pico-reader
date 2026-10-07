@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.3.3-rc84",
+  "version": "0.3.3-rc85",
   "project": "Read_Pico",
   "board": "RDP-G01-W",
   "layout": "pico-dual-4m-v1",
   "minimum_base_version": "0.3.3-rc72",
-  "url": "https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc84.bin",
-  "size": 3764544,
-  "sha256": "d6ecb751e537d51c1dec178b90bba351bd8416cb94030353180883995e63f2c0",
-  "notes": "1. 优化图文混排\n2. 支持滑动翻页\n3. 新增自动休眠\n4. 优化蓝牙翻页器\n5. 优化图标与界面\n6. 优化文件管理排版"
+  "url": "https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc85.bin",
+  "size": 3765536,
+  "sha256": "ff2042190827cd0f89a0c3b135ad57f76feb17f3afb0e7b14f7fc93d76c76636",
+  "notes": "1. 优化文字翻页，减少闪动\n2. 修复部分 EPUB 插图兼容\n3. 蓝牙扫描隐藏无名设备\n4. 翻页器适配"
 }

@@ -3,6 +3,16 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.3.3-rc85 · 2026-10-07
+
+- 优化阅读文字翻页：纯文字页之间使用 CrossMux / FreeInk 文字波形与灰阶差分，减少重复擦白及新字等待；普通阅读与全屏均生效。涉及插图或图文混排时保留原灰阶路径，水波纹、周期及手动全刷继续有效。在“阅读设置 → 翻页效果”选择“默认效果”体验。
+- 图文兼容修复：补齐 SVG 包装图片及较长 JPEG 头部的尺寸识别，缺失插图记录时继续绘制正文；保留章节分页、标点规则、阅读线和未知图片回退。
+- 蓝牙扫描隐藏没有广播名称的设备；后续扫描响应补齐名称后可显示，点击对应正确设备。
+- 翻页器适配：扩展原生按键支持，保留手动映射优先及键盘修饰键保护。
+- 在线刷机、TF 升级 Bin 与联网 OTA 同源发布，更新日志同步显示在 rc84 及以后固件的更新确认页；保留兼容双槽布局与用户数据。
+
+Text-only turns use the CrossMux / FreeInk waveform and grayscale differentials in normal and full-screen reading. Image/mixed-page transitions, water effects and periodic/manual cleanup retain their existing paths. This release also includes SVG/JPEG image-flow fixes, named-device Bluetooth filtering with later name updates, and Bluetooth pager compatibility with manual-mapping precedence. USB, TF and OTA share one build, preserving the dual-slot layout and user data. Devices running rc84 or later display the release notes before online installation.
+
 ## 0.3.3-rc84 · 2026-10-07
 
 - 图文混排：小图与正文在同一页排版，按比例缩放，多图接排。
@@ -15,14 +25,6 @@ User-visible changes by date and author; Git retains implementation history. See
 联网更新确认页新增简短更新日志，提供“稍后 / 开始更新”。从 rc84 开始，后续更新可在设备上查看日志；旧固件升级本次版本前可在在线刷机页查看。完整刷机、TF 升级和联网 OTA 使用同一编译，保留兼容的双槽基础包、现有设置与阅读数据。
 
 The release adds inline images, swipe page turns, configurable idle lock, clearer learned Bluetooth keys, distinct UI icons and improved file-management layouts. From rc84 onward, the online update offer displays short release notes before installation. USB, TF-card and online updates share one build and retain the compatible dual-slot layout and user data.
-
-## 本地测试 · 2026-10-07
-
-- 采纳 PR #9 的图文混排修复：补齐 SVG 包装图片及较长 JPEG 头部的尺寸识别，保留现有章节分页、标点、阅读线和未知图片回退；缺失插图记录不再提前中止正文绘制。
-- 采纳 PR #10：蓝牙扫描隐藏没有广播名称的设备，后续扫描响应补齐名称后可显示，点击列表对应正确设备。
-- 采纳 PR #11：支持阅星瞳 0x01 / 0x02 翻页协议，保留手动映射优先及键盘修饰键保护。
-
-The local test adopts PR #9 image-flow fixes while retaining existing chapter and punctuation rules, PR #10 named-device filtering with scan-response name updates, and PR #11 YueXingTong input support. Manual mappings retain precedence. The firmware version remains rc84 for local testing.
 
 ## 2026-10-07 · Codex
 
@@ -42,7 +44,7 @@ The local test adopts PR #9 image-flow fixes while retaining existing chapter an
 ## 2026-10-07 · mindreset
 
 - 蓝牙扫描列表不再列出没有广播名的设备：那些行只能显示地址，认不出是什么设备，地址还会把信号强度挤掉。
-- 蓝牙翻页器新增阅星瞳协议的原生支持：0x01 上一页、0x02 下一页，无需学习。
+- 翻页器适配：新增按键协议的原生支持：0x01 上一页、0x02 下一页，无需学习。
 
 ## 2026-10-06 · Codex
 
