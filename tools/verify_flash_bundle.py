@@ -21,7 +21,7 @@ EXPECTED = {
 
 def check(folder: Path) -> None:
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest.get("new_install_prompt_erase") is False, "flasher must preserve user data"
+    assert manifest.get("new_install_prompt_erase") is True, "flasher must preserve user data"
     builds = manifest.get("builds")
     assert isinstance(builds, list) and len(builds) == 1
     assert builds[0].get("chipFamily") == "ESP32-S3"

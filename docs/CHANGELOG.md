@@ -3,6 +3,13 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-07 · mindreset
+
+- 合并 PR12：封面和插图采用中心对齐的双线性缩放，改善细线与图中文字的显示；修正映射运算及损坏 PNG 的缓冲区释放。
+- 合并 PR13：网页刷机默认保留用户数据，擦除需主动勾选；仅列出 Espressif USB 串口，安装对话框改为中文，并避免翻译触发反复处理。保留当前 rc85 固件包与升级版本。
+
+PR12 adopts center-aligned bilinear image resampling with safe coordinate arithmetic and PNG cleanup. PR13 defaults to preserving user data, filters Espressif USB ports and translates installation dialogs without repeated mutation handling. Published rc85 binaries remain unchanged.
+
 ## 0.3.3-rc85 · 2026-10-07
 
 - 优化阅读文字翻页：纯文字页之间使用 CrossMux / FreeInk 文字波形与灰阶差分，减少重复擦白及新字等待；普通阅读与全屏均生效。涉及插图或图文混排时保留原灰阶路径，水波纹、周期及手动全刷继续有效。在“阅读设置 → 翻页效果”选择“默认效果”体验。

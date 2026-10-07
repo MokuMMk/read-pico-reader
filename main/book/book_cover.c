@@ -42,6 +42,66 @@ static uint8_t luminance(uint8_t r, uint8_t g, uint8_t b) {
     return (uint8_t)(((unsigned)r * 77 + (unsigned)g * 150 + (unsigned)b * 29) >> 8);
 }
 
+// 目标下标映射回源窗口坐标：中心对齐，Q8 定点，整数部分进 *out_at、小数部分 0..255 进
+// *out_frac。原来每个目标像素直接取一个源像素，缩放后细节整块丢掉；中心对齐保证裁出来的
+// 窗口正落在目标上，不会差半个像素。
+// Map a destination index back to source-window coordinates: centre-aligned, Q8 fixed point, the
+// integer part into *out_at and the 0..255 fraction into *out_frac. Sampling a single source pixel
+// per destination pixel dropped detail wholesale once scaled down; centre-aligning keeps the crop
+// window landing on the destination instead of half a pixel off.
+static void scale_axis(unsigned at, unsigned dst_n, unsigned src_n, int *out_at, int *out_frac) {
+    if (dst_n < 2 || src_n < 2) { *out_at = 0; *out_frac = 0; return; }
+    // 源坐标 = ((2·at + 1)·src_n − dst_n) / (2·dst_n)。/ Source = ((2*at + 1)*src_n - dst_n) / (2*dst_n).
+    int64_t q = (((2 * (int64_t)at + 1) * src_n - (int64_t)dst_n) * 256) / (2 * (int64_t)dst_n);
+    if (q < 0) q = 0;
+    const int64_t last = (int64_t)src_n - 1;
+    if ((q >> 8) > last) q = last << 8;
+    *out_at = (int)(q >> 8);
+    *out_frac = (int)(q & 0xFF);
+}
+
+typedef struct { uint16_t at; uint8_t frac; } scale_step_t;
+
+// 一根轴的映射表，放在 PSRAM：同一根轴上每个像素的权重都一样，算一次就够。
+// One axis's map, kept in PSRAM: the weights repeat along an axis, so they are computed once.
+static scale_step_t *scale_map(unsigned dst_n, unsigned src_n) {
+    scale_step_t *map = cover_alloc(sizeof(scale_step_t) * (dst_n ? dst_n : 1));
+    if (!map) return NULL;
+    for (unsigned i = 0; i < dst_n; ++i) {
+        int at = 0, frac = 0;
+        scale_axis(i, dst_n, src_n, &at, &frac);
+        map[i].at = (uint16_t)at;
+        map[i].frac = (uint8_t)frac;
+    }
+    return map;
+}
+
+// 取相邻的下一个源下标，到边界就停住，相当于把边缘像素拉出去用。
+// The next source index, clamped at the edge so the border pixel is stretched outwards.
+static inline int scale_next(int at, unsigned src_n) {
+    return (unsigned)(at + 1) < src_n ? at + 1 : at;
+}
+
+// 四点双线性：a b 在上、c d 在下，fx 与 fy 是 0..255 的权重。
+// Four-point bilinear: a b on top, c d below, fx and fy are 0..255 weights.
+static inline uint8_t bilinear4(int a, int b, int c, int d, int fx, int fy) {
+    const int top = a + (((b - a) * fx + 128) >> 8);
+    const int bot = c + (((d - c) * fx + 128) >> 8);
+    return (uint8_t)(top + (((bot - top) * fy + 128) >> 8));
+}
+
+// RGB565 一个像素的亮度，双线性要连着取几个点所以单列。
+// Luminance of one RGB565 pixel; separate because bilinear reads several per output pixel.
+static inline int rgb565_gray(const uint8_t *row, unsigned at) {
+    const uint8_t *p = row + (size_t)at * 2;
+    const uint16_t color = (uint16_t)p[0] | (uint16_t)p[1] << 8;
+    const uint8_t r = (uint8_t)((color >> 11) & 31);
+    const uint8_t g = (uint8_t)((color >> 5) & 63);
+    const uint8_t b = (uint8_t)(color & 31);
+    return luminance((uint8_t)((r << 3) | (r >> 2)), (uint8_t)((g << 2) | (g >> 4)),
+                     (uint8_t)((b << 3) | (b >> 2)));
+}
+
 book_crop_t book_cover_crop(unsigned src_width, unsigned src_height,
                             unsigned dst_width, unsigned dst_height) {
     book_crop_t crop = {0, 0, src_width, src_height};
@@ -134,14 +194,27 @@ static bool jpegdec_gray(const uint8_t *data, size_t size, unsigned frame_width,
         // 1/8 小平面同样按长边铺满 + 居中裁剪映射到目标。
         // The 1/8 plane maps to the target the same way: fill the longer side, centre-crop.
         const book_crop_t crop = book_cover_crop(plane.stride, plane.height, out_width, out_height);
-        for (unsigned y = 0; y < out_height; ++y) {
-            unsigned sy = crop.y + (unsigned)((uint64_t)y * crop.height / out_height);
-            for (unsigned x = 0; x < out_width; ++x) {
-                unsigned sx = crop.x + (unsigned)((uint64_t)x * crop.width / out_width);
-                out[y * out_width + x] = plane.plane[(size_t)sy * plane.stride + sx];
+        scale_step_t *xmap = scale_map(out_width, crop.width);
+        scale_step_t *ymap = scale_map(out_height, crop.height);
+        if (xmap && ymap) {
+            for (unsigned y = 0; y < out_height; ++y) {
+                const int sy = ymap[y].at, fy = ymap[y].frac;
+                const int sy1 = scale_next(sy, crop.height);
+                const uint8_t *r0 = plane.plane + (size_t)(crop.y + (unsigned)sy) * plane.stride;
+                const uint8_t *r1 = plane.plane + (size_t)(crop.y + (unsigned)sy1) * plane.stride;
+                for (unsigned x = 0; x < out_width; ++x) {
+                    const int sx = xmap[x].at, fx = xmap[x].frac;
+                    const int sx1 = scale_next(sx, crop.width);
+                    out[y * out_width + x] = bilinear4(
+                        r0[crop.x + (unsigned)sx], r0[crop.x + (unsigned)sx1],
+                        r1[crop.x + (unsigned)sx], r1[crop.x + (unsigned)sx1], fx, fy);
+                }
+                decode_yield(y);
             }
+            ok = true;
         }
-        ok = true;
+        free(xmap);
+        free(ymap);
     }
     free(plane.plane);
     return ok;
@@ -172,21 +245,28 @@ static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
             // 长边铺满再居中裁剪，长宽比不同也不拉伸。
             // Fill by the longer side and centre-crop, so a different aspect ratio is not stretched.
             const book_crop_t crop = book_cover_crop(info.width, info.height, out_width, out_height);
-            for (unsigned y = 0; y < out_height; ++y) {
-                unsigned sy = crop.y + (unsigned)((uint64_t)y * crop.height / out_height);
-                for (unsigned x = 0; x < out_width; ++x) {
-                    unsigned sx = crop.x + (unsigned)((uint64_t)x * crop.width / out_width);
-                    const uint8_t *p = pixels + ((size_t)sy * info.width + sx) * 2;
-                    uint16_t color = (uint16_t)p[0] | (uint16_t)p[1] << 8;
-                    uint8_t r = (uint8_t)((color >> 11) & 31);
-                    uint8_t g = (uint8_t)((color >> 5) & 63);
-                    uint8_t b = (uint8_t)(color & 31);
-                    out[y * out_width + x] = luminance((uint8_t)((r << 3) | (r >> 2)),
-                                                        (uint8_t)((g << 2) | (g >> 4)),
-                                                        (uint8_t)((b << 3) | (b >> 2)));
+            scale_step_t *xmap = scale_map(out_width, crop.width);
+            scale_step_t *ymap = scale_map(out_height, crop.height);
+            if (xmap && ymap) {
+                for (unsigned y = 0; y < out_height; ++y) {
+                    const int sy = ymap[y].at, fy = ymap[y].frac;
+                    const int sy1 = scale_next(sy, crop.height);
+                    const uint8_t *r0 = pixels + (size_t)(crop.y + (unsigned)sy) * info.width * 2;
+                    const uint8_t *r1 = pixels + (size_t)(crop.y + (unsigned)sy1) * info.width * 2;
+                    for (unsigned x = 0; x < out_width; ++x) {
+                        const int sx = xmap[x].at, fx = xmap[x].frac;
+                        const int sx1 = scale_next(sx, crop.width);
+                        out[y * out_width + x] = bilinear4(
+                            rgb565_gray(r0, crop.x + (unsigned)sx), rgb565_gray(r0, crop.x + (unsigned)sx1),
+                            rgb565_gray(r1, crop.x + (unsigned)sx), rgb565_gray(r1, crop.x + (unsigned)sx1),
+                            fx, fy);
+                    }
+                    decode_yield(y);
                 }
+                decoded = true;
             }
-            decoded = true;
+            free(xmap);
+            free(ymap);
         }
         free(pixels);
         if (decoded) break;
@@ -209,6 +289,15 @@ static bool png_gray_input(const uint8_t *data, size_t size, FILE *file, unsigne
     png_infop info = png_create_info_struct(png);
     if (!info) { png_destroy_read_struct(&png, NULL, NULL); return false; }
     uint8_t *volatile row = NULL;
+    // 双线性要相邻两行，所以窗口内留两行灰度：行号按奇偶分别落在两个缓冲里。
+    // Bilinear needs two adjacent rows, so two window rows of gray are kept, indexed by row parity.
+    //
+    // 这三个必须使用 volatile 并声明在 setjmp 之前：goto done 会跳过 setjmp 之后的初始化，在那里 free()
+    // 未初始化的指针会崩。
+    // These must be volatile and declared before setjmp: goto done skips the initialisers that follow it, and
+    // freeing an uninitialised pointer there would crash.
+    scale_step_t *volatile xmap = NULL, *volatile ymap = NULL;
+    uint8_t *volatile rows[2] = {NULL, NULL};
     png_input_t input = {data, size, 0, file};
     bool ok = false;
     if (setjmp(png_jmpbuf(png))) goto done;
@@ -234,22 +323,47 @@ static bool png_gray_input(const uint8_t *data, size_t size, FILE *file, unsigne
     // The streaming reader applies the crop window to rows and columns alike: rows outside the
     // window are dropped and columns are sampled inside it.
     const book_crop_t crop = book_cover_crop(width, height, out_width, out_height);
-    for (png_uint_32 y = 0; y < height; ++y) {
-        png_read_row(png, row, NULL);
-        decode_yield((unsigned)y);
-        while (next_y < out_height &&
-               crop.y + (uint64_t)next_y * crop.height / out_height == y) {
-            for (unsigned x = 0; x < out_width; ++x) {
-                unsigned sx = crop.x + (uint64_t)x * crop.width / out_width;
-                const uint8_t *p = row + sx * 4;
-                uint8_t gray = luminance(p[0], p[1], p[2]);
-                out[next_y * out_width + x] = (uint8_t)(((unsigned)gray * p[3] + 255u * (255u - p[3])) / 255u);
+    if (crop.width && crop.height) {
+        xmap = scale_map(out_width, crop.width);
+        ymap = scale_map(out_height, crop.height);
+        rows[0] = cover_alloc(crop.width);
+        rows[1] = cover_alloc(crop.width);
+    }
+    if (xmap && ymap && rows[0] && rows[1]) {
+        for (png_uint_32 y = 0; y < height; ++y) {
+            png_read_row(png, row, NULL);
+            decode_yield((unsigned)y);
+            const int wy = (int)y - (int)crop.y;
+            if (wy < 0 || wy >= (int)crop.height) continue;
+            uint8_t *cur = rows[wy & 1];
+            for (unsigned x = 0; x < crop.width; ++x) {
+                const uint8_t *p = row + (size_t)(crop.x + x) * 4;
+                const uint8_t gray = luminance(p[0], p[1], p[2]);
+                cur[x] = (uint8_t)(((unsigned)gray * p[3] + 255u * (255u - p[3])) / 255u);
             }
-            ++next_y;
+            // 两行都齐了的目标行可以一次输出完：同一源行可能对应多个目标行（放大时）。
+            // Every destination row whose two source rows are now present can be emitted: one source
+            // row may serve several destination rows when scaling up.
+            while (next_y < out_height) {
+                const int sy = ymap[next_y].at, fy = ymap[next_y].frac;
+                const int sy1 = scale_next(sy, crop.height);
+                if (wy < sy1) break;
+                const uint8_t *r0 = rows[sy & 1], *r1 = rows[sy1 & 1];
+                for (unsigned x = 0; x < out_width; ++x) {
+                    const int sx = xmap[x].at, fx = xmap[x].frac;
+                    const int sx1 = scale_next(sx, crop.width);
+                    out[next_y * out_width + x] = bilinear4(r0[sx], r0[sx1], r1[sx], r1[sx1], fx, fy);
+                }
+                ++next_y;
+            }
         }
     }
     ok = next_y == out_height;
 done:
+    free(xmap);
+    free(ymap);
+    free(rows[0]);
+    free(rows[1]);
     free((void *)row);
     png_destroy_read_struct(&png, &info, NULL);
     return ok;
