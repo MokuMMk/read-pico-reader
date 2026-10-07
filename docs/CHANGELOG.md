@@ -3,6 +3,10 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 2026-10-07 · mindreset
+
+- 蓝牙翻页器的按键映射改为显示实际学到的键：以前只写“自定义按键”，现在直接给出该键的原始字节（如 0x88），字节下标或报告号非零时一并补上，两个绑定不会再看起来一样。
+
 ## 2026-10-06 · Codex
 
 - 固件 0.3.3-rc83：
