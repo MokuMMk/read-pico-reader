@@ -2367,6 +2367,37 @@ static void release_page_images(void) {
     free(s_page_images); s_page_images = NULL; s_page_image_count = 0;
     s_page_images_for = SIZE_MAX;
 }
+// 排版的兜底尺寸回调。走完整解码取尺寸，所以 SVG 包图和 SOF 帧头落在 64KB 之外的 JPEG
+// 都量得到；有界前缀探测量不到这两种，量不到就退回整页，插图于是独占一页。上下文自带章节
+// 与图片表，不依赖全局状态的赋值时机。
+// Fallback dimensions callback for the layout. It measures through a full decode, so SVG wrappers
+// and JPEGs whose SOF header sits past 64 KB both resolve; the bounded prefix probe cannot measure
+// those, and an unmeasured image becomes a whole page -- which puts an illustration on its own.
+// The context carries its own chapter and image list so it never depends on assignment order.
+typedef struct {
+    size_t chapter;
+    char** images;
+    size_t count;
+} reader_dims_ctx_t;
+
+static reader_dims_ctx_t s_reader_dims_ctx;
+
+static bool reader_image_dims(void* ctx, int image, int* width, int* height) {
+    const reader_dims_ctx_t* c = (const reader_dims_ctx_t*)ctx;
+    if (!c || image < 0 || (size_t)image >= c->count) return false;
+    uint8_t* encoded = NULL;
+    size_t size = 0;
+    bool png = false;
+    if (book_chapter_image(c->chapter, c->images[image], &encoded, &size, &png) != ESP_OK) return false;
+    unsigned w = 0, h = 0;
+    const bool ok = book_image_dimensions(encoded, size, png, &w, &h) && w && h;
+    free(encoded);
+    if (!ok) return false;
+    if (width) *width = (int)w;
+    if (height) *height = (int)h;
+    return true;
+}
+
 static void prepare_inline_image(void) {
     if (app_settings_reader_hide_images()) { release_page_images(); return; }
     uint32_t generation = book_layout_generation();
@@ -2478,6 +2509,11 @@ static bool load_chapter_at(app_ctx_t* ctx, size_t chapter, size_t offset,
     lock_draw();
     invalidate_prep();
     book_layout_set_chapter_lead(lead_skip, lead_height);
+    // 布局之前注册：排版会按顺序问遍本章的图，上下文自带章节和图片表，与全局赋值顺序无关。
+    // Register before the layout: pagination asks about this chapter's images, and the context
+    // carries the chapter and image list itself rather than depending on assignment order.
+    s_reader_dims_ctx = (reader_dims_ctx_t){chapter, loaded.images, loaded.image_count};
+    book_layout_set_image_dims(reader_image_dims, &s_reader_dims_ctx);
     bool ok = book_layout_build_blocks(loaded.utf8, loaded.len, loaded.blocks, loaded.count, body_rect(), s_px);
     if (!ok) {
         html_text_free(&loaded);
