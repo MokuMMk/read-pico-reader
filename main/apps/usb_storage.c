@@ -26,6 +26,7 @@ static tinyusb_msc_storage_handle_t s_storage;
 static usb_phy_handle_t s_serial_phy;
 static bool s_host_ready, s_usb_ready, s_msc_ready;
 static bool s_active;
+static bool s_cleanup_pending;
 
 // MSC 用完内部 PHY 后，把它交还给串口/JTAG，电脑才能再次自动刷写。
 // Return the shared internal PHY to Serial/JTAG after MSC so flashing can reconnect.
@@ -47,7 +48,11 @@ static void release_serial_phy(void) {
 }
 
 bool usb_storage_active(void) { return s_active; }
-bool usb_storage_connected(void) { return s_active && tud_mounted(); }
+bool usb_storage_connected(void) { return s_active && !s_cleanup_pending && tud_mounted(); }
+
+void usb_storage_phy_init(void) {
+    restore_serial_phy();
+}
 
 static void release_card(void) {
     if (s_card) { free(s_card); s_card = NULL; }
@@ -61,6 +66,7 @@ static void restore_local(void) {
 }
 
 esp_err_t usb_storage_start(void) {
+    if (s_cleanup_pending) return ESP_ERR_INVALID_STATE;
     if (s_active) return ESP_OK;
     read_pico_sd_info_t info = {0};
     if (read_pico_sd_get_info(&info) != ESP_OK || !info.mounted) return ESP_ERR_INVALID_STATE;
@@ -110,16 +116,19 @@ esp_err_t usb_storage_start(void) {
     return ESP_OK;
 fail:
     ESP_LOGE(TAG, "USB start failed: %s", esp_err_to_name(err));
-    if (s_usb_ready) { tinyusb_driver_uninstall(); s_usb_ready = false; }
-    restore_serial_phy();
-    if (s_storage) { tinyusb_msc_delete_storage(s_storage); s_storage = NULL; }
-    if (s_msc_ready) { tinyusb_msc_uninstall_driver(); s_msc_ready = false; }
-    restore_local();
+    // 启动失败也走同一个收尾路径，失败的存储句柄必须保留供重试。
+    // Failed starts use the same teardown; retain any storage handle that still needs cleanup.
+    s_active = true;
+    (void)usb_storage_stop();
     return err;
 }
 
 esp_err_t usb_storage_stop(void) {
-    if (!s_active) return ESP_OK;
+    if (!s_active && !s_storage && !s_usb_ready && !s_msc_ready && !s_host_ready) {
+        restore_serial_phy();
+        return ESP_OK;
+    }
+    s_cleanup_pending = true;
     // 先断开电脑并等待同步写回调结束，再释放 USB 存储对象。
     // Disconnect and let the synchronous write callback finish before freeing USB storage.
     if (s_usb_ready) {
@@ -130,22 +139,33 @@ esp_err_t usb_storage_stop(void) {
     for (int attempt = 0; s_storage && attempt < 20; ++attempt) {
         err = tinyusb_msc_delete_storage(s_storage);
         if (err == ESP_OK) { s_storage = NULL; break; }
-        if (err != ESP_ERR_INVALID_STATE) return err;
+        if (err != ESP_ERR_INVALID_STATE) goto cleanup;
         vTaskDelay(pdMS_TO_TICKS(50));
     }
-    if (s_storage) return err;
+    if (s_storage) goto cleanup;
     if (s_usb_ready) {
         err = tinyusb_driver_uninstall();
-        if (err != ESP_OK) return err;
+        if (err != ESP_OK) goto cleanup;
         s_usb_ready = false;
     }
-    restore_serial_phy();
     if (s_msc_ready) {
         err = tinyusb_msc_uninstall_driver();
-        if (err != ESP_OK) return err;
+        if (err != ESP_OK) goto cleanup;
         s_msc_ready = false;
     }
+
+cleanup:
+    // 所有退出路径都尝试归还串口；只有 USB/MSC 完全退出后才释放卡和恢复本机挂载。
+    // Reclaim the console on every exit; free the card and remount only after USB/MSC fully stop.
+    restore_serial_phy();
+    if (s_storage || s_usb_ready || s_msc_ready) {
+        // 暂停主循环的卡访问与自动休眠，保留句柄供“结束 USB 读卡”再次收尾。
+        // Keep card access and idle sleep paused until End USB retries the retained handles.
+        s_active = true;
+        return err == ESP_OK ? ESP_ERR_INVALID_STATE : err;
+    }
     s_active = false;
+    s_cleanup_pending = false;
     restore_local();
     return ESP_OK;
 }

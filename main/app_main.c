@@ -20,12 +20,14 @@
 #include "esp_log.h"
 #include "ota_update.h"
 #include "pmu_selftest.h"
+#include "soc/rtc_cntl_reg.h"
 #include "read_pico_board.h"
 #include "read_pico_init.h"
 #include "read_pico_pmu.h"
 #include "read_pico_pmu_protocol.h"
 #include "settings.h"
 #include "ttf_font.h"
+#include "usb_storage.h"
 #include "app_font_context.h"
 #include "ui_kit.h"
 #include "vcom_setup.h"
@@ -79,6 +81,11 @@ static bool images_match_panel(void) {
 }
 
 void app_main(void) {
+    // 共享 TF 卡期间复位后，先把内部 PHY 交回串口，再清理已用完的 BOOT 请求。
+    // Reclaim Serial/JTAG after a reset during card sharing, then clear the served BOOT request.
+    usb_storage_phy_init();
+    REG_CLR_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+
     read_pico_handle_t hw;
     if (read_pico_init(&hw) != ESP_OK) return;
     if (hw.pmu_ready) restore_time_from_pmu();

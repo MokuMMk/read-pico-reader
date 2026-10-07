@@ -12,3 +12,7 @@ esp_err_t usb_storage_start(void);
 esp_err_t usb_storage_stop(void);
 bool usb_storage_active(void);
 bool usb_storage_connected(void);
+
+/// 开机回收串口/JTAG 所需的共享内部 PHY。
+/// / Reclaim the shared internal PHY for Serial/JTAG at boot.
+void usb_storage_phy_init(void);
