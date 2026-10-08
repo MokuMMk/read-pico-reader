@@ -8,8 +8,8 @@
 #pragma once
 
 #include "app.h"
+#include "ui_nav_layout.h"
 
-#define UI_NAV_TOP 1096
 #define UI_NAV_BACK_BORDER_GRAY 0x58
 
 void ui_nav_draw(uint8_t *fb, int active);

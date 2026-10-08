@@ -10,6 +10,8 @@
  * Authorized keyboard revision: profile and signature share T9/QWERTY and offline phrases; this page still owns saving.
  * 用户修订：资料卡与签名输入只画变化区域，不因输入次数触发整屏黑白清屏。
  * User revision: profile/signature input paints changed regions without whole-screen wipes based on typing counts.
+ * 用户修订：快刷说明标注棋盘格亚克力，普通与水波纹继续保留灰阶；三种主页面刷新模式均固定底栏。
+ * User revision: the fast-mode description identifies checkerboard acrylic; ordinary/water keep grays and all main-screen modes retain navigation.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,7 +59,7 @@ static void fit_value(char *value, int width);
 static char s_notice[96];
 typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_TIME_EDIT, SETTINGS_SHELF_STYLE, SETTINGS_SYSTEM_FONT,
-               SETTINGS_SYSTEM_SIZE, SETTINGS_SYSTEM_CONTRAST, SETTINGS_LOCK_STYLE,
+               SETTINGS_SYSTEM_SIZE, SETTINGS_SYSTEM_CONTRAST, SETTINGS_MAIN_REFRESH, SETTINGS_LOCK_STYLE,
                SETTINGS_WALLPAPER, SETTINGS_WALLPAPER_PREVIEW,
                SETTINGS_CONFIG, SETTINGS_UPGRADE, SETTINGS_BOOT,
                SETTINGS_POWER_SLEEP, SETTINGS_AUTO_LOCK, SETTINGS_PROFILE, SETTINGS_AVATAR,
@@ -181,7 +183,7 @@ static const char *const TAG = "device_settings";
 #define SETTINGS_WIRELESS_Y 315
 #define SETTINGS_DISPLAY_Y 495
 #define SETTINGS_ROW_H 68
-#define SETTINGS_DISPLAY_ROWS 6
+#define SETTINGS_DISPLAY_ROWS 7
 #define SETTINGS_DEVICE_Y (SETTINGS_DISPLAY_Y + SETTINGS_DISPLAY_ROWS * SETTINGS_ROW_H + 41)
 // 「阅读与设备」组的行数。滚动上限由它推导：主页面最后一行必须能完整落在
 // 底部导航栏（UI_NAV_TOP）之上的可点区里，否则最后一行永远露不出来，也点不到。
@@ -526,6 +528,7 @@ static void setting_icon(uint8_t *fb, int index, int cx, int cy) {
         UI_ICON_DOWNLOAD,          // 12 系统升级
         UI_ICON_CPU,               // 13 BOOT 刷机
         UI_ICON_TIMER,             // 14 自动休眠
+        UI_ICON_SLIDERS_HORIZONTAL, // 15 主页刷新模式 / Main refresh mode
     };
     if (index < 0 || index >= (int)(sizeof(icons) / sizeof(icons[0]))) return;
     ui_draw_icon(fb, cx, cy, SETTINGS_ICON_PX, icons[index], SETTINGS_ICON_INK);
@@ -612,7 +615,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     ui_clear_page(fb);
 
     if (s_page == SETTINGS_MAIN || s_page == SETTINGS_SHELF_STYLE)
-        epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, 0xe0, fb);
+        epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP},
+                      app_settings_main_refresh_mode() != APP_MAIN_REFRESH_NORMAL && s_page == SETTINGS_MAIN ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
     if (s_page == SETTINGS_PROFILE) {
         back_header(fb, "个人资料");
@@ -751,6 +755,23 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             char label[48]; snprintf(label, sizeof(label), "%d%%", value);
             ui_text_vc(fb, box.x + 24, box.y + 51, 29, label, EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(box.x + box.width - 25, box.y + 51, 8, UI_GRAY_BLACK, fb);
+        }
+        ui_nav_draw(fb, 3);
+        return;
+    }
+    if (s_page == SETTINGS_MAIN_REFRESH) {
+        back_header(fb, "主页刷新模式");
+        section(fb, 248, "首页 · 书架 · 文件管理 · 设置");
+        const char* names[] = {"普通", "快刷", "水波纹"};
+        const char* details[] = {"保留灰阶层次，兼顾画面清晰度", "黑白快刷，亚克力用细棋盘格", "以水波纹切换页面，保留灰阶"};
+        for (int i = 0; i < 3; ++i) {
+            const EpdRect box = {36, 298 + i * 158, 612, 132};
+            const bool active = app_settings_main_refresh_mode() == (app_main_refresh_mode_t)i;
+            settings_card(fb, box, 22, active ? 0xd0 : UI_GRAY_WHITE, 0x58);
+            ui_text_vc(fb, 64, box.y + 38, 30, names[i], EPD_DRAW_ALIGN_LEFT, false);
+            char detail[128]; snprintf(detail, sizeof(detail), "%s", details[i]); fit_value(detail, 498);
+            ui_text_vc(fb, 64, box.y + 89, 22, detail, EPD_DRAW_ALIGN_LEFT, false);
+            if (active) epd_fill_circle(607, box.y + 38, 8, UI_GRAY_BLACK, fb);
         }
         ui_nav_draw(fb, 3);
         return;
@@ -1087,6 +1108,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         bool avatar_ok = app_settings_avatar_path()[0] &&
             ui_wallpaper_draw_rounded(fb, app_settings_avatar_path(),
                                       (EpdRect){57, profile_y + 11, 82, 82}, 20);
+        if (app_settings_main_fast_refresh() && avatar_ok) ui_image_bw_rect(fb, (EpdRect){57, profile_y + 11, 82, 82});
         if (!avatar_ok) {
             ui_fill_round_rect(fb, (EpdRect){57, profile_y + 11, 82, 82}, 20, 0x30);
             ui_text(fb, 98, profile_y + 25, 49, "P", EPD_DRAW_ALIGN_CENTER, true);
@@ -1121,7 +1143,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     static const int wireless_icons[] = {0, 1};
     setting_group(fb, 285, "无线连接", SETTINGS_WIRELESS_Y,
                   wireless_icons, wireless_labels, wireless_values, 2);
-    const char *reading_labels[] = {"系统字体", "系统字号", "系统对比度", "书架样式", "状态栏签名", "首页强刷"};
+    const char *reading_labels[] = {"系统字体", "系统字号", "系统对比度", "书架样式", "状态栏签名", "首页强刷", "主页刷新模式"};
     char font[96];
     const char *chosen_font = app_settings_system_font_path();
     snprintf(font, sizeof(font), "%s  ›", system_font_label(chosen_font));
@@ -1134,8 +1156,10 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
              app_settings_status_signature()[0] ? app_settings_status_signature() : "未设置");
     fit_value(signature_value, 235);
     const char *reading_values[] = {font, size, contrast, styles[app_settings_shelf_style()],
-                                    signature_value, app_settings_home_full_refresh() ? "开启  ›" : "关闭  ›"};
-    static const int reading_icons[] = {2, 3, 7, 4, 10, 11};
+                                    signature_value, app_settings_home_full_refresh() ? "开启  ›" : "关闭  ›",
+                                    app_settings_main_refresh_mode() == APP_MAIN_REFRESH_FAST ? "快刷  ›" :
+                                    app_settings_main_refresh_mode() == APP_MAIN_REFRESH_WATER ? "水波纹  ›" : "普通  ›"};
+    static const int reading_icons[] = {2, 3, 7, 4, 10, 11, 15};
     setting_group(fb, SETTINGS_DISPLAY_Y - 30, "显示", SETTINGS_DISPLAY_Y,
                   reading_icons, reading_labels, reading_values, SETTINGS_DISPLAY_ROWS);
     char idle_value[32];
@@ -1156,7 +1180,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     static const int maintenance_icons[] = {12, 8, 13};
     setting_group(fb, SETTINGS_MAINTENANCE_Y - 34, "升级和恢复", SETTINGS_MAINTENANCE_Y,
                   maintenance_icons, maintenance_labels, maintenance_values, 3);
-    epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, 160}, 0xe0, fb);
+    epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, 160},
+                  app_settings_main_refresh_mode() != APP_MAIN_REFRESH_NORMAL ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
     ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
     ui_nav_draw(fb, 3);
@@ -1597,6 +1622,14 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         app_font_activate_system();
         return APP_REDRAW_PAGE;
     }
+    if (s_page == SETTINGS_MAIN_REFRESH) {
+        for (int i = 0; i < 3; ++i) {
+            if (!ui_rect_hit((EpdRect){36, 298 + i * 158, 612, 132}, ev->x0, y)) continue;
+            app_settings_set_main_refresh_mode((app_main_refresh_mode_t)i);
+            return APP_REDRAW_PAGE;
+        }
+        return APP_REDRAW_NONE;
+    }
     if (s_page == SETTINGS_SYSTEM_SIZE) {
         for (int index = 0; index < 11; ++index) {
             EpdRect box = {36 + (index % 2) * 316, 298 + (index / 2) * 122, 296, 102};
@@ -1848,6 +1881,10 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         app_settings_set_home_full_refresh(!app_settings_home_full_refresh());
         return APP_REDRAW_PAGE;
     }
+    if (y >= SETTINGS_DISPLAY_Y + 6 * SETTINGS_ROW_H && y < SETTINGS_DISPLAY_Y + 7 * SETTINGS_ROW_H) {
+        s_page = SETTINGS_MAIN_REFRESH;
+        return APP_REDRAW_PAGE;
+    }
 
     if (y >= SETTINGS_DEVICE_Y && y < SETTINGS_DEVICE_Y + SETTINGS_ROW_H) {
         s_page = SETTINGS_LOCK_STYLE;
@@ -1907,6 +1944,7 @@ static void on_before_lock(app_ctx_t *ctx) {
     (void)ble_pt_stop(2000);
 }
 static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
+static bool main_page_visible(app_ctx_t *ctx) { (void)ctx; return s_page == SETTINGS_MAIN; }
 static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
     if (redraw == APP_REDRAW_AREA && s_page == SETTINGS_TEXT_EDIT) {
         if (s_input_settle) {
@@ -1941,6 +1979,7 @@ static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
 const app_desc_t app_device_settings = {
     .title = "设置 Settings", .detail = "显示、连接与设备", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
+    .main_page_visible = main_page_visible,
     .on_enter = on_enter, .on_exit = settings_exit, .on_before_lock = on_before_lock, .render = render, .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key,
     .present = settings_present,
 };

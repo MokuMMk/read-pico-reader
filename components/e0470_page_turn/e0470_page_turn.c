@@ -4,9 +4,10 @@
  *
  * 基于 MindReset Read Pico 官方 E0470 波形与刷新路径实现。
  * Built on the MindReset Read Pico E0470 waveform and refresh path.
- * 错相揭页引擎实现。16 带、每像素一次完整 GL16；差分只算一次，每拍只换对应相位的 1K LUT。
- * Staggered page-turn engine: 16 bands, one full GL16 transition per changed pixel,
- * one difference calculation, and a per-band 1 KiB phase LUT on each tick.
+ * 错相揭页引擎实现。阅读保留原16带/GL16；主页可指定柔和序列和24带。差分只算一次，每拍只换对应相位的1K LUT。
+ * Staggered page-turn engine: reading retains original 16 bands / GL16; main pages may supply a soft sequence and 24 bands. Calculate differences once and select per-band 1 KiB phase LUTs on each tick.
+ * 用户要求移植PR17快档并替换阅读动画：阅读恢复每拍启动一带、37相共52拍，调用端选择14ms且不截短扫描；主页保留错开启动与原节拍。
+ * User requests PR17 fast ripple as the reader replacement: launch one reader band each tick, retaining 37 phases over 52 ticks; the caller selects 14ms without truncating scans. Main pages retain spaced launches and their existing pacing.
  */
 
 #include "e0470_page_turn.h"
@@ -23,15 +24,16 @@
 
 static const char* TAG = "e0470_turn";
 
-#define TURN_BANDS 16
+#define TURN_DEFAULT_BANDS 16
+#define TURN_BANDS_MAX 32
 #define TURN_PHASE_CAP 40
 #define TURN_LINE_MAX 2048
 
 static uint8_t (*s_lut)[1024];
 static const uint8_t* s_lut_ptr[TURN_PHASE_CAP];
-static int s_band0[TURN_BANDS];
-static int s_band1[TURN_BANDS];
-static int8_t s_band_phase[TURN_BANDS];
+static int s_band0[TURN_BANDS_MAX];
+static int s_band1[TURN_BANDS_MAX];
+static int8_t s_band_phase[TURN_BANDS_MAX];
 static int8_t s_line_phase[TURN_LINE_MAX] DRAM_ATTR;
 static const EpdWaveformPhases* s_lut_src;
 static int s_lut_n;
@@ -256,18 +258,23 @@ static void copy_front_to_back(EpdiyHighlevelState* hl, EpdRect phys) {
     }
 }
 
-enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir) {
+static enum EpdDrawError page_turn_run(EpdiyHighlevelState* hl, EpdRect area,
+    e0470_turn_dir_t dir, const EpdWaveform* waveform, unsigned band_count, bool compact) {
     if (hl == NULL) return EPD_DRAW_NO_PHASES_AVAILABLE;
+    if (band_count < 2 || band_count > TURN_BANDS_MAX) return EPD_DRAW_INVALID_CROP;
     if (dir > E0470_TURN_BTT) dir = E0470_TURN_RTL;
 
-    const EpdWaveformPhases* gl = e0470_waveform_phases(&E0470_WAVEFORM, MODE_GL16);
-    if (gl == NULL || gl->luts == NULL || gl->phases <= 0 || gl->phases > TURN_PHASE_CAP) {
+    const EpdWaveformPhases* gl = e0470_waveform_phases(waveform, MODE_GL16);
+    if (gl == NULL || gl->luts == NULL || gl->phases <= 0 || gl->phases > TURN_PHASE_CAP || gl->phase_times) {
         return EPD_DRAW_NO_PHASES_AVAILABLE;
     }
 
-    const int bands = TURN_BANDS;
+    const int bands = (int)band_count;
     const int nphase = gl->phases;
-    const int ticks = bands + nphase - 1;
+    // 阅读采用PR17一拍一带调度；主页仍在末带启动前完成首带，避免改变主页面的视觉效果。
+    // Reader uses PR17's one-band-per-tick scheduling; main pages still finish the first band before the last launch to preserve their appearance.
+    const int launch_step = compact ? 1 : (nphase + bands - 2) / (bands - 1);
+    const int ticks = (bands - 1) * launch_step + nphase;
     const int fb_w = epd_width();
     const int fb_h = epd_height();
     if (fb_h > TURN_LINE_MAX) return EPD_DRAW_INVALID_CROP;
@@ -320,7 +327,7 @@ enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_t
 
         bool any = false;
         for (int band = 0; band < bands; band++) {
-            const int phase = tick - band;
+            const int phase = tick - band * launch_step;
             if (phase < 0 || phase >= nphase) continue;
             const int a = s_band0[band];
             const int b = s_band1[band];
@@ -383,4 +390,13 @@ enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_t
         (int)err
     );
     return err;
+}
+
+enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir) {
+    return page_turn_run(hl, area, dir, &E0470_WAVEFORM, TURN_DEFAULT_BANDS, true);
+}
+
+enum EpdDrawError e0470_page_turn_with_waveform(EpdiyHighlevelState* hl, EpdRect area,
+    e0470_turn_dir_t dir, const EpdWaveform* waveform, unsigned band_count) {
+    return page_turn_run(hl, area, dir, waveform, band_count, false);
 }

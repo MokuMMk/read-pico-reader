@@ -4,9 +4,12 @@
  *
  * 中文：内建 Noto Sans SC 子集与独立的 PSRAM 位图缓存。常用汉字以分块压缩位图补齐，其他未知字交给阅读字体回退。
  * English: Built-in Noto Sans SC subset with its own PSRAM bitmap cache; block-compressed common Han glyphs, with other unknown glyphs falling back to the reader face.
+ * 用户反馈书名锯齿：补充位图缩放改为覆盖率插值，保留字体来源、字宽及缓存上限；快刷最终仍为黑白。
+ * User-reported jagged titles: interpolate supplemental bitmap coverage, retaining font sources, advances and cache bounds; final fast output remains monochrome.
  */
 #include "ui_font.h"
 #include "ui_hanzi.h"
+#include "ui_hanzi_scale.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -166,9 +169,7 @@ static ui_glyph_t *glyph(uint32_t cp, int px) {
     g->bitmap = heap_caps_malloc(g->bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (g->bitmap) {
         if (supplemental) for (int y = 0; y < g->height; ++y) for (int x = 0; x < g->width; ++x) {
-            int sx = x * extra[2] / g->width, sy = y * extra[3] / g->height;
-            unsigned bit = (unsigned)sy * UI_HANZI_BASE_PX + sx;
-            g->bitmap[y * g->width + x] = extra[5 + bit / 8] & (1u << (bit & 7)) ? 255 : 0;
+            g->bitmap[y * g->width + x] = ui_hanzi_coverage(extra, g->width, g->height, x, y);
         }
         else stbtt_MakeCodepointBitmap(&s_font, g->bitmap, g->width, g->height, g->width,
                                       scale, scale, (int)cp);

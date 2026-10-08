@@ -6,6 +6,8 @@
  * Built on the MindReset Read Pico E0470 waveform and refresh path.
  * 错相揭页引擎。应用只依赖本公开接口，不依赖条带或 LUT 的内部布局。
  * Staggered page-turn engine. Applications depend on this public API, not the internal band or LUT layout.
+ * 用户采用PR17快速阅读水波纹：原阅读入口恢复一拍一带，快档14ms；主页的显式序列入口保留错开启动。
+ * User adopts PR17 fast reader ripple: the reader entry resumes one band per tick with 14ms fast pacing; the explicit main-page sequence retains spaced launches.
  */
 
 #pragma once
@@ -25,11 +27,13 @@ typedef enum {
     E0470_TURN_BTT = 3,
 } e0470_turn_dir_t;
 
-#define E0470_TURN_DEFAULT_TICK_US 21000
+#define E0470_TURN_DEFAULT_TICK_US 12000
+// PR17快档只缩短软件补等，不改变单次扫描或每像素相位。/ PR17 fast pacing changes only software padding, never a scan or a pixel's phases.
+#define E0470_TURN_FAST_TICK_US 14000
 
 const char* e0470_turn_dir_name(e0470_turn_dir_t dir);
 
-/// 每拍目标时长；默认 21ms × 52 ≈ 1.1s。/ Target tick duration; default 21ms × 52 ≈ 1.1s.
+/// 每拍目标间隔；默认12ms，实际扫描更慢时不截短；不改变驱动脉冲宽度。/ Target tick interval: 12ms; never truncate a slower scan or change pulse widths.
 void e0470_page_turn_set_tick_us(int us);
 int e0470_page_turn_tick_us(void);
 /// 离开阅读时释放按需分配的相位表。/ Release the lazily allocated phase table when leaving the reader.
@@ -37,9 +41,16 @@ void e0470_page_turn_release(void);
 
 /// `area` 是逻辑坐标；无可用 GL16 时返回 `EPD_DRAW_NO_PHASES_AVAILABLE`，不刷屏。
 /// `area` uses logical coordinates; unavailable GL16 phases return without scanning.
-/// 调用方负责 FAST 扫描与 HV 轨保活。/ Caller owns FAST scanning and HV rail keepalive.
+/// 阅读16带按一拍一带启动；调用方选择快档并负责FAST扫描与HV轨保活。
+/// Reader launches its 16 bands one per tick; the caller selects fast pacing and owns FAST scanning and HV rail keepalive.
 enum EpdDrawError e0470_page_turn(
     EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir
+);
+
+/// 显式灰阶序列与2..32条带；普通阅读入口仍固定原GL16/16带。/ Explicit gray sequence and 2..32 bands; the ordinary reader entry retains original GL16/16 bands.
+enum EpdDrawError e0470_page_turn_with_waveform(
+    EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir,
+    const EpdWaveform* waveform, unsigned bands
 );
 
 #ifdef __cplusplus

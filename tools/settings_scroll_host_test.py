@@ -26,8 +26,10 @@ def function(name):
     assert m,name
     return block(m.start())
 render_start=s.index('static void render(')
+render_mode=block(s.index("if (s_page == SETTINGS_MAIN_REFRESH)",render_start))
 render_size=block(s.index('if (s_page == SETTINGS_SYSTEM_SIZE)',render_start))
 gesture_start=s.index('static app_redraw_t on_gesture(')
+select_mode=block(s.index("if (s_page == SETTINGS_MAIN_REFRESH)",gesture_start))
 select_size=block(s.index('if (s_page == SETTINGS_SYSTEM_SIZE)',gesture_start))
 # 资料卡必须在蓝牙和扫描页 return 之后绘制。/ The profile must draw only after both Bluetooth early returns.
 profile=s.index('const int profile_y',render_start)
@@ -45,7 +47,7 @@ typedef struct {uint8_t *fb;void *hl;} app_ctx_t;
 typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE} app_redraw_t;
 typedef enum {UI_GESTURE_PRESS,UI_GESTURE_MOVE,UI_GESTURE_TAP,UI_GESTURE_CANCEL,UI_GESTURE_SWIPE_U,UI_GESTURE_SWIPE_D} gesture_t;
 typedef struct {gesture_t type;int x,y,x0,y0;} ui_gesture_event_t;
-enum {SETTINGS_MAIN,SETTINGS_BLUETOOTH,SETTINGS_BLE_SCAN,SETTINGS_UPGRADE,SETTINGS_SYSTEM_SIZE,
+enum {SETTINGS_MAIN,SETTINGS_BLUETOOTH,SETTINGS_BLE_SCAN,SETTINGS_UPGRADE,SETTINGS_SYSTEM_SIZE,SETTINGS_MAIN_REFRESH,
       SETTINGS_SHELF_STYLE,SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR,SETTINGS_TEXT_EDIT};
 enum EpdDrawMode {MODE_GC16,MODE_GL16,MODE_DU};
 #define UI_NAV_TOP 1096
@@ -69,6 +71,11 @@ static int update_display_area_full_with(void *hl,const int *wave,enum EpdDrawMo
 static EpdRect upgrade_progress_area(void){return (EpdRect){52,468,580,64};}
 static void guard_draw_result(void *hl,int status){(void)hl;assert(!status);}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&y>=r.y&&x<r.x+r.width&&y<r.y+r.height;}
+typedef enum {APP_MAIN_REFRESH_NORMAL,APP_MAIN_REFRESH_FAST,APP_MAIN_REFRESH_WATER} app_main_refresh_mode_t;
+static app_main_refresh_mode_t main_choice;
+static app_main_refresh_mode_t app_settings_main_refresh_mode(void){return main_choice;}
+static void app_settings_set_main_refresh_mode(app_main_refresh_mode_t value){main_choice=value;}
+static void fit_value(char *text,int width){(void)text;(void)width;}
 static uint8_t chosen=120;
 static uint8_t app_settings_system_font_size(void){return chosen;}
 static void app_settings_set_system_font_size(uint8_t percent){chosen=percent;}
@@ -82,6 +89,8 @@ static void ui_text_vc(uint8_t *fb,...){(void)fb;}
 static void epd_fill_circle(int x,int y,int r,int gray,uint8_t *fb){(void)x;(void)y;(void)r;(void)gray;(void)fb;}
 static void ui_nav_draw(uint8_t *fb,int tab){(void)fb;(void)tab;}
 """+function('scroll_gesture')+'\n'+function('settings_present')+'\n'
+unit+='static void draw_mode(uint8_t *fb){'+render_mode+'}\n'
+unit+='static app_redraw_t choose_mode(int x,int y){ui_gesture_event_t event={.x0=x,.y0=y};const ui_gesture_event_t *ev=&event;'+select_mode+'return APP_REDRAW_NONE;}\n'
 unit+='static void draw_size(uint8_t *fb){'+render_size+'}\n'
 unit+='static app_redraw_t choose_size(int x,int y){ui_gesture_event_t event={.x0=x,.y0=y};const ui_gesture_event_t *ev=&event;'+select_size+'return APP_REDRAW_NONE;}\n'
 unit+=r"""
@@ -112,6 +121,9 @@ int main(void){
  s_page=SETTINGS_SYSTEM_SIZE;draw_size(NULL);assert(cards==11);
  for(unsigned i=0;i<11;++i){EpdRect r=boxes[i];assert(choose_size(r.x+r.width/2,r.y+r.height/2)==APP_REDRAW_PAGE&&chosen==100+i*10);}
  assert(chosen==200&&choose_size(340,310)==APP_REDRAW_NONE&&chosen==200&&choose_size(400,970)==APP_REDRAW_NONE);
+ s_page=SETTINGS_MAIN_REFRESH;cards=0;draw_mode(NULL);assert(cards==3);
+ for(int i=0;i<3;++i){EpdRect r=boxes[i];assert(choose_mode(r.x+r.width/2,r.y+r.height/2)==APP_REDRAW_PAGE&&main_choice==(app_main_refresh_mode_t)i);}
+ assert(choose_mode(5,320)==APP_REDRAW_NONE&&main_choice==APP_MAIN_REFRESH_WATER);
  puts("PASS: immediate bounded scroll, one update per drag, no periodic GC16 during 80 swipes, header/nav excluded across all settings lists, Bluetooth profile isolation and eleven size options through 200%");
 }
 """

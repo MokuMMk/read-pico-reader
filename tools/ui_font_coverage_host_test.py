@@ -37,8 +37,18 @@ for i in range(u16(base + 2)):
             subtables.append(offset)
 assert subtables, "No Unicode cmap in the embedded font"
 
+# 系统字形同时来自TTF和内建汉字补充，和ui_font_has_text保持一致。
+# Match ui_font_has_text: system glyphs come from both the TTF and the embedded Han supplement.
+hanzi = (root / "main/assets/ui-hanzi.bin").read_bytes()
+magic, count, px, block = struct.unpack_from("<4sIII", hanzi)
+assert magic == b"PIF1" and count <= 6763 and px == 24 and block == 32
+assert 16 + count * 2 + ((count + 31) // 32 + 1) * 4 <= len(hanzi)
+hanzi_codepoints = set(struct.unpack_from("<" + "H" * count, hanzi, 16))
+
 
 def has_glyph(codepoint):
+    if codepoint in hanzi_codepoints:
+        return True
     for offset in subtables:
         if u16(offset) == 12:
             for i in range(u32(offset + 12)):
@@ -70,10 +80,18 @@ last = source.index("static void draw_font_picker(", first)
 # diagrams. Dynamic book text and user font names intentionally use other paths.
 section = source[first:last]
 labels = re.findall(r'"([^"\n]*)"', section)
+# 本地快刷细点阵说明也必须使用完整系统字形。/ The local fine-dot mode explanation also needs complete system glyphs.
+settings = (root / "main/apps/app_device_settings.c").read_text()
+first = settings.index("if (s_page == SETTINGS_MAIN_REFRESH) {")
+last = settings.index("if (s_page == SETTINGS_SYSTEM_CONTRAST) {", first)
+labels += re.findall(r'"([^"\n]*)"', settings[first:last])
 # 共用键盘必须始终使用系统字形；退格图案由线段绘制。
 # Shared keys must always use system glyphs; backspace is drawn with lines.
 keyboard=(root/'main/ui/ui_keyboard.c').read_text()
 labels += [ast.literal_eval(literal) for literal in re.findall(r'"(?:\\.|[^"\\])*"', keyboard)]
+# 搜索、进度和下载提示也使用系统字体。/ Search/progress/download labels use the system face too.
+weread=(root/'main/apps/app_weread.c').read_text()
+labels += [ast.literal_eval(literal) for literal in re.findall(r'"(?:\\.|[^"\\])*"', weread)]
 missing = {}
 for label in labels:
     absent = "".join(dict.fromkeys(ch for ch in label if ch != "⌫" and ord(ch) >= 32 and not has_glyph(ord(ch))))

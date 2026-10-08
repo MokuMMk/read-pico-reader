@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -63,13 +64,17 @@ static bool commit_fails;
 static int commit_count;
 static uint8_t test_loaded_system_size;
 static uint8_t test_loaded_fast;
+static uint8_t loaded_main_mode;
+static bool has_main_mode;
+static uint8_t loaded_keys[3];
+static bool has_keys[3];
 esp_err_t read_pico_sd_get_info(read_pico_sd_info_t *info) { info->mounted = card_mounted; return ESP_OK; }
 esp_err_t nvs_flash_init(void) { return ESP_OK; }
 esp_err_t nvs_flash_erase(void) { return ESP_OK; }
 esp_err_t nvs_open(const char *ns, int mode, nvs_handle_t *h) { (void)ns; (void)mode; *h = 1; return ESP_OK; }
 void nvs_close(nvs_handle_t h) { (void)h; }
-esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; if (!strcmp(key, "ui_fast")) { *value = test_loaded_fast; return ESP_OK; } if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } return ESP_FAIL; }
-esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) { (void)h; if (!strcmp(key, "ui_fast")) test_loaded_fast=value; return ESP_OK; }
+esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])&&has_keys[i]){*value=loaded_keys[i];return ESP_OK;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH) && has_main_mode) { *value=loaded_main_mode;return ESP_OK; } if (!strcmp(key, "ui_fast")) { *value = test_loaded_fast; return ESP_OK; } if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } return ESP_FAIL; }
+esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) { (void)h; for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])){loaded_keys[i]=value;has_keys[i]=true;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH)) {has_main_mode=true;loaded_main_mode=value;} if (!strcmp(key, "ui_fast")) test_loaded_fast=value; return ESP_OK; }
 esp_err_t nvs_get_str(nvs_handle_t h, const char *key, char *value, size_t *size) { (void)h; (void)key; (void)value; (void)size; return ESP_FAIL; }
 esp_err_t nvs_set_str(nvs_handle_t h, const char *key, const char *value) { (void)h; (void)key; (void)value; return ESP_OK; }
 esp_err_t nvs_erase_key(nvs_handle_t h, const char *key) { (void)h; (void)key; return ESP_OK; }
@@ -81,6 +86,14 @@ int main(void) {
 
     test_loaded_fast = 1;
     app_settings_init();
+    assert(app_settings_main_refresh_mode()==APP_MAIN_REFRESH_NORMAL);
+    app_settings_set_main_refresh_mode(APP_MAIN_REFRESH_FAST);
+    assert(app_settings_main_fast_refresh()&&loaded_main_mode==1);
+    s_main_refresh=APP_MAIN_REFRESH_NORMAL;app_settings_init();assert(app_settings_main_fast_refresh());
+    loaded_main_mode=3;app_settings_init();assert(app_settings_main_refresh_mode()==APP_MAIN_REFRESH_NORMAL);
+    app_settings_set_main_refresh_mode(APP_MAIN_REFRESH_WATER);
+    s_main_refresh=APP_MAIN_REFRESH_NORMAL;app_settings_init();assert(app_settings_main_refresh_mode()==APP_MAIN_REFRESH_WATER);
+    assert(!app_settings_main_fast_refresh());
     (void)mkdir(APP_SETTINGS_BACKUP_ROOT, 0700);
     (void)remove(BACKUP_FILE);
     (void)remove(BACKUP_PREVIOUS);
@@ -88,6 +101,12 @@ int main(void) {
     card_mounted = false;
     assert(app_settings_backup_save() == ESP_ERR_INVALID_STATE);
     card_mounted = true;
+    app_settings_set_reader_key_preset(2);
+    memset(s_reader_keys,0,sizeof(s_reader_keys));app_settings_init();
+    assert(app_settings_reader_key_action(0)==APP_READER_KEY_HOME && app_settings_reader_key_action(1)==APP_READER_KEY_FULLSCREEN && app_settings_reader_key_action(2)==APP_READER_KEY_TOOLS);
+    app_settings_set_reader_key_preset(99);assert(app_settings_reader_key_action(0)==APP_READER_KEY_HOME);
+    app_settings_set_reader_key_action(0,APP_READER_KEY_COUNT);assert(app_settings_reader_key_action(0)==APP_READER_KEY_HOME);
+    app_settings_set_reader_key_action(2,APP_READER_KEY_REFRESH);
     s_system_size = 200;
     s_book_px = 62;
     s_book_tracking = 4;
@@ -118,6 +137,8 @@ int main(void) {
     assert(saved && fseek(saved, sizeof(settings_backup_v1_t) + 7, SEEK_SET) == 0);
     settings_backup_profile_t saved_profile;
     assert(fread(&saved_profile, 1, sizeof(saved_profile), saved) == sizeof(saved_profile));
+    settings_backup_keys_t saved_keys;
+    assert(fread(&saved_keys,1,sizeof(saved_keys),saved)==sizeof(saved_keys) && backup_keys_valid(&saved_keys));
     settings_backup_wifi_t saved_network;
     assert(fread(&saved_network, 1, sizeof(saved_network), saved) == sizeof(saved_network));
     assert(fclose(saved) == 0);
@@ -144,16 +165,25 @@ int main(void) {
     memset(&saved_wifi, 0, sizeof(saved_wifi));
     saved = fopen(BACKUP_FILE, "r+b");
     assert(saved && fseek(saved, sizeof(settings_backup_v1_t) + 7 +
-                            sizeof(settings_backup_profile_t) +
+                            sizeof(settings_backup_profile_t) + sizeof(settings_backup_keys_t) +
                             offsetof(settings_backup_wifi_t, credentials.password), SEEK_SET) == 0);
     assert(fputc('X', saved) != EOF && fclose(saved) == 0);
     assert(app_settings_backup_restore() == ESP_ERR_INVALID_RESPONSE);
     assert(!saved_wifi.configured && wifi_imports == 0);
     saved = fopen(BACKUP_FILE, "r+b");
     assert(saved && fseek(saved, sizeof(settings_backup_v1_t) + 7 +
-                            sizeof(settings_backup_profile_t), SEEK_SET) == 0);
+                            sizeof(settings_backup_profile_t) + sizeof(settings_backup_keys_t), SEEK_SET) == 0);
     assert(fwrite(&saved_network, 1, sizeof(saved_network), saved) == sizeof(saved_network));
     assert(fclose(saved) == 0);
+    // 映射损坏或截断必须在任何设置/网络/阅读资料写入前拒绝。
+    // Reject damaged mappings before writing settings, networks or history.
+    long keys_at=sizeof(settings_backup_v1_t)+7+sizeof(settings_backup_profile_t);
+    saved=fopen(BACKUP_FILE,"r+b");assert(saved&&fseek(saved,keys_at,SEEK_SET)==0);
+    assert(fputc(APP_READER_KEY_COUNT,saved)!=EOF&&fclose(saved)==0);
+    int rejected_commits=commit_count;assert(app_settings_backup_restore()==ESP_ERR_INVALID_RESPONSE);
+    assert(commit_count==rejected_commits && wifi_imports==0 && history_restores==0);
+    saved=fopen(BACKUP_FILE,"r+b");assert(saved&&fseek(saved,keys_at,SEEK_SET)==0);
+    assert(fwrite(&saved_keys,1,sizeof(saved_keys),saved)==sizeof(saved_keys)&&fclose(saved)==0);
     s_system_size = 120;
     s_book_px = 48;
     s_book_tracking = 2;
@@ -166,6 +196,7 @@ int main(void) {
     s_shelf_style = 2;
     s_staged_shutdown = false;
     s_auto_lock_minutes = 0;
+    s_main_refresh=APP_MAIN_REFRESH_NORMAL;
     s_home_full_refresh = false;
     s_ble_turner = false;
     s_reader_hold_refresh = false;
@@ -176,9 +207,12 @@ int main(void) {
     s_avatar[0] = 0;
     s_lock_style = 0;
     s_wallpaper[0] = 0;
+    app_settings_set_reader_key_preset(1);
     const int prior_restore_commits = commit_count;
     assert(app_settings_backup_restore() == ESP_OK);
     assert(history_restores == 1);
+    assert(app_settings_reader_key_action(0)==APP_READER_KEY_HOME && app_settings_reader_key_action(1)==APP_READER_KEY_FULLSCREEN && app_settings_reader_key_action(2)==APP_READER_KEY_REFRESH);
+    assert(app_settings_main_refresh_mode()==APP_MAIN_REFRESH_WATER && loaded_main_mode==2);
     assert(app_settings_system_font_size() == 200);
     assert(wifi_imports == 1 && saved_wifi.configured &&
            !strcmp(saved_wifi.ssid, "Home_2.4G") &&
@@ -197,6 +231,33 @@ int main(void) {
     assert(!s_font[0]); /* Missing external font falls back to built-in. */
     assert(s_lock_style == 0 && !s_wallpaper[0]); /* Missing wallpaper uses ticket. */
     assert(commit_count == prior_restore_commits + 1); /* Restore commits exactly once. */
+    app_settings_set_main_refresh_mode(APP_MAIN_REFRESH_FAST);
+    assert(app_settings_backup_save()==ESP_OK);
+    app_settings_set_main_refresh_mode(APP_MAIN_REFRESH_NORMAL);
+    assert(app_settings_backup_restore()==ESP_OK&&app_settings_main_fast_refresh());
+    // v8 的旧实验位不启用新模式，既有备份仍可恢复。
+    // A v8 retired-test bit cannot enable a new mode; existing backups remain readable.
+    saved=fopen(BACKUP_FILE,"r+b");assert(saved);
+    assert(fread(&legacy_header,1,sizeof(legacy_header),saved)==sizeof(legacy_header));
+    assert(fread(legacy_ext,1,sizeof(legacy_ext),saved)==sizeof(legacy_ext));
+    assert(fread(&saved_profile,1,sizeof(saved_profile),saved)==sizeof(saved_profile));
+    memcpy(legacy_header.magic,"PICOSET8",8);backup_seal(&legacy_header);legacy_ext[2]&=7;
+    uint32_t ext_hash=backup_shutdown_checksum(&legacy_header,legacy_ext[0],legacy_ext[1],legacy_ext[2]);
+    for(int i=0;i<4;++i)legacy_ext[i+3]=(uint8_t)(ext_hash>>(i*8));
+    saved_profile.home_full_refresh=(saved_profile.home_full_refresh&127)|64;
+    legacy_hash=backup_profile_checksum(&legacy_header,legacy_ext[0],legacy_ext[1],legacy_ext[2],&saved_profile);
+    for(int i=0;i<4;++i)saved_profile.checksum[i]=(uint8_t)(legacy_hash>>(i*8));
+    long tail_start=ftell(saved)+(long)sizeof(settings_backup_keys_t);
+    assert(fseek(saved,0,SEEK_END)==0);long file_end=ftell(saved);
+    size_t tail_size=(size_t)(file_end-tail_start);uint8_t *tail=malloc(tail_size);assert(tail);
+    assert(fseek(saved,tail_start,SEEK_SET)==0&&fread(tail,1,tail_size,saved)==tail_size);
+    rewind(saved);assert(fwrite(&legacy_header,1,sizeof(legacy_header),saved)==sizeof(legacy_header));
+    assert(fwrite(legacy_ext,1,sizeof(legacy_ext),saved)==sizeof(legacy_ext));
+    assert(fwrite(&saved_profile,1,sizeof(saved_profile),saved)==sizeof(saved_profile));
+    assert(fwrite(tail,1,tail_size,saved)==tail_size);free(tail);assert(fflush(saved)==0);
+    assert(ftruncate(fileno(saved),file_end-(long)sizeof(settings_backup_keys_t))==0);assert(fclose(saved)==0);
+    assert(app_settings_backup_restore()==ESP_OK&&app_settings_main_refresh_mode()==APP_MAIN_REFRESH_NORMAL);
+    assert(app_settings_reader_key_action(0)==APP_READER_KEY_PREV && app_settings_reader_key_action(1)==APP_READER_KEY_TOOLS && app_settings_reader_key_action(2)==APP_READER_KEY_NEXT);
     app_settings_set_reader_full_pages(30);
     assert(s_reader_full_pages == 30);
     app_settings_set_reader_full_pages(0);

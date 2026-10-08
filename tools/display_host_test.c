@@ -12,7 +12,22 @@
 #include <string.h>
 #include "display.h"
 #include "app_config.h"
+#include "settings.h"
 #include "e0470_epaper_waveform.h"
+app_main_refresh_mode_t app_settings_main_refresh_mode(void) {return APP_MAIN_REFRESH_NORMAL;}
+void e0470_page_turn_release(void) {}
+bool app_settings_main_fast_refresh(void) {return false;}
+int epd_width(void) {return 1216;}
+int epd_height(void) {return 684;}
+enum EpdRotation epd_get_rotation(void) {return EPD_ROT_INVERTED_PORTRAIT;}
+void* heap_caps_aligned_alloc(size_t a,size_t b,unsigned c) {(void)a;(void)b;(void)c;assert(false);return NULL;}
+void heap_caps_free(void* p) {(void)p;assert(false);}
+const EpdWaveform* display_main_gray_waveform(void) {return &E0470_WAVEFORM;}
+const EpdWaveform* display_main_shelf_exit_waveform(void) {return &E0470_WAVEFORM;}
+const EpdWaveform* display_main_water_waveform(void) {return &E0470_WAVEFORM;}
+const EpdWaveform* display_main_bw_waveform(void) {return &E0470_WAVEFORM;}
+const EpdWaveform* display_main_acrylic_waveform(void) {return &E0470_WAVEFORM;}
+const EpdWaveform* display_main_acrylic_clean_waveform(void) {return &E0470_WAVEFORM;}
 int epd_rotated_display_width(void) { return 684; }
 int epd_rotated_display_height(void) { return 1216; }
 
@@ -31,6 +46,11 @@ enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_t
     ++water_calls;
     assert(last_scan == READ_PICO_EPD_SCAN_FAST);
     return water_result;
+}
+enum EpdDrawError e0470_page_turn_with_waveform(EpdiyHighlevelState* hl, EpdRect area,
+    e0470_turn_dir_t dir, const EpdWaveform* waveform, unsigned bands) {
+    (void)hl; (void)area; (void)dir; (void)waveform; (void)bands;
+    assert(false); return EPD_DRAW_OTHER_ERROR;
 }
 
 void read_pico_epd_set_pclk(int mhz) { ++clocks; safe_clock = mhz; }

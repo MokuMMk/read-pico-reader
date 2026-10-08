@@ -17,6 +17,7 @@
 #include "esp_heap_caps.h"
 #include "ttf_font.h"
 #include "ui_font.h"
+#include "ui_image_dither.h"
 #include "settings.h"
 
 #define UI_SEL_INSET 4
@@ -52,6 +53,37 @@ static uint8_t ui_read_pixel(const uint8_t *fb, int x, int y) {
         default: break;
     }
     return epd_get_pixel(px, py, epd_width(), epd_height(), fb) >> 4;
+}
+
+void ui_image_bw_rect(uint8_t* fb, EpdRect rect) {
+    if (!fb || rect.width <= 0 || rect.height <= 0) return;
+    for (int y = 0; y < rect.height; ++y) {
+        const int py = rect.y + y;
+        if (py < 0 || py >= epd_rotated_display_height()) continue;
+        for (int x = 0; x < rect.width; ++x) {
+            const int px = rect.x + x;
+            if (px < 0 || px >= epd_rotated_display_width()) continue;
+            const uint8_t gray = (uint8_t)(ui_read_pixel(fb, px, py) * 17);
+            epd_draw_pixel(px, py, ui_image_dither_bw(gray, px, py), fb);
+        }
+    }
+}
+
+void ui_acrylic_bw_rect(uint8_t* fb, EpdRect rect) {
+    if (!fb || rect.width <= 0 || rect.height <= 0) return;
+    int64_t x0 = rect.x, y0 = rect.y;
+    int64_t x1 = x0 + rect.width, y1 = y0 + rect.height;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > epd_rotated_display_width()) x1 = epd_rotated_display_width();
+    if (y1 > epd_rotated_display_height()) y1 = epd_rotated_display_height();
+    // 先完成原来的模糊/透明合成，再只转换挡板内的最终像素；边界与白底不额外增黑。
+    // Finish the original blur/translucency composition before converting only the guard's final pixels; do not darken boundaries or white backgrounds.
+    for (int y = (int)y0; y < y1; ++y)
+        for (int x = (int)x0; x < x1; ++x) {
+            const uint8_t gray = (uint8_t)(ui_read_pixel(fb, x, y) * 17u);
+            epd_draw_pixel(x, y, ui_image_dither_acrylic_bw(gray, x, y), fb);
+        }
 }
 
 /* ---- 图标 / Icons ---- */

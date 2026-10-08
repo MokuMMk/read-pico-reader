@@ -2,6 +2,7 @@
 #pragma once
 #include "common.h"
 
-static inline bool app_settings_ble_turner(void) { return false; }
+bool app_settings_ble_turner(void);
+void app_settings_set_ble_turner(bool enabled);
 
 uint8_t app_settings_auto_lock_minutes(void);

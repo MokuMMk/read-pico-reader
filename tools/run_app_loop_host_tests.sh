@@ -4,8 +4,12 @@ out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g \
   -Itools/app_loop_stubs -Imain -Icomponents/ble_page_turner/include -Imain/app -Imain/ui -Itools/ui_gesture_stubs \
-  tools/app_loop_host_test.c main/app/app_loop.c main/ui/ui_gesture.c -o "$out/test"
+  tools/app_loop_host_test.c main/app/app_loop.c main/ui/ui_gesture.c main/ui/ui_quick_menu_input.c -o "$out/test"
 "$out/test"
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g \
+  -Itools/app_loop_stubs -Imain/app -Imain/ui -Itools/ui_gesture_stubs \
+  tools/ui_quick_input_host_test.c main/ui/ui_quick_menu_input.c -o "$out/quick"
+"$out/quick"
 cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g \
   -Itools/app_loop_stubs -Imain -Icomponents/ble_page_turner/include -Imain/app -Imain/ui -Itools/ui_gesture_stubs \
   tools/ui_menu_host_test.c main/ui/ui_menu.c -o "$out/menu"

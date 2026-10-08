@@ -17,6 +17,7 @@ cc -std=gnu11 -Wall -Wextra -Werror -Itools/settings_backup_stubs \
     tools/book_history_backup_host_test.c -o build/book-tests/book-history-backup
 build/book-tests/book-history-backup
 python3 tools/book_ui_host_test.py
+python3 tools/shelf_fast_cache_host_test.py
 bash tools/run_text_input_host_tests.sh
 python3 tools/reader_images_host_test.py
 python3 tools/book_layout_draw_host_test.py
@@ -44,6 +45,7 @@ python3 tools/test_usb_storage.py
 build/book-tests/transfer-ui
 bash tools/run_app_loop_host_tests.sh
 bash tools/run_display_host_test.sh
+bash tools/run_display_navigation_tests.sh
 bash tools/run_water_turn_host_test.sh
 python3 tools/test_lcd_frame_lifecycle.py
 python3 tools/test_sd_media_guard.py

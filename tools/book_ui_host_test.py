@@ -69,7 +69,9 @@ static ble_pt_action_t ble_pt_action_for_raw(uint32_t code){return code==1?BLE_P
 #define MALLOC_CAP_8BIT 2
 #define ESP_LOGI(...) ((void)0)
 typedef int esp_err_t;
-typedef struct {int leaf;bool request_menu;int64_t now_ms;uint8_t *fb;} app_ctx_t;
+typedef struct app_desc {int unused;} app_desc_t;
+typedef struct {bool touched;} test_touch_t;
+typedef struct {int leaf;bool request_menu,consumed;int64_t now_ms;uint8_t *fb;const app_desc_t *request_app;test_touch_t *touch;} app_ctx_t;
 typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE,APP_REDRAW_FULL} app_redraw_t;
 typedef struct {int x,y,width,height;} EpdRect;
 static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;return(EpdRect){40+i*(width+12),1096,width,96};}
@@ -232,7 +234,7 @@ static void app_files_request_folder(int folder){(void)folder;}
 #define UI_KEY_2 2
 #define UI_KEY_3 3
 static int s_pressed_control;
-static bool s_shelf_feedback_pending;
+static bool s_shelf_feedback_pending,s_shelf_page_pending;
 static bool s_scan_pending,s_toolbar;
 static int s_mode,test_cover_prepares,test_shelf_renders;
 static EpdRect s_area;
@@ -302,7 +304,8 @@ static uint8_t s_cache_shelf_style;
 static void sensor_set(app_ctx_t* ctx,bool on){(void)ctx;(void)on;}
 static void vTaskDelete(void* p){(void)p;}
 static void vSemaphoreDelete(void* p){(void)p;}
-static app_redraw_t turn_page(app_ctx_t* ctx,int dir){(void)ctx;(void)dir;return APP_REDRAW_NONE;}
+static int test_turn_direction;
+static app_redraw_t turn_page(app_ctx_t* ctx,int dir){(void)ctx;test_turn_direction=dir;return APP_REDRAW_NONE;}
 static app_redraw_t paint_catalog_page(app_ctx_t* ctx){(void)ctx;return APP_REDRAW_AREA;}
 static int test_delete_error,test_forget_error,test_notify_count,test_delete_calls;
 static bool test_removed,test_mixed;
@@ -330,13 +333,24 @@ static int ui_content_width(void){return 604;}
 static int ttf_text_width_px(int px,const char* text){int width=0;for(;*text;text++)if(((unsigned char)*text&0xc0)!=0x80)width+=px;return width;}
 static void ui_text(uint8_t* fb,int x,int y,int px,const char* text,int align,bool inv){(void)fb;(void)x;(void)y;(void)px;(void)align;(void)inv;assert(strlen(test_wrapped)+strlen(text)<sizeof(test_wrapped));strcat(test_wrapped,text);}
 '''
+settings=(source.parents[1]/'settings.h').read_text()
+enum=settings[settings.index('typedef enum {\n    APP_READER_KEY_PREV'):settings.index('} app_reader_key_action_t;')+len('} app_reader_key_action_t;')]
+input_header=(source.parents[1]/'book/book_reader_input.h').read_text()
+input_header='\n'.join(line for line in input_header.splitlines() if not line.startswith(('#include','#pragma')))
+unit+=enum+'\n'+input_header+r'''
+static book_reader_tap_t s_reader_tap;
+static app_reader_key_action_t test_keys[3]={APP_READER_KEY_PREV,APP_READER_KEY_TOOLS,APP_READER_KEY_NEXT};
+static app_reader_key_action_t app_settings_reader_key_action(unsigned key){return test_keys[key];}
+static bool app_settings_main_fast_refresh(void){return false;}
+static app_redraw_t toggle_reader_fullscreen(app_ctx_t *ctx){(void)ctx;s_reader_fullscreen=!s_reader_fullscreen;return APP_REDRAW_PAGE;}
+'''
 unit += function("book_layout_balanced_rect", layout_source) + "\n"
 unit += function("set_reader_view") + "\n"
 unit += function("ble_pt_action_for_usage", source.parents[2] / "components/ble_page_turner/src/ble_page_turner.c") + "\n"
 for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_hidden_key", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_rows", "row_rect", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "bulk_nav_rect", "bulk_nav_hit", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_begin", "refresh_search_matches", "search_finish", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "bulk_turn_page", "bulk_finish", "bulk_action", "bulk_control_at", "menu_handle_enabled", "reader_manual_refresh", "apply_reader_option", "reader_return", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
+             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "bulk_nav_rect", "bulk_nav_hit", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_begin", "refresh_search_matches", "search_finish", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "bulk_turn_page", "bulk_finish", "bulk_action", "bulk_control_at", "menu_handle_enabled", "reader_manual_refresh", "apply_reader_option", "reader_return", "reader_key_action", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
-for name in ("book_remote_direction", "shelf_turn_page", "shelf_page_arrow_rect", "reader_vertical_tap", "reader_swipe_direction"):
+for name in ("book_remote_direction", "shelf_turn_page", "shelf_page_arrow_rect", "reader_swipe_direction"):
     unit += function(name) + "\n"
 unit += r'''
 int main(void) {
@@ -355,25 +369,23 @@ int main(void) {
         assert(reader_swipe_direction(UI_GESTURE_TAP,vertical)==0);
         assert(reader_swipe_direction(UI_GESTURE_CANCEL,vertical)==0);
     }
-    // 普通与沉浸正文的三分区及边界。/ Thirds and boundaries in normal and immersive bodies.
-    const EpdRect bodies[] = {{36,180,612,900},{24,24,636,1182},{36,170,612,901}};
-    for(size_t i=0;i<sizeof(bodies)/sizeof(bodies[0]);++i){
+    // 普通/沉浸正文采用半屏或1/3+2/3，中间双击独立处理。
+    // Normal/immersive tap regions use halves or 1/3+2/3 with independent center double taps.
+    const EpdRect bodies[]={{36,180,612,900},{24,24,636,1182}};
+    for (unsigned i=0;i<2;++i) {
         EpdRect body=bodies[i];
-        assert(reader_vertical_tap(body,body.y-1)==2);
-        assert(reader_vertical_tap(body,body.y+body.height)==2);
-        for(int y=body.y;y<body.y+body.height;++y){
-            int third=(y-body.y)*3/body.height;
-            assert(reader_vertical_tap(body,y)==(third==0?-1:third==1?0:1));
-        }
+        for (int y=body.y;y<body.y+body.height;++y)
+            assert(book_reader_tap_direction(body,342,y,true)==(y<body.y+body.height/3?-1:1));
+        assert(book_reader_tap_direction(body,body.x,body.y,false)==-1);
+        assert(book_reader_tap_direction(body,body.x+body.width/2,body.y,false)==1);
+        book_reader_tap_t tap={0};
+        assert(!book_reader_tap_feed(&tap,body,342,600,false,1000));
+        assert(book_reader_tap_feed(&tap,body,340,600,true,1250)==BOOK_READER_TAP_FULLSCREEN);
+        assert(!book_reader_tap_tick(&tap,2000,false));
+        assert(!book_reader_tap_feed(&tap,body,342,600,true,3000));
+        assert(book_reader_tap_tick(&tap,3341,false)==1);
+        assert(!book_reader_tap_tick(&tap,4000,false));
     }
-    assert(reader_vertical_tap((EpdRect){0},0)==2);
-    test_remote_keys[0]=(ble_pt_event_t){.usage=0x52};test_remote_key_count=1;
-    assert(book_remote_direction()==-1);
-    test_remote_keys[0]=(ble_pt_event_t){.usage=0x51};test_remote_key_count=1;
-    test_remote_raw[0]=(ble_pt_raw_t){.code=2,.pressed=true};test_remote_raw_count=1;
-    assert(book_remote_direction()==1&&book_remote_direction()==0);
-    test_remote_raw[0]=(ble_pt_raw_t){.code=1,.pressed=false};test_remote_raw_count=1;
-    assert(book_remote_direction()==0);
     app_ctx_t remote_ctx={0};s_view=SHELF;test_shelf_style=2;s_visible_count=27;
     assert(shelf_turn_page(&remote_ctx,-1)==APP_REDRAW_NONE&&remote_ctx.leaf==0);
     assert(shelf_turn_page(&remote_ctx,1)==APP_REDRAW_AREA&&remote_ctx.leaf==1);
@@ -582,7 +594,8 @@ int main(void) {
     test_removed=true;manage_apply(&ctx);assert(s_view==MANAGE&&s_file_removed&&test_notify_count==1&&!pending_find(s_managed.path));assert(s_store_revision==book_store_revision());
     test_forget_error=-1;manage_apply(&ctx);assert(s_view==MANAGE&&test_notify_count==1);
     test_forget_error=0;manage_apply(&ctx);assert(s_view==SHELF&&test_notify_count==1);
-    strcpy(s_managed.name,"Short.txt");assert(manage_panel().height<600);
+    strcpy(s_managed.name,"Short.txt");assert(manage_panel().height<700);
+    ctx.request_app=NULL;
     char long_name[256];memset(long_name,'W',255);long_name[255]=0;test_wrapped[0]=0;
     assert(draw_wrapped_name(NULL,long_name,176)+104<870);assert(!strcmp(test_wrapped,long_name));
     for(int i=0;i<80;i++){memcpy(long_name+i*3,"书",3);}long_name[240]=0;test_wrapped[0]=0;
@@ -642,13 +655,12 @@ int main(void) {
     s_requested_open_home=true;s_shelf_cache_valid=false;calls=test_open_calls;
     on_enter(&ctx);
     assert(test_open_calls==calls+1&&s_view==READING&&!s_scan_pending&&s_reader_return_home);
-    test_nav_target=-1;
-    assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_NONE&&test_nav_target==0&&s_view==READING);
+    test_nav_target=-1;s_text="body";
+    assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_FULL&&test_nav_target==-1&&s_view==READING);
     book_on_exit(&ctx);assert(!s_reader_return_home);
-    s_view=READING;test_nav_target=-1;
-    assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_NONE&&test_nav_target==0&&s_view==READING);
-    // 屏幕返回键仍回来源；长按默认回首页，开关开启后必须整屏全刷。
-    // The screen back control returns to source; holds go Home by default or force full-screen refresh.
+    s_view=READING;test_nav_target=-1;s_text="body";
+    assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_FULL&&test_nav_target==-1&&s_view==READING);
+    // 屏幕返回仍回来源，中键长按始终全刷。/ Screen back returns to source; middle holds always refresh.
     assert(reader_return(&ctx,false)==APP_REDRAW_PAGE&&s_view==SHELF);
     s_view=READING;s_text="text";s_reader_fullscreen=true;test_hold_refresh=true;test_nav_target=-1;
     s_reader_return_home=true;s_reader_panel=READER_PANEL_TOOLS;s_reader_slider=0;
@@ -660,7 +672,7 @@ int main(void) {
     test_hold_refresh=false;s_reader_return_home=false;
     s_reader_panel=READER_PANEL_TOOLS;s_page=1;
     assert(apply_reader_option(&ctx,0)==APP_REDRAW_PAGE&&test_power_turn);
-    assert(apply_reader_option(&ctx,3)==APP_REDRAW_PAGE&&test_hold_refresh);
+    assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_FULL);
     assert(apply_reader_option(&ctx,1)==APP_REDRAW_PAGE&&test_reader_immersive&&s_page==1);
     assert(apply_reader_option(&ctx,2)==APP_REDRAW_PAGE&&test_hide_images&&!test_images_visible&&s_page==1);
     assert(test_image_preparations==2&&test_reflows==2);
@@ -681,6 +693,19 @@ int main(void) {
     assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_PAGE&&s_view==READING&&!test_system_face);
     s_text=NULL;set_reader_view(TOC);
     assert(on_key(&ctx,UI_KEY_2)==APP_REDRAW_PAGE&&s_view==SHELF&&test_system_face);
+    s_view=READING;s_text="body";s_reader_tap.pending=true;
+    test_keys[0]=APP_READER_KEY_PREV;test_keys[1]=APP_READER_KEY_TOOLS;test_keys[2]=APP_READER_KEY_NEXT;
+    assert(on_key(&ctx,UI_KEY_1)==APP_REDRAW_NONE && test_turn_direction==-1 && !s_reader_tap.pending);
+    assert(on_key(&ctx,UI_KEY_3)==APP_REDRAW_NONE && test_turn_direction==1);
+    s_reader_panel=READER_PANEL_NONE;assert(on_key(&ctx,UI_KEY_2)==APP_REDRAW_PAGE && s_reader_panel==READER_PANEL_TOOLS);
+    assert(on_key(&ctx,UI_KEY_2)==APP_REDRAW_PAGE && s_reader_panel==READER_PANEL_NONE);
+    test_keys[0]=APP_READER_KEY_HOME;test_keys[1]=APP_READER_KEY_FULLSCREEN;test_keys[2]=APP_READER_KEY_TOOLS;
+    s_reader_fullscreen=false;assert(on_key(&ctx,UI_KEY_2)==APP_REDRAW_PAGE && s_reader_fullscreen);
+    assert(on_key(&ctx,UI_KEY_3)==APP_REDRAW_PAGE && s_reader_panel==READER_PANEL_TOOLS);
+    assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_FULL && s_reader_panel==READER_PANEL_NONE);
+    test_nav_target=-1;assert(on_key(&ctx,UI_KEY_1)==APP_REDRAW_NONE && test_nav_target==0);
+    s_view=READING;assert(reader_key_action(&ctx,APP_READER_KEY_NONE)==APP_REDRAW_NONE);
+    assert(reader_key_action(&ctx,APP_READER_KEY_REFRESH)==APP_REDRAW_FULL);
     free(s_shelf);
     while(s_pending)pending_discard(s_pending->path);
     for(int i=0;i<65;i++){char path[340];snprintf(path,sizeof(path),"%s/book%03d.txt",test_roots[0].path,i);unlink(path);}rmdir(test_roots[0].path);

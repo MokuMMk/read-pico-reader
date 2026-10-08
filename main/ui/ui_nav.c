@@ -4,6 +4,8 @@
  *
  * 中文：绘制与命中四栏导航；细线图标分别表示首页、书架、文件和设置，图形来自 Lucide。
  * English: Draw and hit-test the four-tab navigation with thin-line home, books, files and settings icons from Lucide.
+ * 用户增加点击反馈：共享返回键和底栏图标登记局部命中，主循环只在按下和复位推该控件。
+ * User adds click feedback: register local hits for shared backs and navigation icons; the loop presents only that control on press and restoration.
  */
 #include "ui_nav.h"
 #include <stdio.h>
@@ -15,6 +17,7 @@
 #include "read_pico_transfer.h"
 #include "ui_kit.h"
 #include "settings.h"
+#include "ui_click_feedback.h"
 
 // 底栏图标盒、返回键箭头、充电闪电的边长。
 // Box sizes for the bar icons, the back chevron and the charging bolt.
@@ -29,6 +32,7 @@
 static const char *const labels[] = {"首页", "书架", "文件管理", "设置"};
 
 void ui_nav_back(uint8_t *fb, int x, int y) {
+    ui_click_feedback_register(fb, (EpdRect){x - 10, y + 3, 64, 64}, UI_CLICK_BACK, UI_ICON_CHEVRON_LEFT);
     // 参考系统题头缩小返回键，中心仍保持在 y=113。/ Match the smaller reference back control while retaining the title centerline.
     ui_fill_round_rect(fb, (EpdRect){x, y + 13, 44, 44}, 22, UI_GRAY_WHITE);
     ui_draw_round_rect(fb, (EpdRect){x, y + 13, 44, 44}, 22, UI_NAV_BACK_BORDER_GRAY);
@@ -51,12 +55,19 @@ static void icon(uint8_t *fb, int tab, int cx, int y) {
         UI_ICON_FOLDER_OPEN, UI_ICON_SLIDERS_HORIZONTAL,
     };
     if (tab < 0 || tab >= 4) return;
+    ui_click_feedback_register(fb, (EpdRect){cx - 30, y - 12, 60, 60}, UI_CLICK_NAV, tabs[tab]);
     ui_draw_icon(fb, cx, y + 18, UI_NAV_TAB_ICON_PX, tabs[tab], UI_GRAY_BLACK);
 }
 
 void ui_nav_draw(uint8_t *fb, int active) {
     epd_fill_rect((EpdRect){0, UI_NAV_TOP, UI_LOCK_WIDTH, UI_LOCK_HEIGHT - UI_NAV_TOP}, 0xe0, fb);
     ui_hairline(fb, UI_NAV_TOP, 0, UI_LOCK_WIDTH, UI_GRAY_LIGHT);
+    if (app_settings_main_refresh_mode() != APP_MAIN_REFRESH_NORMAL) {
+        // 快刷内容边界预留空白；横条在白底上单独短刷，图标和文字保持固定。
+        // Reserve a blank fast-refresh boundary; short-update the marker on white while retaining icons and text.
+        epd_fill_rect((EpdRect){0, UI_NAV_REFRESH_END, UI_LOCK_WIDTH, UI_NAV_TOP - UI_NAV_REFRESH_END}, 0xf0, fb);
+        epd_fill_rect((EpdRect){0, UI_NAV_MARKER_TOP, UI_LOCK_WIDTH, UI_NAV_MARKER_BOTTOM - UI_NAV_MARKER_TOP}, UI_GRAY_WHITE, fb);
+    }
     for (int i = 0; i < 4; ++i) {
         int center = (i * 2 + 1) * UI_LOCK_WIDTH / 8;
         if (i == active) epd_fill_rect((EpdRect){center - 28, UI_NAV_TOP + 1, 56, 5}, UI_GRAY_BLACK, fb);

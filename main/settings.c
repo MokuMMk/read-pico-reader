@@ -4,6 +4,8 @@
  *
  * NVS 读写。打开失败就用深睡默认值，不擦除整个分区。
  *
+ * 用户修订：三键短按映射单独持久化；备份v10追加校验映射，旧备份恢复推荐设置1。
+ * User revision: persist short key mappings; backup v10 adds checked mappings and older backups restore preset 1.
  * NVS load/store. A failed open keeps the deep-sleep default; the
  * partition is not erased.
  */
@@ -29,6 +31,7 @@
 #define NVS_KEY_SLEEP "sleep"
 #define NVS_KEY_SHUTDOWN_MODE "shutdown"
 #define NVS_KEY_HOME_FULL "home_full"
+#define NVS_KEY_MAIN_REFRESH "main_mode"
 #define NVS_KEY_AUTO_LOCK "idle_lock"
 #define NVS_KEY_DEVICE_NAME "dev_name"
 #define NVS_KEY_AVATAR "dev_avatar"
@@ -70,6 +73,7 @@
 static app_sleep_mode_t s_sleep = APP_SLEEP_DEEP;
 static bool s_staged_shutdown;
 static bool s_home_full_refresh;
+static app_main_refresh_mode_t s_main_refresh;
 static char s_device_name[64] = "Pico";
 static char s_avatar[288];
 static char s_status_signature[96];
@@ -91,6 +95,8 @@ static bool s_reader_power_turn;
 static bool s_reader_immersive;
 static bool s_reader_hide_images;
 static bool s_reader_hold_refresh;
+static const char *s_reader_key_names[] = {"rd_key_l", "rd_key_m", "rd_key_r"};
+static uint8_t s_reader_keys[3] = {APP_READER_KEY_PREV, APP_READER_KEY_TOOLS, APP_READER_KEY_NEXT};
 static bool s_reader_vertical_turn;
 static bool s_ble_turner;
 static bool s_shelf_recent_sort;
@@ -172,6 +178,9 @@ void app_settings_init(void) {
     raw = 0;
     if (nvs_get_u8(h, NVS_KEY_HOME_FULL, &raw) == ESP_OK) s_home_full_refresh = raw == 1;
     raw = 0;
+    s_main_refresh = nvs_get_u8(h, NVS_KEY_MAIN_REFRESH, &raw) == ESP_OK && raw <= APP_MAIN_REFRESH_WATER
+        ? (app_main_refresh_mode_t)raw : APP_MAIN_REFRESH_NORMAL;
+    raw = 0;
 
     raw = 0;
     if (nvs_get_u8(h, NVS_KEY_AUTO_LOCK, &raw) == ESP_OK && (raw == 1 || raw == 5 || raw == 10)) s_auto_lock_minutes = raw;
@@ -228,6 +237,11 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_IMMERSIVE, &immersive) == ESP_OK) s_reader_immersive = immersive == 1;
     uint8_t hold_refresh = 0;
     if (nvs_get_u8(h, NVS_KEY_HOLD_REFRESH, &hold_refresh) == ESP_OK) s_reader_hold_refresh = hold_refresh == 1;
+    for (unsigned i = 0; i < 3; ++i) {
+        uint8_t value;
+        if (nvs_get_u8(h, s_reader_key_names[i], &value) == ESP_OK && value < APP_READER_KEY_COUNT)
+            s_reader_keys[i] = value;
+    }
     uint8_t vertical_turn = 0;
     if (nvs_get_u8(h, NVS_KEY_VERTICAL_TURN, &vertical_turn) == ESP_OK) s_reader_vertical_turn = vertical_turn == 1;
     uint8_t hide_images = 0, recent_sort = 0, ble_turner = 0;
@@ -310,6 +324,13 @@ void app_settings_set_staged_shutdown(bool staged) {
 }
 
 bool app_settings_home_full_refresh(void) { return s_home_full_refresh; }
+app_main_refresh_mode_t app_settings_main_refresh_mode(void) { return s_main_refresh; }
+bool app_settings_main_fast_refresh(void) { return s_main_refresh == APP_MAIN_REFRESH_FAST; }
+void app_settings_set_main_refresh_mode(app_main_refresh_mode_t mode) {
+    if (mode < APP_MAIN_REFRESH_NORMAL || mode > APP_MAIN_REFRESH_WATER || mode == s_main_refresh) return;
+    s_main_refresh = mode;
+    nvs_put_u8(NVS_KEY_MAIN_REFRESH, (uint8_t)mode);
+}
 uint8_t app_settings_auto_lock_minutes(void) { return s_auto_lock_minutes; }
 void app_settings_set_auto_lock_minutes(uint8_t minutes) {
     if (minutes != 0 && minutes != 1 && minutes != 5 && minutes != 10) return;
@@ -498,6 +519,29 @@ void app_settings_set_reader_hide_images(bool on) {
     nvs_put_u8(NVS_KEY_HIDE_IMAGES, on ? 1 : 0);
 }
 bool app_settings_ble_turner(void) { return s_ble_turner; }
+app_reader_key_action_t app_settings_reader_key_action(unsigned key) {
+    return key < 3 ? (app_reader_key_action_t)s_reader_keys[key] : APP_READER_KEY_NONE;
+}
+void app_settings_set_reader_key_action(unsigned key, app_reader_key_action_t action) {
+    if (key >= 3 || action < 0 || action >= APP_READER_KEY_COUNT || s_reader_keys[key] == action) return;
+    s_reader_keys[key] = action;
+    nvs_put_u8(s_reader_key_names[key], action);
+}
+void app_settings_set_reader_key_preset(unsigned preset) {
+    static const uint8_t values[2][3] = {
+        {APP_READER_KEY_PREV, APP_READER_KEY_TOOLS, APP_READER_KEY_NEXT},
+        {APP_READER_KEY_HOME, APP_READER_KEY_FULLSCREEN, APP_READER_KEY_TOOLS}
+    };
+    if (preset < 1 || preset > 2) return;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return;
+    for (unsigned i = 0; i < 3 && err == ESP_OK; ++i) err = nvs_set_u8(h, s_reader_key_names[i], values[preset - 1][i]);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) memcpy(s_reader_keys, values[preset - 1], sizeof(s_reader_keys));
+}
+
 bool app_settings_reader_hold_refresh(void) { return s_reader_hold_refresh; }
 bool app_settings_reader_vertical_turn(void) { return s_reader_vertical_turn; }
 void app_settings_set_reader_vertical_turn(bool on) {
@@ -615,6 +659,21 @@ typedef struct {
     uint8_t checksum[4];
 } settings_backup_wifi_t;
 
+// PICOSETA为第10版八字节标识；映射块独立校验，不改旧网络/阅读数据块。
+// PICOSETA is the eight-byte v10 identifier; independently check mappings without changing old network/history blocks.
+typedef struct { uint8_t actions[3], checksum[4]; } settings_backup_keys_t;
+static uint32_t backup_keys_checksum(const settings_backup_keys_t *keys) {
+    uint32_t hash = 2166136261u;
+    for (unsigned i = 0; i < 3; ++i) hash = (hash ^ keys->actions[i]) * 16777619u;
+    return hash;
+}
+static bool backup_keys_valid(const settings_backup_keys_t *keys) {
+    uint32_t stored = 0;
+    for (unsigned i = 0; i < 4; ++i) stored |= (uint32_t)keys->checksum[i] << (8 * i);
+    for (unsigned i = 0; i < 3; ++i) if (keys->actions[i] >= APP_READER_KEY_COUNT) return false;
+    return stored == backup_keys_checksum(keys);
+}
+
 static void backup_erase_secret(void *ptr, size_t size) {
     volatile uint8_t *bytes = ptr;
     while (size--) *bytes++ = 0;
@@ -692,7 +751,7 @@ static bool backup_card_ready(void) {
 esp_err_t app_settings_backup_save(void) {
     if (!backup_card_ready()) return ESP_ERR_INVALID_STATE;
     settings_backup_v1_t backup = {0};
-    memcpy(backup.magic, "PICOSET8", sizeof(backup.magic));
+    memcpy(backup.magic, "PICOSETA", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -718,7 +777,7 @@ esp_err_t app_settings_backup_save(void) {
     strlcpy(backup.fonts_dir, s_fonts_dir, sizeof(backup.fonts_dir));
     backup_seal(&backup);
     uint8_t idle_index = s_auto_lock_minutes == 1 ? 1 : s_auto_lock_minutes == 5 ? 2 : s_auto_lock_minutes == 10 ? 3 : 0;
-    uint8_t extension[7] = {s_book_indent, s_book_rule_offset, (s_staged_shutdown ? 1 : 0) | (idle_index << 1)};
+    uint8_t extension[7] = {s_book_indent, s_book_rule_offset, (s_staged_shutdown ? 1 : 0) | (idle_index << 1) | ((uint8_t)s_main_refresh << 3)};
     uint32_t extension_hash = backup_shutdown_checksum(&backup, s_book_indent,
                                                         s_book_rule_offset, extension[2]);
     for (int i = 0; i < 4; ++i) extension[i + 3] = (uint8_t)(extension_hash >> (i * 8));
@@ -727,16 +786,21 @@ esp_err_t app_settings_backup_save(void) {
     strlcpy(profile.avatar, s_avatar, sizeof(profile.avatar));
     strlcpy(profile.status_signature, s_status_signature, sizeof(profile.status_signature));
     // v5 及之后复用此字段的预留位；v7 在其后追加 WiFi 与阅读资料。
-    // V5+ use reserved bits here; v7 appends WiFi and reading records afterward.
+    // V5+ use reserved bits here; v7 appends WiFi/reading records, and v9 stores main mode in the extension.
     profile.home_full_refresh = (s_home_full_refresh ? 1 : 0) |
                                 (s_reader_hide_images ? 2 : 0) |
                                 (s_shelf_recent_sort ? 4 : 0) |
                                 (s_ble_turner ? 8 : 0) |
                                 (s_reader_hold_refresh ? 16 : 0) |
-                                (s_reader_vertical_turn ? 32 : 0);
+                                (s_reader_vertical_turn ? 32 : 0) |
+                                (app_settings_main_fast_refresh() ? 128 : 0);
     uint32_t profile_hash = backup_profile_checksum(&backup, extension[0], extension[1], extension[2], &profile);
     for (int i = 0; i < 4; ++i) profile.checksum[i] = (uint8_t)(profile_hash >> (i * 8));
 
+    settings_backup_keys_t keys = {0};
+    memcpy(keys.actions, s_reader_keys, sizeof(keys.actions));
+    uint32_t keys_hash = backup_keys_checksum(&keys);
+    for (unsigned i = 0; i < 4; ++i) keys.checksum[i] = (uint8_t)(keys_hash >> (8 * i));
     settings_backup_wifi_t wifi = {0};
     esp_err_t wifi_err = read_pico_transfer_export_wifi_backup(&wifi.credentials);
     if (wifi_err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); return wifi_err; }
@@ -747,6 +811,7 @@ esp_err_t app_settings_backup_save(void) {
     bool ok = fwrite(&backup, 1, sizeof(backup), file) == sizeof(backup);
     if (ok) ok = fwrite(extension, 1, sizeof(extension), file) == sizeof(extension);
     if (ok) ok = fwrite(&profile, 1, sizeof(profile), file) == sizeof(profile);
+    if (ok) ok = fwrite(&keys, 1, sizeof(keys), file) == sizeof(keys);
     if (ok) ok = fwrite(&wifi, 1, sizeof(wifi), file) == sizeof(wifi);
     backup_erase_secret(&wifi, sizeof(wifi));
     if (ok) ok = book_history_backup_write(file) == ESP_OK;
@@ -788,7 +853,7 @@ static bool backup_valid(const settings_backup_v1_t *backup) {
     if ((memcmp(backup->magic, "PICOSET1", 8) && memcmp(backup->magic, "PICOSET2", 8) &&
          memcmp(backup->magic, "PICOSET3", 8) && memcmp(backup->magic, "PICOSET4", 8) &&
          memcmp(backup->magic, "PICOSET5", 8) && memcmp(backup->magic, "PICOSET6", 8) &&
-         memcmp(backup->magic, "PICOSET7", 8) && memcmp(backup->magic, "PICOSET8", 8)) ||
+         memcmp(backup->magic, "PICOSET7", 8) && memcmp(backup->magic, "PICOSET8", 8) && memcmp(backup->magic, "PICOSET9", 8) && memcmp(backup->magic, "PICOSETA", 8)) ||
         checksum != backup_checksum(backup)) return false;
     if (f[BK_SLEEP] > APP_SLEEP_OFF || f[BK_PICKUP] > 1 ||
         f[BK_SYS_SIZE] < 100 || f[BK_SYS_SIZE] > 200 || f[BK_SYS_SIZE] % 10 ||
@@ -826,8 +891,10 @@ esp_err_t app_settings_backup_restore(void) {
     bool ok = fread(&backup, 1, sizeof(backup), file) == sizeof(backup);
     uint8_t indent = 2, rule_offset = 4, staged_shutdown = 0;
     settings_backup_profile_t profile = {.device_name = "Pico"};
+    settings_backup_keys_t keys = {.actions = {APP_READER_KEY_PREV, APP_READER_KEY_TOOLS, APP_READER_KEY_NEXT}};
     settings_backup_wifi_t wifi = {0};
     bool has_wifi = false;
+    app_main_refresh_mode_t main_refresh = APP_MAIN_REFRESH_NORMAL;
     if (ok && !memcmp(backup.magic, "PICOSET2", 8)) {
         uint8_t extension[5];
         ok = fread(extension, 1, sizeof(extension), file) == sizeof(extension);
@@ -848,18 +915,18 @@ esp_err_t app_settings_backup_restore(void) {
                  stored == backup_rule_offset_checksum(&backup, indent, rule_offset);
         }
     } else if (ok && (!memcmp(backup.magic, "PICOSET4", 8) || !memcmp(backup.magic, "PICOSET5", 8) ||
-                      !memcmp(backup.magic, "PICOSET6", 8) || !memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8))) {
+                      !memcmp(backup.magic, "PICOSET6", 8) || !memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8) || (!memcmp(backup.magic, "PICOSET9", 8) || !memcmp(backup.magic, "PICOSETA", 8)))) {
         uint8_t extension[7];
         ok = fread(extension, 1, sizeof(extension), file) == sizeof(extension);
         if (ok) {
             indent = extension[0]; rule_offset = extension[1]; staged_shutdown = extension[2];
             uint32_t stored = 0;
             for (int i = 0; i < 4; ++i) stored |= (uint32_t)extension[i + 3] << (i * 8);
-            ok = indent <= 3 && rule_offset <= 8 && staged_shutdown <= (!memcmp(backup.magic, "PICOSET8", 8) ? 7 : 1) &&
+            ok = indent <= 3 && rule_offset <= 8 && staged_shutdown <= ((!memcmp(backup.magic, "PICOSET9", 8) || !memcmp(backup.magic, "PICOSETA", 8)) ? 23 : !memcmp(backup.magic, "PICOSET8", 8) ? 7 : 1) &&
                  stored == backup_shutdown_checksum(&backup, indent, rule_offset, staged_shutdown);
         }
         if (ok && ( !memcmp(backup.magic, "PICOSET5", 8) || !memcmp(backup.magic, "PICOSET6", 8) ||
-                    !memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8))) {
+                    !memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8) || (!memcmp(backup.magic, "PICOSET9", 8) || !memcmp(backup.magic, "PICOSETA", 8)))) {
             ok = fread(&profile, 1, sizeof(profile), file) == sizeof(profile);
             if (ok) {
                 uint32_t stored = 0;
@@ -869,17 +936,20 @@ esp_err_t app_settings_backup_restore(void) {
                      strnlen(profile.device_name, sizeof(profile.device_name)) < sizeof(profile.device_name) &&
                      profile.device_name[0] &&
                      strnlen(profile.status_signature, sizeof(profile.status_signature)) < sizeof(profile.status_signature) &&
-                     // 保留旧备份的位6兼容性，但不再恢复实验刷新。/ Accept legacy bit 6 without restoring the retired mode.
-                     profile.home_full_refresh <= 127 &&
+                     // 位6仍忽略旧实验模式；v9 在校验扩展内保存三种主页刷新模式。/ Bit 6 still ignores the retired experiment; v9 stores all three main modes in its checked extension.
                      backup_path_valid(profile.avatar, sizeof(profile.avatar));
             }
         }
     }
+    if (ok && (!memcmp(backup.magic, "PICOSET9", 8) || !memcmp(backup.magic, "PICOSETA", 8))) main_refresh = (app_main_refresh_mode_t)(staged_shutdown >> 3);
+    else if (ok && (profile.home_full_refresh & 128)) main_refresh = APP_MAIN_REFRESH_FAST;
+    if (ok && !memcmp(backup.magic, "PICOSETA", 8))
+        ok = fread(&keys, 1, sizeof(keys), file) == sizeof(keys) && backup_keys_valid(&keys);
     long history_position = -1;
-    has_wifi = ok && (!memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8));
+    has_wifi = ok && (!memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8) || (!memcmp(backup.magic, "PICOSET9", 8) || !memcmp(backup.magic, "PICOSETA", 8)));
     if (has_wifi) ok = fread(&wifi, 1, sizeof(wifi), file) == sizeof(wifi) && backup_wifi_valid(&wifi);
     bool has_history = ok && (!memcmp(backup.magic, "PICOSET6", 8) ||
-                              !memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8));
+                              !memcmp(backup.magic, "PICOSET7", 8) || !memcmp(backup.magic, "PICOSET8", 8) || (!memcmp(backup.magic, "PICOSET9", 8) || !memcmp(backup.magic, "PICOSETA", 8)));
     if (has_history) {
         history_position = ftell(file);
         ok = history_position >= 0 && book_history_backup_validate(file);
@@ -908,16 +978,18 @@ esp_err_t app_settings_backup_restore(void) {
     if (err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); return err; }
 #define BACKUP_SET_U8(key, index) do { if (err == ESP_OK) err = nvs_set_u8(h, key, backup.flags[index]); } while (0)
 #define BACKUP_SET_STR(key, value) do { if (err == ESP_OK) err = nvs_set_str(h, key, value); } while (0)
+    for (unsigned i = 0; i < 3 && err == ESP_OK; ++i) err = nvs_set_u8(h, s_reader_key_names[i], keys.actions[i]);
     BACKUP_SET_U8(NVS_KEY_SLEEP, BK_SLEEP);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHUTDOWN_MODE, staged_shutdown & 1);
     uint8_t idle_values[] = {0, 1, 5, 10};
-    uint8_t idle_minutes = idle_values[staged_shutdown >> 1];
+    uint8_t idle_minutes = idle_values[(staged_shutdown >> 1) & 3];
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_AUTO_LOCK, idle_minutes);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BLE_TURNER, (profile.home_full_refresh & 8) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HOLD_REFRESH, (profile.home_full_refresh & 16) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_VERTICAL_TURN, (profile.home_full_refresh & 32) != 0);
 
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HOME_FULL, profile.home_full_refresh & 1);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_MAIN_REFRESH, (uint8_t)main_refresh);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HIDE_IMAGES, (profile.home_full_refresh & 2) != 0);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHELF_RECENT, (profile.home_full_refresh & 4) != 0);
     if (err == ESP_OK) err = nvs_set_str(h, NVS_KEY_DEVICE_NAME, profile.device_name);
@@ -953,6 +1025,7 @@ esp_err_t app_settings_backup_restore(void) {
     nvs_close(h);
     if (err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); return err; }
 
+    memcpy(s_reader_keys, keys.actions, sizeof(s_reader_keys));
     const uint8_t *f = backup.flags;
     s_sleep = (app_sleep_mode_t)f[BK_SLEEP];
     s_staged_shutdown = (staged_shutdown & 1) != 0;
@@ -961,6 +1034,7 @@ esp_err_t app_settings_backup_restore(void) {
     s_reader_hold_refresh = (profile.home_full_refresh & 16) != 0;
     s_reader_vertical_turn = (profile.home_full_refresh & 32) != 0;
     s_home_full_refresh = (profile.home_full_refresh & 1) != 0;
+    s_main_refresh = main_refresh;
     s_reader_hide_images = (profile.home_full_refresh & 2) != 0;
     s_shelf_recent_sort = (profile.home_full_refresh & 4) != 0;
     strlcpy(s_device_name, profile.device_name, sizeof(s_device_name));

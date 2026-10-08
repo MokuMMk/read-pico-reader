@@ -20,6 +20,10 @@
 #define APP_REFRESH_ALL_DU 1
 #define APP_REFRESH_PROFILE APP_REFRESH_BALANCED
 
+// 用户可选择普通灰阶或主页面黑白快刷，默认普通；阅读与图片保持各自刷新设置。
+// Users choose ordinary grays or monochrome main-page fast refresh, defaulting to ordinary; reader/images keep their own settings.
+
+
 #if APP_REFRESH_PROFILE == APP_REFRESH_ALL_DU
 #define APP_PAGE_REFRESH_MODE MODE_DU
 #define APP_PAGE_FORCE_FULL 0

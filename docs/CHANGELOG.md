@@ -1,7 +1,20 @@
 # 版本变更 / Changelog
 
-按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
-User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
+按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
+User-visible changes by release; see [README](../README.md) for usage.
+
+## 0.3.3-rc87 · 2026-10-08
+
+- 主页刷新模式：系统设置可选普通、快刷、水波纹，默认普通。普通及水波纹保留灰阶；快刷使用黑白文字与封面，亚克力书架采用细腻规则的棋盘格点阵。
+- 四个主页面切换保留底栏图标与文字，选中小横条单独局部刷新。修复锁屏返回后底栏消失，并限定内容刷新边界；手动全刷、首次进入、解锁和异常恢复保留完整刷新。
+- 底栏图标、圆形返回键与书架管理/导入按钮增加点击反馈；修复底栏放大动效周围的矩形白边。三种主页模式统一保留原灰底，按真实变化缩小推屏范围，释放、滑出、多指或切页时复位。
+- 新增顶部下滑快捷菜单：从顶部边缘下滑可连接最近保存的 WiFi / 再次断开、切换蓝牙、全刷与锁屏。向上滑、点击外部或返回键收起；传输忙碌时保留网络，蓝牙沿用现有内存保护。
+- 阅读按键可自定义，提供两套推荐：设置1为左上一页 / 中阅读工具栏 / 右下一页；设置2为左首页 / 中切换全屏 / 右阅读工具栏。中键长按固定全刷，中间双击切换全屏不随设置变化；单击左右各半或上1/3、下2/3翻页。配置随重启及保存恢复保留。
+- 阅读水波纹替换为快速动画；灰阶相位保持完整，插图与手动/周期全刷仍使用原路径。优化主页面水波纹条带与快刷退出书架的同向擦白；缓存最多九张黑白封面，切页与锁屏不回放旧画面。
+- 改善阅读题头与首页书名中补充汉字放大的锯齿，保持原字宽与排版。
+- 在线刷机、TF 升级 Bin 和联网 OTA 来自同一次产品配置编译；核对双槽基础包、升级校验值和版本，保留已有配置、阅读数据与 TF 卡内容。联网更新确认页显示简短日志。
+
+Main screens offer ordinary, fast and water refresh modes. Ordinary/water retain grays; fast uses monochrome artwork and fine checkerboard acrylic. Retained navigation has local marker and press feedback, with actual-change bounds protecting its background and labels. A top-edge quick layer controls saved WiFi, Bluetooth, refresh and lock. Reader keys are configurable with two presets, fixed middle-hold refresh and independent center double-tap full screen. Fast reader ripple, bounded cover caching and interpolated supplemental Han glyphs improve the display. USB, TF and OTA share one product build with compatible slots, rollback and release notes.
 
 ## 0.3.3-rc86 · 2026-10-08
 

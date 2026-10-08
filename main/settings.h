@@ -33,6 +33,16 @@ void app_settings_set_staged_shutdown(bool staged);
 /// 首页进入时强制全刷；默认关闭。/ Full refresh when entering Home; off by default.
 bool app_settings_home_full_refresh(void);
 void app_settings_set_home_full_refresh(bool enabled);
+/// 主页刷新模式，只控制四个主页面；默认普通。/ Main-tab refresh mode; ordinary by default.
+typedef enum {
+    APP_MAIN_REFRESH_NORMAL = 0, ///< 普通灰阶 / Ordinary grayscale
+    APP_MAIN_REFRESH_FAST = 1,   ///< 黑白快刷与灰阶亚克力 / Monochrome fast with gray acrylic
+    APP_MAIN_REFRESH_WATER = 2,  ///< 水波纹灰阶 / Staggered grayscale
+} app_main_refresh_mode_t;
+app_main_refresh_mode_t app_settings_main_refresh_mode(void);
+void app_settings_set_main_refresh_mode(app_main_refresh_mode_t mode);
+/// 绘制主页面黑白资源时使用，其他两种模式保留灰阶。/ Used to render monochrome resources; the other modes retain grayscale.
+bool app_settings_main_fast_refresh(void);
 /// 无操作自动锁屏分钟数：0 关闭，1/5/10。/ Idle lock timeout: off, 1/5/10 minutes.
 uint8_t app_settings_auto_lock_minutes(void);
 void app_settings_set_auto_lock_minutes(uint8_t minutes);
@@ -80,7 +90,7 @@ void app_settings_set_book_shake(bool on);
 /// Full-screen cleanup every 5/10/15/30 turns; 0 disables periodic cleanup only.
 uint8_t app_settings_reader_full_pages(void);
 void app_settings_set_reader_full_pages(uint8_t pages);
-/// 阅读翻页效果：0 默认，1 水波纹；初始为默认。/ Reader turn effect: 0 default, 1 water ripple; initially default.
+/// 阅读翻页效果：0默认，1采用PR17快速水波纹；沿用原设置值和默认效果。/ Reader turn effect: 0 default, 1 PR17 fast ripple; retain stored values and the default effect.
 uint8_t app_settings_reader_turn_effect(void);
 void app_settings_set_reader_turn_effect(uint8_t effect);
 /// 阅读正文里短按电源键翻下一页；默认关闭。/ Short power press turns forward only in reader body; off by default.
@@ -92,11 +102,25 @@ void app_settings_set_reader_immersive(bool on);
 /// 阅读时跳过书内插图页；原图仍保留在 EPUB 中。/ Skip inline illustrations while reading without changing the EPUB.
 bool app_settings_reader_hide_images(void);
 void app_settings_set_reader_hide_images(bool on);
-/// 阅读时长按中间圆圈键全刷；关闭时返回首页，默认关闭。
-/// Refresh the entire screen on a reader middle-key hold; off returns Home, default off.
+typedef enum {
+    APP_READER_KEY_PREV, ///< 上一页 / Previous page
+    APP_READER_KEY_NEXT, ///< 下一页 / Next page
+    APP_READER_KEY_TOOLS, ///< 阅读工具栏 / Reader toolbar
+    APP_READER_KEY_FULLSCREEN, ///< 切换全屏 / Toggle full screen
+    APP_READER_KEY_HOME, ///< 返回首页 / Home
+    APP_READER_KEY_REFRESH, ///< 手动全刷 / Manual full refresh
+    APP_READER_KEY_NONE, ///< 不操作 / No action
+    APP_READER_KEY_COUNT
+} app_reader_key_action_t;
+/// 三个短按功能，0/1/2对应左/中/右；中键长按始终全刷。/ Short actions indexed left/middle/right; middle holds always refresh.
+app_reader_key_action_t app_settings_reader_key_action(unsigned key);
+void app_settings_set_reader_key_action(unsigned key, app_reader_key_action_t action);
+/// 一次提交整套推荐设置，1为翻页，2为首页/全屏/工具栏。/ Commit preset 1 (page turns) or 2 (Home/full screen/tools) together.
+void app_settings_set_reader_key_preset(unsigned preset);
+/// 旧长按设置API保留用于历史备份兼容。/ Retained legacy hold APIs for historical backup compatibility.
 bool app_settings_reader_hold_refresh(void);
 void app_settings_set_reader_hold_refresh(bool on);
-/// 上中下轻点分区；默认左右翻页。/ Top/middle/bottom tap regions; defaults to horizontal.
+/// 上1/3与下2/3轻点分区；默认左右各半。/ Upper 1/3 and lower 2/3 tap regions; default horizontal halves.
 bool app_settings_reader_vertical_turn(void);
 void app_settings_set_reader_vertical_turn(bool on);
 /// 书架排序偏好重启后保持。/ Persist the shelf's recent-reading sort across restarts.

@@ -10,6 +10,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "epd_highlevel.h"
 #include "epdiy.h"
@@ -51,7 +52,22 @@ enum EpdDrawError update_display_mode(EpdiyHighlevelState* hl, enum EpdDrawMode 
 enum EpdDrawError update_display_mode_diff(EpdiyHighlevelState* hl, enum EpdDrawMode mode);
 /// 系统页切换：16 灰阶差分 GL16，间隔性全像素灰阶整理，累计若干次同步做 GC16；不安排延迟二次刷新。
 /// System page transition: 16-gray differential GL16 with periodic full-pixel gray settling and synchronous GC16 cleanup.
+/// 四主页面固定底栏，仅横条局部更新；普通保留灰阶与内容区整理，快刷用完整黑白表及棋盘格亚克力。
+/// All main screens retain navigation with local marker updates; ordinary retains grays and body settling, fast uses complete monochrome and checkerboard acrylic.
 enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl);
+/// 为下一次主页面输出启用固定底栏；标记书架切出与真正切页，避免同页重绘播放动画。
+/// Arm fixed navigation for the next main-screen output; tag shelf exit and actual navigation so same-page repaints do not animate.
+void display_main_transition_arm(const void* owner, bool leaving_shelf, bool changing_page);
+/// 当前主页面最多三个横向灰阶条带，其余内容按黑白驱动；无入口许可时忽略。
+/// Register at most three horizontal gray bands on the armed main page; other content uses black/white. Ignore without permission.
+void display_main_transition_gray_bands(const EpdRect* bands, unsigned count);
+/// 书架分页加强白色擦除，保持底栏边界。/ Strengthen shelf-page whitening within the fixed navigation boundary.
+void display_main_transition_shelf_page(void);
+/// 解除尚未使用的入口许可。/ Disarm unused entry permission.
+void display_main_transition_disarm(void);
+/// 取消尚未使用的入口；不打断物理波形，无延迟补刷任务。
+/// Cancel unused permission without interrupting a physical waveform; no deferred completion exists.
+void display_main_transition_cancel(void);
 enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_from_white_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode

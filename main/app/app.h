@@ -106,6 +106,9 @@ struct app_desc_s {
     bool defer_middle_short;
     /// 可选：按当前页面决定右下角菜单把手是否响应。/ Decide whether the bottom-right menu handle is active.
     bool (*menu_handle_enabled)(app_ctx_t* ctx);
+    /// 可选：当前确实显示主页面，允许本地测试优化底栏切页；阅读/子页面返回 false。
+    /// Optional: true only for a main-tab view eligible for local transition testing; reader/subviews return false.
+    bool (*main_page_visible)(app_ctx_t* ctx);
     /// 进页/离页。on_enter 里做上电、唤醒传感器、拉一次数据这类副作用。
     /// / Enter/exit. on_enter powers up, wakes sensors, takes a first sample.
     void (*on_enter)(app_ctx_t* ctx);

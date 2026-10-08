@@ -251,7 +251,8 @@ static void draw_cover(uint8_t *fb, const home_book_t *item, EpdRect box) {
                 int sy = (int)(crop.y + (uint64_t)(unsigned)y * crop.height / box_height);
                 const uint8_t gray = ui_contrast_gray(item->cover[sy * BOOK_COVER_W + sx]);
                 epd_draw_pixel(box.x + x, box.y + y,
-                               ui_image_dither_gray(gray, box.x + x, box.y + y), fb);
+                               app_settings_main_fast_refresh() ? ui_image_dither_bw(gray, box.x + x, box.y + y)
+                                                       : ui_image_dither_gray(gray, box.x + x, box.y + y), fb);
             }
     } else {
         char title[128]; snprintf(title, sizeof(title), "%s", item->title);
@@ -462,11 +463,13 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
+static bool main_page_visible(app_ctx_t *ctx) { (void)ctx; return true; }
 static EpdRect area_hint(app_ctx_t *ctx) { (void)ctx; return s_area; }
 
 const app_desc_t app_dashboard = {
     .title = "首页 Home", .detail = "继续阅读与近七天阅读", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
+    .main_page_visible = main_page_visible,
     .on_enter = on_enter, .on_media_lost = on_media_lost, .on_media_ready = on_media_ready,
     .render = render, .present = present, .on_tick = on_tick,
     .on_gesture = on_gesture, .on_key = on_key, .area_hint = area_hint,

@@ -939,11 +939,16 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
+static bool main_page_visible(app_ctx_t *ctx) {
+    (void)ctx;
+    return s_view == FILE_VIEW_LIST && s_folder < 0 && !strcmp(s_dir, "/sdcard") && !s_delete_confirm;
+}
 static void files_exit(app_ctx_t *ctx) { (void)ctx; ui_keyboard_end(); }
 
 const app_desc_t app_files = {
     .title = "文件管理 Files", .detail = "TF 卡文件与传输", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
+    .main_page_visible = main_page_visible,
     .on_enter = on_enter, .on_media_lost = on_media_lost, .on_media_ready = on_media_ready,
     .on_exit = files_exit, .render = render, .on_tick = on_tick,
     .on_gesture = on_gesture, .on_key = on_key, .present = files_present,

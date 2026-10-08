@@ -52,7 +52,7 @@ enum EpdDrawError {EPD_DRAW_SUCCESS,EPD_DRAW_ERROR};
 static const int E0470_WAVEFORM=0,E0470_FULL_WAVEFORM=1,E0470_FOLLOW_WAVEFORM=2,E0470_TEXTTURN_WAVEFORM=3;
 static const char *TAG="test";
 static int s_view,s_presented_view,s_reader_panel,s_pressed_control;
-static bool s_shelf_feedback_pending,s_reader_cleanup,s_reader_image_refresh_pending,s_toolbar,s_clear_confirm;
+static bool s_shelf_page_pending,s_shelf_feedback_pending,s_reader_cleanup,s_reader_image_refresh_pending,s_toolbar,s_clear_confirm;
 static bool s_reader_fullscreen,s_water_turn_pending,s_reader_footer_pending,s_reader_turn_pending,s_reader_text_frame;
 static enum EpdDrawMode s_mode;
 static EpdRect s_area,s_du_area;
@@ -60,6 +60,7 @@ static unsigned s_du_count;
 static int64_t s_du_ms;
 static int s_water_turn_dir;
 static void *s_prep_done;
+static void display_main_transition_shelf_page(void){}
 static unsigned pushes;
 static int route;
 static enum EpdDrawMode pushed_mode;
@@ -72,8 +73,12 @@ static int shelf_rows(void){return 9;}
 static EpdRect row_rect(int row){return (EpdRect){42+(row%3)*210,220+(row/3)*272,176,240};}
 static const char *s_text;
 static void prepare_inline_image(void){}
-static void render(app_ctx_t *ctx,uint8_t *fb){(void)ctx;(void)fb;}
-static void prepare_covers(app_ctx_t *ctx){(void)ctx;}
+static bool test_check_cached;
+static unsigned test_button_draws,test_body_draws;
+static void draw_shelf_header_button(uint8_t *fb,EpdRect r,bool importing){(void)fb;assert(r.width==97&&r.height==54);assert(r.x==(importing?551:442));++test_button_draws;}
+static unsigned test_prepare_order,test_render_order,test_step;
+static void render(app_ctx_t *ctx,uint8_t *fb){(void)ctx;(void)fb;++test_body_draws;if(test_check_cached){assert(test_prepare_order);test_render_order=++test_step;}}
+static void prepare_covers(app_ctx_t *ctx){(void)ctx;if(test_check_cached)test_prepare_order=++test_step;}
 static bool kick_prep(void){return false;}
 static int64_t esp_timer_get_time(void){return 1000000;}
 static void test_log(const char *tag,const char *format,...){(void)tag;(void)format;}
@@ -97,6 +102,10 @@ static struct {uint8_t *gray;} test_image={.gray=(uint8_t*)"gray"},*s_page_image
 #define BOOK_TOC_ROWS 12
 #define E0470_TURN_RTL 1
 #define E0470_TURN_LTR -1
+#define E0470_TURN_FAST_TICK_US 14000
+static int test_tick_us=12000,test_tick_sets;
+static int e0470_page_turn_tick_us(void){return test_tick_us;}
+static void e0470_page_turn_set_tick_us(int us){test_tick_us=us;++test_tick_sets;}
 static int book_layout_page_image_count(unsigned page){return !test_hide_images&&test_types[s_chapter][page]?1:0;}
 static int book_layout_page_image(unsigned page){return !test_hide_images&&test_types[s_chapter][page]==2?0:-1;}
 static unsigned book_layout_page_count(void){return 2;}
@@ -122,7 +131,7 @@ static enum EpdDrawError update_display_with(void *hl,const int *wave,enum EpdDr
 static enum EpdDrawError update_display_full(void *hl){(void)hl;return record(FULL,MODE_GC16,(EpdRect){0});}
 static enum EpdDrawError update_display_fast_page(void *hl){(void)hl;return record(FAST,MODE_GL16,(EpdRect){0});}
 static enum EpdDrawError update_display_mode_diff(void *hl,enum EpdDrawMode mode){(void)hl;return record(READER,mode,(EpdRect){0});}
-static enum EpdDrawError update_display_water_turn(void *hl,EpdRect area,int dir){(void)hl;(void)dir;return record(WATER,MODE_GL16,area);}
+static enum EpdDrawError update_display_water_turn(void *hl,EpdRect area,int dir){(void)hl;(void)dir;assert(test_tick_us==E0470_TURN_FAST_TICK_US);return record(WATER,MODE_GL16,area);}
 '''
 shelf += function("main/apps/app_book.c", "paint_control") + "\n"
 for name in ("present", "paint_reading", "turn_page"):
@@ -130,6 +139,16 @@ for name in ("present", "paint_reading", "turn_page"):
 shelf += r'''
 int main(void){
  uint8_t fb=0;app_ctx_t ctx={.fb=&fb};s_view=s_presented_view=SHELF;
+ // 缓存封面在合成前就绪；进入书架只有一次输出，不再等待框架先显示。
+ // Cached covers are ready before composition; shelf entry uses one output without waiting for a furniture-first frame.
+ test_check_cached=true;s_presented_view=-1;
+ assert(present(&ctx,APP_REDRAW_PAGE));
+ assert(test_prepare_order==1&&test_render_order==2&&pushes==1&&trace_count==1&&route==FAST);
+ test_check_cached=false;pushes=trace_count=0;
+ unsigned body_before=test_body_draws;
+ assert(paint_control(&ctx,(EpdRect){442,94,97,54})==APP_REDRAW_AREA);
+ assert(paint_control(&ctx,(EpdRect){551,94,97,54})==APP_REDRAW_AREA);
+ assert(test_button_draws==2&&test_body_draws==body_before);
  for(int repeat=0;repeat<80;++repeat){
    int row=repeat%9;EpdRect original=row_rect(row);s_pressed_control=repeat%2?row:-1;
    s_reader_fullscreen=true;
@@ -173,6 +192,21 @@ int main(void){
  assert(present(&ctx,APP_REDRAW_AREA)&&trace_count==1&&route==AREA&&pushed_mode==MODE_GL16&&trace_wave[0]==E0470_WAVEFORM);
  s_reader_panel=READER_PANEL_NONE;s_reader_fullscreen=true;s_reader_turn_pending=true;trace_count=0;
  assert(present(&ctx,APP_REDRAW_AREA)&&trace_count==2&&trace_route[0]==DIFF&&trace_route[1]==DIFF&&trace_wave[0]==E0470_TEXTTURN_WAVEFORM&&trace_wave[1]==E0470_WAVEFORM);
+ // 快水波仅接管实际动画输出；成功、失败及全屏都恢复主页节拍，优先级分支不改节拍。
+ // Fast ripple scopes pacing to actual animation output; success, failure and full screen restore main pacing, while priority branches never change it.
+ for(int full=0;full<2;++full)for(int error=0;error<2;++error){
+   s_reader_fullscreen=full;s_reader_footer_pending=false;s_water_turn_pending=true;
+   test_push_error=error;test_tick_us=full?19000:12000;int prior=test_tick_us,sets=test_tick_sets;
+   trace_count=0;assert(present(&ctx,APP_REDRAW_AREA));
+   assert(trace_route[0]==WATER&&test_tick_us==prior&&test_tick_sets==sets+2&&!s_water_turn_pending);
+ }
+ test_push_error=0;test_tick_us=12000;s_reader_fullscreen=false;
+ for(int priority=0;priority<3;++priority){
+   s_water_turn_pending=true;s_reader_cleanup=priority==1;s_reader_image_refresh_pending=priority==2;
+   int sets=test_tick_sets;trace_count=0;
+   assert(present(&ctx,priority==0?APP_REDRAW_FULL:APP_REDRAW_AREA));
+   assert(trace_route[0]!=(int)WATER&&test_tick_sets==sets&&test_tick_us==12000&&!s_water_turn_pending);
+ }
  puts("PASS: text turn/body/footer, periodic/manual cleanup, grayscale image, water effect, settings and full-screen routes");
  for(int input_view=EDIT;input_view<=SEARCH;input_view++)for(int repeat=0;repeat<80;repeat++){
    s_view=input_view;s_reader_fullscreen=true;s_reader_footer_pending=true;
@@ -326,10 +360,114 @@ int main(void){
 }
 '''
 
+navigation = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include "main/assets/ui_icons.h"
+#include "main/ui/ui_nav_layout.h"
+typedef struct {int x,y,width,height;} EpdRect;
+#define UI_LOCK_WIDTH 684
+#define UI_LOCK_HEIGHT 1216
+#define UI_GRAY_BLACK 0
+#define UI_GRAY_WHITE 255
+#define UI_GRAY_LIGHT 224
+#define EPD_DRAW_ALIGN_CENTER 1
+#define UI_NAV_TAB_ICON_PX 44
+enum {UI_CLICK_NAV};
+static void ui_click_feedback_register(uint8_t *fb,EpdRect r,int kind,ui_icon_t icon){(void)fb;(void)icon;assert(kind==UI_CLICK_NAV&&r.width==60&&r.height==60);}
+static const char *const labels[]={"首页","书架","文件管理","设置"};
+enum {APP_MAIN_REFRESH_NORMAL,APP_MAIN_REFRESH_FAST,APP_MAIN_REFRESH_WATER};
+static int main_choice;
+static int app_settings_main_refresh_mode(void){return main_choice;}
+static int first_ink, markers, tracks, texts, guards;
+static uint8_t ui_read_pixel(const uint8_t *fb,int x,int y){(void)fb;(void)x;(void)y;return 14;}
+static uint8_t ui_contrast_gray(uint8_t value){return value&240;}
+static void epd_draw_pixel(int x,int y,uint8_t value,uint8_t *fb){(void)x;(void)value;(void)fb;if(y<first_ink)first_ink=y;}
+static void epd_fill_rect(EpdRect area,int gray,uint8_t *fb){
+ (void)fb;
+ if(area.y==UI_NAV_TOP+1){assert(area.height==5);if(gray==UI_GRAY_BLACK){assert(area.width==56);++markers;}
+ else {assert(gray==UI_GRAY_WHITE&&area.width==UI_LOCK_WIDTH);++tracks;}}
+ if(area.y==UI_NAV_REFRESH_END){assert(area.height==UI_NAV_TOP-UI_NAV_REFRESH_END&&area.width==UI_LOCK_WIDTH&&gray==0xf0);++guards;}
+}
+static void ui_hairline(uint8_t *fb,int y,int x,int width,int gray){(void)fb;(void)x;(void)width;(void)gray;assert(y==UI_NAV_TOP);}
+static void ui_text(uint8_t *fb,int x,int y,int px,const char *label,int align,bool wrap){(void)fb;(void)x;(void)label;(void)align;(void)wrap;assert(y==UI_NAV_TOP+74&&px==17);++texts;}
+'''
+for path, name in (("main/ui/ui_kit.c", "icon_nibble"), ("main/ui/ui_kit.c", "ui_draw_icon"),
+                   ("main/ui/ui_nav.c", "icon"), ("main/ui/ui_nav.c", "ui_nav_draw")):
+    navigation += function(path, name) + "\n"
+navigation += r'''
+int main(void){
+ uint8_t fb=0;
+ for(main_choice=0;main_choice<3;++main_choice)for(int active=0;active<4;++active){
+   first_ink=2000;markers=tracks=texts=guards=0;ui_nav_draw(&fb,active);
+   assert(markers==1&&texts==4&&tracks==(main_choice!=0)&&guards==(main_choice!=0));
+   // 验证真实图标掩模的第一笔，单次刷新32列对齐后不能触碰图标。
+   // Check actual mask ink: the 32-column-expanded single update must not reach an icon.
+   assert(first_ink>=UI_NAV_MARKER_SCAN_END);
+   assert(UI_NAV_REFRESH_END%32==0&&UI_NAV_REFRESH_END<UI_NAV_TOP+1);
+ }
+ puts("PASS: aligned content refresh stops above marker and actual navigation masks; blank guard and production layout retained");
+}
+'''
+
+image_bw = r'''
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include "main/ui/ui_image_dither.h"
+typedef struct {int x,y,width,height;} EpdRect;
+enum {EPD_ROT_LANDSCAPE,EPD_ROT_PORTRAIT,EPD_ROT_INVERTED_LANDSCAPE,EPD_ROT_INVERTED_PORTRAIT};
+static int rotation;
+static int epd_width(void){return 16;}
+static int epd_height(void){return 12;}
+static int epd_get_rotation(void){return rotation;}
+static int epd_rotated_display_width(void){return rotation%2?12:16;}
+static int epd_rotated_display_height(void){return rotation%2?16:12;}
+static uint8_t epd_get_pixel(int x,int y,int w,int h,const uint8_t* fb){
+ assert(w==16&&h==12&&x>=0&&x<w&&y>=0&&y<h);
+ int index=y*w+x;return ((fb[index/2]>>((index&1)*4))&15)<<4;
+}
+static void epd_draw_pixel(int x,int y,uint8_t gray,uint8_t* fb){
+ int px=x,py=y;
+ if(rotation==EPD_ROT_PORTRAIT){px=15-y;py=x;}
+ if(rotation==EPD_ROT_INVERTED_LANDSCAPE){px=15-x;py=11-y;}
+ if(rotation==EPD_ROT_INVERTED_PORTRAIT){px=y;py=11-x;}
+ assert(px>=0&&px<16&&py>=0&&py<12);
+ int index=py*16+px,shift=(index&1)*4;
+ fb[index/2]=(fb[index/2]&~(15<<shift))|((gray>>4)<<shift);
+}
+'''
+for name in ("ui_read_pixel", "ui_image_bw_rect"):
+    image_bw += function("main/ui/ui_kit.c", name) + "\n"
+image_bw += r'''
+int main(void){
+ uint8_t fb[96],original[96];
+ for(rotation=0;rotation<4;++rotation){
+   memset(fb,0x77,sizeof(fb));memcpy(original,fb,sizeof(fb));
+   ui_image_bw_rect(fb,(EpdRect){-1,-1,6,6});
+   for(int y=0;y<epd_rotated_display_height();++y)for(int x=0;x<epd_rotated_display_width();++x){
+     int value=ui_read_pixel(fb,x,y);
+     if(x<5&&y<5)assert(value==0||value==15);else assert(value==7);
+   }
+   memcpy(original,fb,sizeof(fb));ui_image_bw_rect(fb,(EpdRect){-1,-1,6,6});
+   assert(!memcmp(fb,original,sizeof(fb)));
+   ui_image_bw_rect(fb,(EpdRect){50,50,82,82});assert(!memcmp(fb,original,sizeof(fb)));
+   ui_image_bw_rect(NULL,(EpdRect){0,0,82,82});
+ }
+ puts("PASS: avatar BW dots stay bounded and stable across four framebuffer rotations, including clipped and rounded white edges");
+}
+'''
+
 with tempfile.TemporaryDirectory() as folder:
-    for name, unit in (("shelf", shelf), ("status", status)):
+    for name, unit in (("shelf", shelf), ("status", status),
+                       ("nav-modes", navigation), ("image-bw", image_bw)):
         source, binary = Path(folder) / (name + ".c"), Path(folder) / name
         source.write_text(unit)
+        extras = [str(root / "main/ui/ui_image_dither.c")] if name == "image-bw" else []
         subprocess.run(["cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
-                        str(source), "-o", str(binary)], check=True)
+                        "-I" + str(root),
+                        str(source), *extras, "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)

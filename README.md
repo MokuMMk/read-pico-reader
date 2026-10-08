@@ -6,9 +6,15 @@ An independent, open-source reading firmware for the **MindReset Read Pico (RDP-
 
 The current interface has Home, Bookshelf, Files, and Settings. It reads EPUB and TXT books from a TF card, remembers reading progress, and supports Wi-Fi, hotspot, or USB file transfer. The online flasher installs the same firmware image as the local `flash/` bundle.
 
-## Current release: rc86
+## Current release: rc87
 
-A shared keyboard adds continuous Pinyin, offline phrases, steady carets, press feedback and held backspace. Candidate-strip settling reduces ghosting while typing retains fast local updates. This release also improves EPUB compatibility and lets AP/STA web transfer save the status signature. USB, TF and online updates share the release, with short notes on the device. See the [changelog](docs/CHANGELOG.md).
+Main screens now offer ordinary, fast and water refresh modes, retained bottom navigation and press feedback. Top-edge quick controls and configurable reader keys simplify common actions. Fast ripple turns, bounded cover caching and smoother title glyphs improve the display. USB, TF and online updates share one build, with short notes on the device. See the [changelog](docs/CHANGELOG.md).
+
+## Main refresh and reader controls
+
+Settings → Display → Main refresh mode offers ordinary, fast and water, defaulting to ordinary. Ordinary/water retain grays; fast uses monochrome covers and fine checkerboard acrylic. Four main screens retain navigation icons/labels and locally move the selection marker. Navigation feedback preserves its gray background in all modes.
+
+Swipe down from the top edge to open the WiFi, Bluetooth, refresh and lock controls; swipe up, tap outside or press Back to close. WiFi connects the last saved network or disconnects it, unless a transfer is busy. Reader key controls offer custom actions and two presets. The default is Previous / Tools / Next; the second is Home / Full screen / Tools. A middle hold always refreshes. Center double taps always toggle full screen, independently of mappings. Single taps use left/right halves or upper 1/3 / lower 2/3. These choices persist across reboot and configuration restore.
 
 ## Keyboard
 
