@@ -6,9 +6,9 @@ An independent, open-source reading firmware for the **MindReset Read Pico (RDP-
 
 The current interface has Home, Bookshelf, Files, and Settings. It reads EPUB and TXT books from a TF card, remembers reading progress, and supports Wi-Fi, hotspot, or USB file transfer. The online flasher installs the same firmware image as the local `flash/` bundle.
 
-## Current release: rc87
+## Current release: rc88
 
-Main screens now offer ordinary, fast and water refresh modes, retained bottom navigation and press feedback. Top-edge quick controls and configurable reader keys simplify common actions. Fast ripple turns, bounded cover caching and smoother title glyphs improve the display. USB, TF and online updates share one build, with short notes on the device. See the [changelog](docs/CHANGELOG.md).
+This release improves startup recovery and cover-cache memory use, restores reading after deep sleep, adds custom middle-hold actions and protects the Tools entry. Tickets use the system font; home and reader titles reuse their respective active fonts at native sizes. USB, TF and OTA share one build and short device notes. rc87 is withdrawn; original rc85/rc86 releases remain selectable. See the [changelog](docs/CHANGELOG.md).
 
 ## Main refresh and reader controls
 
@@ -16,7 +16,7 @@ Settings → Display → Main refresh mode offers ordinary, fast and water, defa
 
 Swipe down from the top edge to open the WiFi, Bluetooth, refresh and lock controls; swipe up, tap outside or press Back to close. WiFi connects the last saved network or disconnects it, unless a transfer is busy. Reader key controls offer custom actions and two presets. The default is Previous / Tools / Next; the second is Home / Full screen / Tools. A middle hold defaults to refresh and can also be mapped to Home or other actions. At least one of the three short presses or the middle hold must open Tools; startup and backup restoration repair a missing entry to middle-short Tools. Center double taps always toggle full screen, independently of mappings. Single taps use left/right halves or upper 1/3 / lower 2/3. New books open full screen; a page turn dismisses Tools and returns to full screen. These choices persist across reboot and configuration restore.
 
-The current local source also checkpoints the book, position and full-screen state before lock, consuming deep-wake resume only once. Interrupted opening routes to an operable recovery page with the book name, Home and confirmed deletion, without automatic retries. Tickets always use the system face and restore the reader face on light wake. Quick controls retain grayscale borders in all main modes. Fast mode retains only BW covers; ordinary/water retain only gray covers and free obsolete formats on a policy change. Home resume titles reuse the active system face at 40px; reader book/chapter titles reuse the reader face at 32/48px. Outlines rasterize directly without additional built-in fonts or simultaneously loading system and reader faces; unavailable faces retain the safe built-in missing-glyph fallback. These local changes have not been published online.
+The firmware checkpoints the book, position and full-screen state before lock, consuming deep-wake resume only once. Interrupted opening routes to an operable recovery page with the book name, Home and confirmed deletion, without automatic retries. Tickets always use the system face and restore the reader face on light wake. Quick controls retain grayscale borders in all main modes. Fast mode retains only BW covers; ordinary/water retain only gray covers and free obsolete formats on a policy change. Home resume titles reuse the active system face at 40px; reader book/chapter titles reuse the reader face at 32/48px. Outlines rasterize directly without additional built-in fonts or simultaneously loading system and reader faces; unavailable faces retain the safe built-in missing-glyph fallback. These changes are included in rc88.
 
 ## Keyboard
 

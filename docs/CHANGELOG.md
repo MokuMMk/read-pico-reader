@@ -3,7 +3,20 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
-## 0.3.3-rc87 · 2026-10-08
+## 0.3.3-rc88 · 2026-10-08
+
+- 优化启动、EPUB 元数据与封面加载的栈占用；快刷只缓存黑白封面，普通/水波纹只缓存灰阶封面，切模式释放旧格式，低内存时安全回退。
+- 异常开书保护：开书被断电或异常重启打断后，停止自动重试该书，进入可操作页面；已记录书名时提供返回首页及确认删除，不自动删除文件。
+- 深睡前保存书籍、阅读位置、全屏和主页面状态，唤醒后恢复；恢复记录只消费一次，避免失败后反复尝试。
+- 中键长按可自定义，包含返回首页；三键短按或中键长按至少保留一个阅读工具栏入口，旧配置/恢复配置缺少时补为中键短按。配置备份 v11 兼容旧版本。
+- 新开书默认全屏；翻页收起工具栏并回到全屏，保留旧布局阅读锚点，避免重排跳读。中间双击独立切换全屏。
+- 下拉快捷面板及四个圆形按钮加深框线，三种主页模式统一灰阶；票根统一系统字体，浅睡解锁恢复此前阅读字体。
+- 首页继续阅读书名使用系统字体，阅读书名与章节标题使用阅读字体，复用当前字体按原 40/32/48 像素直接生成字形；不增加内建字库或同时加载两份字体。
+- 在线刷机、TF 升级 Bin 与联网 OTA 同源发布，保留双槽回退与已有数据；下架 rc87，保留原发布的 rc85/rc86 可选。
+
+Startup and EPUB/cover stack use are reduced, with one bounded cover format per main refresh mode and safe low-memory fallback. Interrupted book opening stops automatic retries and offers Home or confirmed deletion for a recorded book. Deep sleep checkpoints the reader and consumes resume once. Custom middle-hold actions, persistent Tools-entry repair and compatible v11 backups keep controls accessible. Page turns close Tools and restore full screen without skipping the old anchor. Quick controls use clear gray borders in all modes; tickets use the system font. Home titles reuse the active system face at 40px, reader titles the active reading face at 32/48px, without extra embedded faces or concurrent font loads. USB, TF and OTA share a compatible rollback build. rc87 is withdrawn; original rc85/rc86 remain available.
+
+## 0.3.3-rc87 · 2026-10-08 · 已下架 / Withdrawn
 
 - 在线刷机页新增正式版本选择：默认最新版本，也可刷入原发布的 rc86 或 rc85；显示对应发布时间并提供该版 TF 升级 Bin。
   The web flasher offers the latest release plus original rc86/rc85 builds, showing each publication time and matching TF image.

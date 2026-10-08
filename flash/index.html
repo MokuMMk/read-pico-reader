@@ -379,16 +379,18 @@
       <p>升级到 rc79 后，也可在系统升级页连接 WiFi，检查并安装官网后续更新。在线更新需要官网发布新版清单；升级期间请保持供电。</p>
     </section>
     <section class="release" aria-labelledby="release-title">
-      <div class="eyebrow">最新正式版 0.3.3-rc87 · 主页刷新与交互优化</div><h2 id="release-title">这次更新了什么</h2>
+      <div class="eyebrow">最新正式版 0.3.3-rc88 · 稳定性与阅读恢复</div><h2 id="release-title">这次更新了什么</h2>
       <ul>
-        <li>主页刷新模式：普通与水波纹保留灰阶；快刷采用黑白封面和细腻棋盘格亚克力。</li>
-        <li>底栏保持固定，小横条局部移动；修复解锁底栏消失，保护内容与底栏的刷新边界。</li>
-        <li>底栏图标、圆形返回键、书架管理与导入增加点击反馈，修复图标周围的矩形白边，三模式统一生效。</li>
-        <li>顶部下滑快捷菜单：WiFi 连接最近保存网络 / 再次断开、蓝牙开关、全刷、锁屏；上滑或点击外部收起。</li>
-        <li>阅读按键自定义与两套推荐配置，中键长按全刷；中间双击始终切全屏，轻点采用左右各半或上1/3、下2/3翻页。</li>
-        <li>快速水波纹翻页，优化书架封面缓存和退出残影控制；改善阅读题头与首页书名的字形清晰度。</li>
+        <li>优化启动与封面加载的内存使用，减少栈占用；快刷仅缓存黑白封面，普通与水波纹仅缓存灰阶封面。</li>
+        <li>异常开书保护：打开书籍被断电或异常重启打断后，停止自动重试，显示书名并提供返回首页或确认删除。</li>
+        <li>深睡前保存书籍、阅读位置与页面状态，开机恢复上次阅读；异常恢复只尝试一次。</li>
+        <li>中键长按支持自定义，可设为返回首页等功能；三键短按和中键长按至少保留一个阅读工具栏入口，旧配置与恢复配置自动修正。</li>
+        <li>新开书默认全屏，翻页自动进入全屏并收起工具栏；中间双击仍可切换全屏。</li>
+        <li>下拉快捷面板与四个圆形按钮加深框线，三种主页刷新模式均使用灰阶渲染。</li>
+        <li>修复票根锁屏字体不一致：票根统一跟随系统字体，浅睡解锁恢复此前阅读字体。</li>
+        <li>首页续读书名跟随系统字体，阅读书名与章节标题跟随阅读字体；直接按原字号生成字形，保持大小和清晰度。</li>
       </ul>
-      <p>rc84 及以后固件发现更新时会显示简短日志与“稍后 / 开始更新”。在线刷机、TF 升级和联网 OTA 使用同一固件，保留已有设置、阅读数据和 TF 卡内容。</p>
+      <p>rc87 已下架。原发布的 rc86、rc85 仍可选择刷入。rc84 及以后固件发现更新时会显示简短日志与“稍后 / 开始更新”。在线刷机、TF 升级和联网 OTA 使用同一固件，保留已有设置、阅读数据和 TF 卡内容。</p>
       <details><summary>上一版 rc86 的更新</summary>
       <ul>
         <li>全新输入法：九宫格拼音、全键盘中英文与大小写、独立数字和符号页面。</li>
@@ -461,7 +463,7 @@
         <li>统一采用 PMU 软件油量表与有效位，状态栏和资料卡电量取整保持一致。</li>
       </ul>
       </details>
-      <p>rc79 及以后版本可在“设置 → 升级和恢复 → 系统升级”检查联网更新到 rc87。在线刷机、TF 升级 Bin 和联网 OTA 来自同一次编译，保留已有设置与阅读数据。</p>
+      <p>rc79 及以后版本可在“设置 → 升级和恢复 → 系统升级”检查联网更新到 rc88。在线刷机、TF 升级 Bin 和联网 OTA 来自同一次编译，保留已有设置与阅读数据。</p>
       <img src="./weread-preview.png" alt="微读跨页选择与逐本下载界面" style="display:block;width:100%;height:auto;margin-top:24px;border-radius:16px;">
     </section>
     <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点、USB 或微读传书导入书籍和文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>
