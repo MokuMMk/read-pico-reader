@@ -54,6 +54,9 @@ tools/buzzer_score_wav
 !/flash/firmware.bin
 !/flash/ota_data_initial.bin
 !/flash/Pico-update*.bin
+!/flash/releases/*/bootloader.bin
+!/flash/releases/*/partitions.bin
+!/flash/releases/*/ota_data_initial.bin
 *.elf
 *.map
 flasher_args.json # Generated in build directory
