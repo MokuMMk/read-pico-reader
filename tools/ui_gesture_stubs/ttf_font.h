@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include "epdiy.h"
 bool ttf_font_ready(void);
+bool ttf_font_has_text(const char *text);
 bool ttf_font_is_builtin(void);
 int ttf_ascender_px(int px);
 int ttf_text_width_px(int px, const char *text);

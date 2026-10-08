@@ -138,11 +138,11 @@ void ui_text_fixed_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 );
-/// 标题选择原生字号并按UTF-8截短；完整内容固定字体来源，不跟随系统缩放。
-/// Fit UTF-8 titles at a native size; the complete sample fixes the face independently of UI scaling.
+/// 标题复用当前活动字体并按固定字号截短：首页系统字体、阅读页阅读字体；不加载第二份字体。
+/// Fit titles in the active face at a fixed size: Home's system face or the reader face, without loading a second font.
 int ui_text_title_fit(char *text, int preferred_px, int width, const char *font_sample);
-/// 按原生字号绘制清晰的黑色标题，视觉中心与其他题头元素对齐。
-/// Draw a crisp black title at native size, aligned by its visual center.
+/// 当前页字体按目标字号直接绘制黑色标题，视觉中心对齐，不受系统字号缩放影响。
+/// Rasterize the active face directly at the target size in black, visually centered and independent of UI scaling.
 void ui_text_title_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
                       const char *font_sample, enum EpdFontFlags align);
 void ui_text_bw(

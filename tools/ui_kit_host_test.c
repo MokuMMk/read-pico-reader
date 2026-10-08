@@ -16,7 +16,11 @@
 #define H 100
 static enum EpdRotation rotation = EPD_ROT_LANDSCAPE;
 static bool painted_ttf;
-bool ttf_font_is_builtin(void) { return false; }
+static bool active_ready = true, active_builtin;
+static int active_face = 1, painted_face;
+bool ttf_font_ready(void) { return active_ready; }
+bool ttf_font_is_builtin(void) { return active_builtin; }
+bool ttf_font_has_text(const char *text) { return active_ready && text && !strchr(text, 'Z'); }
 static int painted_baseline;
 static int painted_px;
 static int characters(const char *s) {
@@ -46,6 +50,7 @@ void ttf_draw_text_px(uint8_t *fb, int x, int baseline, int px, const char *text
                       enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
     (void)fb; (void)x; (void)px; (void)text; (void)align; (void)fg; (void)bg;
     painted_ttf = true; painted_baseline = baseline;
+    painted_face = active_face;
 }
 void ui_font_draw_title_px(uint8_t *fb, int x, int baseline, int px,
                            const char *text, enum EpdFontFlags align) {
@@ -77,22 +82,39 @@ static void test_font_context(void) {
 static void test_native_titles(void) {
     uint8_t fb = 0;
     ui_text_set_system_font(false);
+    // 阅读字体已有轮廓，哪怕内建UI有这些字，也应直接用阅读字体和原字号。
+    // Use the existing reader outline and original size even when built-in UI glyphs cover the text.
+    active_face = 1;
     char title[64] = "ABZ";
-    int px = ui_text_title_fit(title, 40, 24, "ABZ");
-    assert(px == 24 && !strcmp(title, "AB"));
-    ui_text_title_vc(&fb, 0, 50, px, title, "ABZ", EPD_DRAW_ALIGN_LEFT);
-    assert(!painted_ttf && painted_px == 24 && painted_baseline == 56);
-    strcpy(title, "AB你好");
-    px = ui_text_title_fit(title, 32, 48, "AB你好");
+    int px = ui_text_title_fit(title, 32, 48, "ABZ");
     assert(px == 32 && !strcmp(title, "AB"));
+    ui_text_title_vc(&fb, 0, 50, px, title, "ABZ", EPD_DRAW_ALIGN_LEFT);
+    assert(painted_ttf && painted_face == 1 && painted_px == 32 && painted_baseline == 55);
+    strcpy(title, "AB你好");
+    px = ui_text_title_fit(title, 48, 72, "AB你好");
+    assert(px == 48 && !strcmp(title, "AB"));
     ui_text_title_vc(&fb, 0, 50, px, title, "AB你好", EPD_DRAW_ALIGN_LEFT);
-    assert(painted_ttf && painted_px == 32);
+    assert(painted_ttf && painted_face == 1 && painted_px == 48);
+    ui_text_set_system_scale(false);
     ui_text_set_system_font(true);
+    active_face = 2;
     strcpy(title, "ABZ");
     px = ui_text_title_fit(title, 40, 120, "ABZ");
     assert(px == 40 && !strcmp(title, "ABZ"));
     ui_text_title_vc(&fb, 0, 50, px, title, "ABZ", EPD_DRAW_ALIGN_LEFT);
-    assert(painted_ttf && painted_px == 40);
+    assert(painted_ttf && painted_face == 2 && painted_px == 40);
+    ui_text_set_system_scale(true);
+    ui_text_title_vc(&fb, 0, 50, px, title, "ABZ", EPD_DRAW_ALIGN_LEFT);
+    assert(painted_face == 2 && painted_px == 40);
+    active_builtin = true;
+    strcpy(title, "ABZ");
+    px = ui_text_title_fit(title, 40, 24, "ABZ");
+    assert(px == 24 && !strcmp(title, "AB"));
+    ui_text_title_vc(&fb, 0, 50, px, title, "ABZ", EPD_DRAW_ALIGN_LEFT);
+    assert(!painted_ttf && painted_px == 24);
+    active_ready = false;
+    assert(ui_text_title_fit(title, 40, 24, "ABZ") == 24);
+    active_ready = true; active_builtin = false;
     ui_text_set_system_font(false);
 }
 int epd_width(void) { return W; }

@@ -6,8 +6,10 @@
  *
  * Implementation of the ui_kit drawing primitives. Layout constants live
  * in the header.
- * 用户修订：标题使用原生位图尺寸或目标字号轮廓，不放大补充位图；截短时保持完整内容所选字体。
- * User revision: titles use native bitmap sizes or target-size outlines; never enlarge supplements or switch faces during truncation.
+ * 用户最新修订：标题复用当前页的活动字体；首页用系统字体，阅读页用阅读字体，按原字号直接光栅化。
+ * Latest user revision: titles reuse the page's active face: system on Home, reader in books, directly rasterized at the original size.
+ * 不为标题切换或重复加载字库；内建缺字回退保留原生位图尺寸，截短保持完整内容的字体来源。
+ * Never switch or duplicate fonts for titles; built-in missing-glyph fallback retains native bitmap sizes and the full text fixes the face during truncation.
  */
 
 #include "ui_kit.h"
@@ -281,14 +283,20 @@ void ui_text_fixed_context_vc(
     }
 }
 
+static bool title_uses_active_font(const char *sample) {
+    // 用户字体始终跟随当前页，不因界面的系统字体标志改回内建黑体。
+    // User fonts always follow the active page, independently of the UI's system-face flag.
+    return ttf_font_ready() && (!ttf_font_is_builtin() || ttf_font_has_text(sample));
+}
+
 int ui_text_title_fit(char *text, int preferred_px, int width, const char *font_sample) {
     const char *sample = font_sample ? font_sample : text;
-    bool builtin = (!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(sample);
+    bool builtin = !title_uses_active_font(sample) && ui_font_has_text(sample);
     int px = builtin ? ui_font_title_px(preferred_px, sample) : preferred_px;
     if (px < 12) px = 12;
     if (px > 120) px = 120;
     if (!text) return px;
-    while (*text && ui_text_fixed_context_width_px(px, text, sample) > width) {
+    while (*text && (builtin ? ui_font_text_width_px(px, text) : ttf_text_width_px(px, text)) > width) {
         size_t n = strlen(text) - 1;
         while (n && ((unsigned char)text[n] & 0xc0) == 0x80) --n;
         text[n] = 0;
@@ -300,7 +308,8 @@ void ui_text_title_vc(uint8_t *fb, int x, int center_y, int px, const char *text
                       const char *font_sample, enum EpdFontFlags align) {
     if (!fb || !text || !*text) return;
     int above = 0, below = 0;
-    if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(font_sample ? font_sample : text)) {
+    if (!title_uses_active_font(font_sample ? font_sample : text) &&
+        ui_font_has_text(font_sample ? font_sample : text)) {
         ui_font_measure_line_px(px, text, &above, &below);
         ui_font_draw_title_px(fb, x, center_y + (above - below) / 2, px, text, align);
     } else {

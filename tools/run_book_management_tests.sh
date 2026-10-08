@@ -30,6 +30,7 @@ python3 tools/reader_images_host_test.py
 python3 tools/book_layout_draw_host_test.py
 python3 tools/ui_font_coverage_host_test.py
 python3 tools/ui_hanzi_host_test.py
+python3 tools/title_font_host_test.py
 python3 tools/test_home_recent.py
 python3 tools/test_book_toc.py
 cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \

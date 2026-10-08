@@ -59,6 +59,9 @@ const char* ttf_font_display_name(void);
 /// 已知随附字体的中文名称；未知名称原样返回。/ Chinese names for bundled fonts; unknown names pass through.
 const char* ttf_font_localized_name(const char* stem);
 bool ttf_font_ready(void);
+/// 只检查当前字体的字符映射，不读卡、不生成字形或切换字体。
+/// Check only the active cmap, without card reads, rasterization or font changes.
+bool ttf_font_has_text(const char *text);
 int ttf_ascender(int size);
 int ttf_ascender_px(int pixel_height);
 

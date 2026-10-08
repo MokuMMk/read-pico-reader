@@ -8,8 +8,8 @@
  * English: Home shows the current read and seven days of reading time; covers survive tab changes.
  * 用户修订：缓存原位换位，只用一个条目的栈空间；保留复用速度，避免启动时复制七条占用半个主任务栈。
  * User revision: reorder the cache in place with one stack entry, retaining hot reuse without copying seven entries into half the main stack at boot.
- * 用户修订：续读书名使用原生字形，不放大24px补充位图，标题笔画保持一致黑色。
- * User revision: resume titles use native glyphs, never enlarge 24px supplements and retain consistent black strokes.
+ * 用户最新修订：续读书名复用已加载系统字体，按原40px直接生成字形；不加载阅读字体或增加内建字库。
+ * Latest user revision: resume titles reuse the loaded system face at the original 40px, without loading the reader face or adding built-in fonts.
  */
 #include <dirent.h>
 #include <stdio.h>

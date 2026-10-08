@@ -8,6 +8,8 @@
  * Variable TTF: sector I/O from the card; glyf/gvar map into PSRAM when
  * they fit. Glyphs are cached by codepoint, size and weight. The built-in
  * font is a Noto Sans SC Medium subset.
+ * 用户修订：标题复用当前字体的轮廓与缓存；覆盖检查只读现有 cmap，不切字体或另加载字库。
+ * User revision: titles reuse the active outlines/cache; coverage checks read the existing cmap without switching or loading another face.
  */
 
 #include "ttf_font.h"
@@ -1805,6 +1807,14 @@ static int measure_width(int pixel_height, const char* text) {
 
 bool ttf_font_ready(void) {
     return font_ready;
+}
+
+bool ttf_font_has_text(const char *text) {
+    if (!font_ready || !text) return false;
+    while (*text) {
+        if (!stbtt_FindGlyphIndex(&font_info, (int)decode_utf8(&text))) return false;
+    }
+    return true;
 }
 
 void ttf_set_weight(int wght) {
