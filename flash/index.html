@@ -286,6 +286,13 @@
     .progress i { display: block; width: 72%; height: 100%; background: #445645; border-radius: inherit; }
     .percent { display: block; text-align: right; font-weight: 750; }
     .flash-panel { margin-top: 24px; border-radius: 20px; background: #343d35; color: white; padding: 27px 31px; display: flex; align-items: center; justify-content: space-between; gap: 22px; }
+    .flash-copy { flex: 1; min-width: 0; }
+    .version-picker { display: grid; gap: 8px; margin: 17px 0 12px; max-width: 390px; }
+    .version-picker label { font-size: 15px; font-weight: 750; }
+    .version-picker select { width: 100%; padding: 11px 13px; border: 1px solid #bfc9ba; border-radius: 9px; background: #f8f8f4; color: #29342a; font: inherit; font-size: 16px; cursor: pointer; }
+    .version-picker select:focus-visible { outline: 3px solid #c4d1b9; outline-offset: 3px; }
+    .version-picker select:disabled { cursor: default; opacity: .7; }
+    .flash-panel .version-hint { margin-top: 11px; font-size: 13px; }
     .flash-panel h2 { font-size: 25px; margin: 5px 0 8px; }
     .flash-panel p { font-size: 15px; line-height: 1.5; color: #e1e5de; margin: 0; }
     esp-web-install-button { --esp-tools-button-color: white; --esp-tools-button-text-color: #29342a; --esp-tools-button-border-radius: 11px; }
@@ -359,7 +366,7 @@
       <li class="step"><div class="step-visual" aria-hidden="true"><div class="mock-dialog"><div class="dialog-top"><i></i><i></i><i></i></div><div class="dialog-body"><strong>正在安装阅读固件</strong><small>请保持 USB 连接</small><div class="progress"><i></i></div><span class="percent">72%</span></div></div></div><div class="step-body"><div class="step-number">第 3 步 · 等待</div><h3>确认安装，等它完成</h3><p>按弹窗提示开始安装。看到“完成”之前，不要拔线或关闭网页。</p></div></li>
     </ol>
     <div class="flash-panel" id="flash-action">
-      <div><div class="eyebrow" style="color:#dbe3d8">READY TO FLASH</div><h2>准备好了？从这里开始</h2><p>当前版本 <strong id="firmware-version">读取中…</strong> · 仅适用 RDP-G01-W（ESP32-S3，16 MB Flash）</p><p>更新时间：<time id="firmware-updated">读取中…</time>（北京时间）</p></div>
+      <div class="flash-copy"><div class="eyebrow" style="color:#dbe3d8">READY TO FLASH</div><h2>准备好了？从这里开始</h2><div class="version-picker"><label for="firmware-choice">选择刷入版本</label><select id="firmware-choice" aria-describedby="firmware-choice-hint" disabled><option value="./manifest.json">最新正式版</option></select></div><p>所选版本 <strong id="firmware-version" aria-live="polite">读取中…</strong></p><p>发布时间：<time id="firmware-updated">读取中…</time>（北京时间）</p><p class="version-hint" id="firmware-choice-hint">默认选择最新正式版，也可选择 rc86 或 rc85。仅适用 RDP-G01-W。</p></div>
       <div class="flash-help" id="flash-help" role="status"><strong id="flash-help-title">正在检查浏览器…</strong><span>请在电脑 Chrome 或 Edge 中打开公开刷机页：<br><a href="https://wegooo-cell.github.io/read-pico-reader/">https://wegooo-cell.github.io/read-pico-reader/</a></span></div>
       <esp-web-install-button id="flash-installer" hidden manifest="./manifest.json"><button slot="activate" type="button">连接 Pico，开始刷机</button></esp-web-install-button>
     </div>
@@ -367,12 +374,12 @@
     <section class="release" aria-labelledby="upgrade-title">
       <div class="eyebrow">TF CARD / ONLINE UPDATE</div><h2 id="upgrade-title">已有固件，只升级版本</h2>
       <p>下载 <strong>Pico-update.bin</strong>，放进 TF 卡根目录（不要放进 books 文件夹）。在 Pico 打开<strong>设置 → 升级和恢复 → 系统升级 → TF 卡升级</strong>，确认后等待重启。</p>
-      <p><a class="jump" id="bin-download" href="./Pico-update.bin" download="Pico-update.bin">下载 TF 卡升级 Bin ↓</a></p>
+      <p><a class="jump" id="bin-download" hidden download="Pico-update.bin">下载 TF 卡升级 Bin ↓</a></p>
       <p>rc72 及以后版本的双槽基础包可使用 TF 卡升级。更早版本、其他固件或首次安装，请先在本页通过 USB 完整刷机。</p>
       <p>升级到 rc79 后，也可在系统升级页连接 WiFi，检查并安装官网后续更新。在线更新需要官网发布新版清单；升级期间请保持供电。</p>
     </section>
     <section class="release" aria-labelledby="release-title">
-      <div class="eyebrow">0.3.3-rc87 · 主页刷新与交互优化</div><h2 id="release-title">这次更新了什么</h2>
+      <div class="eyebrow">最新正式版 0.3.3-rc87 · 主页刷新与交互优化</div><h2 id="release-title">这次更新了什么</h2>
       <ul>
         <li>主页刷新模式：普通与水波纹保留灰阶；快刷采用黑白封面和细腻棋盘格亚克力。</li>
         <li>底栏保持固定，小横条局部移动；修复解锁底栏消失，保护内容与底栏的刷新边界。</li>
@@ -461,55 +468,6 @@
     <section class="faq" aria-labelledby="faq-title"><div class="eyebrow">HELP</div><h2 id="faq-title">遇到问题时</h2><details><summary>点了按钮，却看不到 Pico 的串口？</summary><p>先确认你在电脑端 Chrome 或 Edge 中打开了本站，并退出 Pico 的 USB 读卡模式。换一根确定能传文件的 USB 线，拔插设备后重试；若串口被其他刷机工具占用，先关闭那个工具。已安装新版固件的设备也可从“设置 → 升级和恢复 → BOOT 刷机”进入刷写模式。</p></details><details><summary>为什么需要进入 BOOT 模式？</summary><p>正常连接 USB 串口时，刷机工具会尝试自动切换。若设备处于锁屏休眠或电脑未识别到串口，可先唤醒 Pico，再从设置中的“BOOT 刷机”进入 BOOT 模式，等电脑重新识别后重试。首次刷机时若还没有这个菜单，可先尝试直接连接刷机。</p></details><details><summary>刷完开机，为什么书架是空的？</summary><p>固件不预装书。请插入 TF 卡，在“文件管理”中使用 WiFi、热点或 USB 传书，也可以把 EPUB / TXT 文件放进 TF 卡的 <code>books</code> 文件夹。</p></details><details><summary>阅读时怎样打开设置？</summary><p>阅读正文默认单击中键打开阅读工具栏，长按中键全刷，中间双击切换全屏。可在“阅读设置 → 按键控制”自定义三键或选择两套推荐配置。</p></details></section>
     <footer><p><a href="https://github.com/wegooo-cell/read-pico-reader" target="_blank" rel="noopener">查看项目源码</a> · <a href="./notices.html">第三方许可与致谢</a></p><p>本项目基于 <a href="https://github.com/MindReset/read_pico_firmware" target="_blank" rel="noopener">MindReset Read Pico 示例固件</a>，并非官方发布。界面图标取自 <a href="https://lucide.dev/icons/" target="_blank" rel="noopener">Lucide</a>，保留其 <a href="./licenses/LUCIDE-ISC.txt">ISC 许可</a>。网页刷机使用 <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>。</p></footer>
   </main>
-  <script>
-    (() => {
-      const help = document.getElementById("flash-help");
-      const title = document.getElementById("flash-help-title");
-      const installer = document.getElementById("flash-installer");
-      const version = document.getElementById("firmware-version");
-      const updated = document.getElementById("firmware-updated");
-      if (location.protocol === "file:") {
-        version.textContent = "请在线上刷机页查看";
-        updated.textContent = "请在线上刷机页查看";
-        title.textContent = "本地预览无法刷机。";
-        return;
-      }
-      fetch("./manifest.json", {cache: "no-store"})
-        .then(response => {
-          if (!response.ok) throw new Error("manifest unavailable");
-          return response.json();
-        })
-        .then(manifest => {
-          version.textContent = typeof manifest.version === "string" ? manifest.version : "版本未知";
-          const published = new Date(manifest.updated_at);
-          if (typeof manifest.updated_at === "string" && Number.isFinite(published.getTime())) {
-            updated.dateTime = published.toISOString();
-            updated.textContent = new Intl.DateTimeFormat("zh-CN", {
-              timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
-              hour: "2-digit", minute: "2-digit", hourCycle: "h23"
-            }).format(published).replace(/\//g, "-");
-          } else updated.textContent = "暂未提供";
-        })
-        .catch(() => {
-          version.textContent = "读取失败，请刷新页面";
-          updated.textContent = "读取失败，请刷新页面";
-        });
-      if (!window.isSecureContext) {
-        title.textContent = "请使用 HTTPS 刷机页。";
-      } else if (!("serial" in navigator)) {
-        title.textContent = "当前浏览器无法连接串口。";
-      } else {
-        title.textContent = "正在加载刷机按钮…";
-        const timer = setTimeout(() => {
-          title.textContent = "刷机按钮未能加载，请刷新页面后重试。";
-        }, 5000);
-        customElements.whenDefined("esp-web-install-button").then(() => {
-          clearTimeout(timer);
-          help.hidden = true;
-          installer.hidden = false;
-        });
-      }
-    })();
-  </script>
+  <script src="./versions.js"></script>
 </body>
 </html>

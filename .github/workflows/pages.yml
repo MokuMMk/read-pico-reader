@@ -7,6 +7,9 @@ on:
       - flash/index.html
       - flash/notices.html
       - flash/manifest.json
+      - flash/releases.json
+      - flash/releases/**
+      - flash/versions.js
       - flash/update.json
       - flash/Pico-update*.bin
       - flash/firmware.bin

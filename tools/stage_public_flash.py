@@ -11,7 +11,7 @@ import re
 import sys
 from urllib.parse import urlparse
 
-from verify_flash_bundle import check
+from verify_flash_bundle import check, check_archived_releases
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +47,18 @@ def stage(output: Path) -> None:
         assert header[48:80].split(b"\0")[0].decode("ascii") == name[1], "historical upgrade version mismatch"
         assert header[80:112].split(b"\0")[0] == b"Read_Pico", "historical upgrade project mismatch"
         shutil.copy2(upgrade, output / upgrade.name)
+    # 按验证后的正式目录发布历史清单与基础包，不递归上传本地测试文件。
+    # Publish only verified archived manifests/base parts, excluding local test files.
+    archives = check_archived_releases(FLASH)
+    if (FLASH / "releases.json").is_file():
+        shutil.copy2(FLASH / "releases.json", output / "releases.json")
+        shutil.copy2(FLASH / "versions.js", output / "versions.js")
+        for release in archives:
+            destination = output / Path(release["manifest"]).parent
+            destination.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(FLASH / release["manifest"], destination / "manifest.json")
+            for name in ("bootloader.bin", "partitions.bin", "ota_data_initial.bin"):
+                shutil.copy2(FLASH / Path(release["manifest"]).parent / name, destination / name)
     shutil.copytree(FLASH / "vendor/web", output / "vendor/web", dirs_exist_ok=True)
     shutil.copy2(FLASH / "vendor/LICENSE", output / "vendor/LICENSE")
     licenses = {

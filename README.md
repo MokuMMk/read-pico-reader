@@ -22,6 +22,8 @@ Rename, profile name, status signature, shelf search and WiFi password fields sh
 
 ## Online installation
 
+Select the latest release or the original **rc86 / rc85** build above the connection button. The publication time and TF-image download follow the selection. Ordinary installation keeps the preserve-data default for all versions.
+
 Visit the [HTTPS web flasher](https://wegooo-cell.github.io/read-pico-reader/). Use a desktop Chrome or Edge browser with a USB data cable. Select the Read Pico serial device and follow the prompts. **Check the board model before flashing.** Ordinary installation preserves the device's settings and reading records, as well as TF-card contents. It does not include books or sample reading history.
 
 If automatic entry to download mode fails on a device already running this firmware, open **Settings → Upgrade & restore → BOOT flashing** on the device, wait for the computer to detect its serial port again, then retry the web flasher.

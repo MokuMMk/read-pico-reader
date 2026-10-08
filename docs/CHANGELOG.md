@@ -5,6 +5,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 0.3.3-rc87 · 2026-10-08
 
+- 在线刷机页新增正式版本选择：默认最新版本，也可刷入原发布的 rc86 或 rc85；显示对应发布时间并提供该版 TF 升级 Bin。
+  The web flasher offers the latest release plus original rc86/rc85 builds, showing each publication time and matching TF image.
 - 主页刷新模式：系统设置可选普通、快刷、水波纹，默认普通。普通及水波纹保留灰阶；快刷使用黑白文字与封面，亚克力书架采用细腻规则的棋盘格点阵。
 - 四个主页面切换保留底栏图标与文字，选中小横条单独局部刷新。修复锁屏返回后底栏消失，并限定内容刷新边界；手动全刷、首次进入、解锁和异常恢复保留完整刷新。
 - 底栏图标、圆形返回键与书架管理/导入按钮增加点击反馈；修复底栏放大动效周围的矩形白边。三种主页模式统一保留原灰底，按真实变化缩小推屏范围，释放、滑出、多指或切页时复位。
