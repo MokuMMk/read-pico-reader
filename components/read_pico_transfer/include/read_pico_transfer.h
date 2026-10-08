@@ -47,6 +47,8 @@ typedef struct {
     void (*file_moved_cb)(const char *old_path, const char *new_path, uint32_t size); ///< 网页重命名后的进度与字体路径迁移 / Migrate progress and font selection after rename
     void (*directory_deleted_cb)(const char *path); ///< 删除目录后清理目录设置 / Clear directory settings after deletion
     void (*directory_moved_cb)(const char *old_path, const char *new_path); ///< 重命名目录后更新目录设置 / Update directory settings after rename
+    bool (*signature_get_cb)(char *out, size_t cap); ///< 复制当前签名，不依赖页面 / Copy current signature without page dependencies
+    esp_err_t (*signature_set_cb)(const char *text); ///< 持久保存签名，空串清除 / Persist a signature; empty clears it
     bool (*wallpaper_set_cb)(const char *path); ///< 图片上传完成后设为锁屏壁纸 / Select an uploaded image as lock wallpaper
 } read_pico_transfer_cfg_t;
 

@@ -3,6 +3,19 @@
 按日期和作者简述对用户可见的功能变化；详细实现历史见 Git。使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by date and author; Git retains implementation history. See [README](../README.md) for usage.
 
+## 0.3.3-rc86 · 2026-10-08
+
+- 新输入法：九宫格只输入中文拼音；全键盘支持中英文与大小写切换，数字和符号使用独立页面。文件/文件夹改名、资料卡名称、状态栏签名、书架搜索、书名编辑及 WiFi 密码共用这套界面。
+- 连续拼音支持 488 个离线常用词组与选词后联想；同音字支持跨批次翻页，九宫格「更多」可选择其他读音。拼音未确认时保留输入，确认后再保存；内建黑体补齐 GB2312 的 6763 个汉字。
+- 补齐常亮输入光标：轻点文字或左右箭头调整位置，在光标处插入或删除；长内容跟随光标滚动，完整处理 UTF-8 字符、密码显示/隐藏及大系统字号。
+- 输入按键按下加深并轻微下沉，松开或移开恢复，只刷新该键。删除键长按约半秒后连续删除，先删待选拼音，再删光标前的文字，松手、移开、多指或离页立即停止。
+- 优化打字刷新：连续输入使用局部快刷；联想词栏累计变化六次后，停手约 700 毫秒只做一次局部灰阶整理，减轻残影。打字和长按删除期间延后整理，静止画面不反复刷新。
+- WiFi / 热点传书网页新增状态栏签名设置，可保存或清空，重启后保留。
+- 修复部分 EPUB 兼容性，避免局部对齐样式影响整篇正文；采用 PR9 图文混排核心，补齐图片缓存与异常回退，优化图片缩放。网页刷机增加设备筛选和中文连接提示，保留擦除确认。
+- 在线刷机、TF 升级 Bin 与联网 OTA 同源发布，更新日志同步显示在设备更新确认页；继续保留双槽回退、已有配置与阅读数据。
+
+The shared keyboard now supports Pinyin-only T9, bilingual QWERTY, case switching and separate number/symbol panels. Continuous Pinyin uses 488 offline phrases, continuations and pageable homophones; the embedded black face covers 6,763 GB2312 Han characters. Steady carets, insertion-point editing, local key feedback and held backspace are available across native input scenes. Typing stays on fast local updates; six candidate-strip changes followed by a 700 ms touch-free pause trigger one bounded gray settle. AP/STA web transfer can save or clear the persistent status signature. EPUB alignment, image resampling and PR9 image flow are improved. USB, TF and OTA share one build, with release notes, rollback and user-data preservation.
+
 ## 2026-10-07 · mindreset
 
 - 合并 PR12：封面和插图采用中心对齐的双线性缩放，改善细线与图中文字的显示；修正映射运算及损坏 PNG 的缓冲区释放。

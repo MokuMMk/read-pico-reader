@@ -17,6 +17,7 @@ cc -std=gnu11 -Wall -Wextra -Werror -Itools/settings_backup_stubs \
     tools/book_history_backup_host_test.c -o build/book-tests/book-history-backup
 build/book-tests/book-history-backup
 python3 tools/book_ui_host_test.py
+bash tools/run_text_input_host_tests.sh
 python3 tools/reader_images_host_test.py
 python3 tools/book_layout_draw_host_test.py
 python3 tools/ui_font_coverage_host_test.py
@@ -37,7 +38,8 @@ gcc "${flags[@]}" -Icomponents/read_pico_search/include tools/transfer_host_test
 build/book-tests/transfer
 gcc "${flags[@]}" -Imanaged_components/espressif__cjson/cJSON tools/transfer_wifi_host_test.c managed_components/espressif__cjson/cJSON/cJSON.c -lm -o build/book-tests/transfer-wifi
 build/book-tests/transfer-wifi
-gcc "${flags[@]}" -Itools/transfer_ui_stubs -Icomponents/read_pico_transfer/include tools/transfer_ui_host_test.c -o build/book-tests/transfer-ui
+gcc "${flags[@]}" -Itools/transfer_ui_stubs -Icomponents/read_pico_transfer/include -Icomponents/read_pico_search/include -Imain/ui \
+    tools/transfer_ui_host_test.c main/ui/ui_text_edit.c main/ui/ui_text_input.c main/ui/ui_keyboard.c main/ui/ui_ime.c components/read_pico_search/read_pico_search.c -o build/book-tests/transfer-ui
 python3 tools/test_usb_storage.py
 build/book-tests/transfer-ui
 bash tools/run_app_loop_host_tests.sh

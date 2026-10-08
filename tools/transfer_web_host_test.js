@@ -43,8 +43,9 @@ async function setup({responses = [], confirmations = [true], mode = 'ap'} = {})
     createElement() { return new Element(); },
     querySelectorAll(selector) { return selector === '.upload' ? sections : [...nodes.values(), ...sections.flatMap(s => [s.input, s.send])]; },
   };
-  const state = {gets: [], mutations: [], sent: []};
+  const state = {gets: [], mutations: [], sent: [], signature: '慢慢阅读', signatures: []};
   const fetch = async (url, options = {}) => {
+    if(url === '/signature') { if(options.method === 'POST') {state.signature=options.body;state.signatures.push(options.body);}return {status:200,json:async()=>({signature:state.signature,ok:true})}; }
     if (url === '/info') return {status: 200, json: async () => ({
       mode, is_flash: false, free_bytes: 100000000, file_limit: 0,
     })};
@@ -134,6 +135,11 @@ async function setup({responses = [], confirmations = [true], mode = 'ap'} = {})
   // AP/STA share the same entry, directory target and serial multi-file uploads.
   for (const mode of ['ap', 'sta']) {
     t = await setup({mode});
+    assert.equal(t.nodes.get('signatureText').value,'慢慢阅读');
+    t.nodes.get('signatureText').value='我的 Pico';await t.nodes.get('signatureSave').onclick();assert.equal(t.state.signature,'我的 Pico');
+    t.nodes.get('signatureText').value='';await t.nodes.get('signatureSave').onclick();assert.equal(t.state.signature,'');
+    t.nodes.get('signatureText').value='字'.repeat(32);await t.nodes.get('signatureSave').onclick();assert.equal(t.state.signatures.length,2);
+
     const generic = t.sections.find(s => s.dataset.kind === 'file');
     generic.input.files = [{name: 'README', size: 0}, {name: '升级 包%+#.bin', size: 32}, {name: '.env', size: 17}];
     await generic.send.onclick();

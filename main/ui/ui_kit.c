@@ -195,14 +195,18 @@ void ui_text(
     px = ui_text_effective_px(px);
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
-    if (!s_system_ttf && ui_font_has_text(text))
+    if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(text))
         ui_font_draw_text_px(framebuffer, x, y_top + ui_font_ascender_px(px), px, text, align, fg, bg, false);
     else ttf_draw_text_px(framebuffer, x, y_top + ttf_ascender_px(px), px, text, align, fg, bg);
 }
 
 int ui_text_fixed_width_px(int px, const char* text) {
+    return ui_text_fixed_context_width_px(px, text, text);
+}
+
+int ui_text_fixed_context_width_px(int px, const char* text, const char* font_sample) {
     if (!text || px <= 0) return 0;
-    return !s_system_ttf && ui_font_has_text(text)
+    return (!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(font_sample ? font_sample : text)
         ? ui_font_text_width_px(px, text)
         : ttf_text_width_px(px, text);
 }
@@ -213,7 +217,7 @@ void ui_text_fixed(
 ) {
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
-    if (!s_system_ttf && ui_font_has_text(text))
+    if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(text))
         ui_font_draw_text_px(framebuffer, x, y_top + ui_font_ascender_px(px), px, text, align, fg, bg, false);
     else
         ttf_draw_text_px(framebuffer, x, y_top + ttf_ascender_px(px), px, text, align, fg, bg);
@@ -223,11 +227,18 @@ void ui_text_fixed_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+    ui_text_fixed_context_vc(framebuffer, x, center_y, px, text, text, align, inverted);
+}
+
+void ui_text_fixed_context_vc(
+    uint8_t* framebuffer, int x, int center_y, int px, const char* text,
+    const char* font_sample, enum EpdFontFlags align, bool inverted
+) {
     if (!framebuffer || !text || !text[0] || px <= 0) return;
     int above = 0, below = 0;
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
-    if (!s_system_ttf && ui_font_has_text(text)) {
+    if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(font_sample ? font_sample : text)) {
         ui_font_measure_line_px(px, text, &above, &below);
         ui_font_draw_text_px(framebuffer, x, center_y + (above - below) / 2, px, text, align, fg, bg, false);
     } else {
@@ -243,7 +254,7 @@ void ui_text_bw(
     px = ui_text_effective_px(px);
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
-    if (!s_system_ttf && ui_font_has_text(text))
+    if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(text))
         ui_font_draw_text_px(framebuffer, x, y_top + ui_font_ascender_px(px), px, text, align, fg, bg, true);
     else ttf_draw_text_px_bw(framebuffer, x, y_top + ttf_ascender_px(px), px, text, align, fg, bg);
 }
@@ -257,7 +268,7 @@ void ui_text_vc(
     int below = 0;
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
-    if (!s_system_ttf && ui_font_has_text(text)) {
+    if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(text)) {
         ui_font_measure_line_px(px, text, &above, &below);
         ui_font_draw_text_px(framebuffer, x, center_y + (above - below) / 2, px, text, align, fg, bg, false);
     } else {

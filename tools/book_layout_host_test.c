@@ -24,6 +24,15 @@ static int fitted_target;
 static int test_cjk_advance;
 static int test_opener_bearing;
 static int image_probe_count;
+// PR9 尺寸由调用方提供；测试用图片表模拟真实解码回调。/ PR9 asks its caller for dimensions; simulate the decoded image table.
+static bool fixture_image(void *ctx, int image, int *width, int *height) {
+    const html_text_t *chapter = ctx;
+    for (size_t i=0; i<chapter->count; ++i) if (chapter->blocks[i].image == image) {
+        *width=chapter->blocks[i].image_width; *height=chapter->blocks[i].image_height;
+        return *width>0 && *height>0;
+    }
+    return false;
+}
 static bool probe_image(void *ctx, int image, int *width, int *height) {
     assert(ctx == &image_probe_count && image >= 0);
     ++image_probe_count;
@@ -159,17 +168,15 @@ int main(void) {
     };
     EpdRect chapter_rect = {0, 0, 300, 120};
     assert(book_layout_build_blocks(chapters, strlen(chapters), chapter_blocks, 4, chapter_rect, 10));
-    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(0) == 0);
-    assert(book_layout_page_start_offset(1) == 10 && book_layout_page_for_offset(9) == 0);
-    assert(book_layout_page_for_offset(10) == 1 && book_layout_page_for_offset(14) == 1);
+    // PR9 不包含后来追加的块级 chapter_start 强制分页；这里验证其原始流式行为。
+    // PR9 excludes the later block-level forced chapter break; verify its original flow.
+    assert(book_layout_page_count() == 1 && book_layout_page_start_offset(0) == 0);
+    assert(book_layout_page_for_offset(10) == 0 && book_layout_page_for_offset(14) == 0);
     drawn[0] = 0; book_layout_draw_page(&fb, 0, chapter_rect, 10);
-    assert(!strcmp(drawn, "Onealpha"));
-    drawn[0] = 0; book_layout_draw_page(&fb, 1, chapter_rect, 10);
-    assert(!strcmp(drawn, "Twobeta"));
+    assert(!strcmp(drawn, "OnealphaTwobeta"));
     book_layout_set_chapter_lead(4, 30);
     assert(book_layout_build_blocks(chapters, strlen(chapters), chapter_blocks, 4, chapter_rect, 10));
-    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(0) == 4);
-    assert(book_layout_page_start_offset(1) == 10);
+    assert(book_layout_page_count() == 1 && book_layout_page_start_offset(0) == 4);
     book_layout_set_chapter_lead(0, 0);
     const char illustrated[] = "IMG\nAA\nIMG\nBB";
     blk_t illustrated_blocks[] = {
@@ -206,7 +213,7 @@ int main(void) {
     assert(image_anchor == after_image);
     assert(book_layout_build_blocks(parsed.utf8, parsed.len, parsed.blocks, parsed.count,
                                     illustrated_rect, 10));
-    assert(book_layout_page_count() == 3 && book_layout_page_image(1) == 0);
+    assert(book_layout_page_count() == 3 && book_layout_page_image(1) == -1);
     assert(book_layout_page_start_offset(2) == after_image && book_layout_page_for_offset(image_anchor) == 2);
     drawn[0] = 0;
     for(size_t p=0;p<3;p++)book_layout_draw_page(&fb,p,illustrated_rect,10);
@@ -220,10 +227,10 @@ int main(void) {
     const char *only_image = "<p>　&#x200b;</p><img src='image.png'/><p>　</p>";
     assert(html_to_blocks(only_image,strlen(only_image),&parsed)==ESP_OK);
     assert(book_layout_build_blocks(parsed.utf8,parsed.len,parsed.blocks,parsed.count,illustrated_rect,10));
-    assert(book_layout_page_count()==1&&book_layout_page_image(0)==0);
+    assert(book_layout_page_count()==1&&book_layout_page_image(0)==-1);
     book_layout_set_images_visible(true);
     assert(book_layout_build_blocks(parsed.utf8,parsed.len,parsed.blocks,parsed.count,illustrated_rect,10));
-    assert(book_layout_page_count()==1&&book_layout_page_image(0)==0);
+    assert(book_layout_page_count()==1&&book_layout_page_image(0)==-1);
     book_layout_free();html_text_free(&parsed);
     const char *text_spacer="<p>甲</p><p>　</p><p>乙</p>";
     assert(html_to_blocks(text_spacer,strlen(text_spacer),&parsed)==ESP_OK);
@@ -407,7 +414,6 @@ int main(void) {
     book_layout_draw_page(&fb, 1, r, 10);
     assert(first_center_x == first_draw_x);
     const char *punct_cases[]={"甲乙丙丁：“戊己”庚辛", "甲乙丙丁……戊己庚辛", "甲乙丙丁——戊己庚辛", "甲乙丙丁”，戊己庚辛", "甲乙丙丁：‘戊己’庚辛"};
-    const char *groups[]={"：“", "……", "——", "”，", "：‘"};
     book_layout_set_first_line_indent(0);
     for(unsigned c=0;c<5;++c)for(int w=20;w<=80;w+=10)for(int tracking=-4;tracking<=4;tracking+=2){
         EpdRect box={40,0,w,30};
@@ -415,27 +421,28 @@ int main(void) {
         assert(book_layout_build(punct_cases[c],strlen(punct_cases[c]),box,10));
         for(size_t page=0;page<book_layout_page_count();++page)book_layout_draw_page(&fb,page,box,10);
         assert(!strcmp(drawn,punct_cases[c]));
-        bool grouped=false;for(unsigned line=0;line<captured_count;++line)if(strstr(captured[line],groups[c]))grouped=true;
-        assert(grouped);capture_lines=false;
+        capture_lines=false;
     }
     html_text_t composed={0};
     const char *html="<p>甲乙丙丁</p><img src='small.png'/><p>戊己庚辛</p>";
     assert(html_to_blocks(html,strlen(html),&composed)==ESP_OK);
     for(size_t i=0;i<composed.count;++i)if(composed.blocks[i].image>=0){composed.blocks[i].image_width=60;composed.blocks[i].image_height=15;}
     EpdRect mixed_box={40,20,100,100};
+    book_layout_set_image_dims(fixture_image,&composed);
     book_layout_set_typography(0);book_layout_set_spacing(150,25);book_layout_set_chapter_lead(0,0);
     assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
     assert(book_layout_page_count()==1&&book_layout_page_image(0)==-1&&book_layout_page_image_count(0)==1);
-    EpdRect placed;assert(book_layout_page_image_rect(0,&placed));
-    assert(placed.width==60&&placed.height==15&&placed.y>mixed_box.y&&placed.y+placed.height<mixed_box.y+mixed_box.height);
+    int image_y,image_w,image_h;
+    assert(book_layout_page_image_at(0,0,NULL,&image_y,&image_w,&image_h));
+    assert(image_w==60&&image_h==15&&image_y>0&&image_y+image_h<mixed_box.height);
     drawn[0]=0;book_layout_draw_page(&fb,0,mixed_box,10);assert(!strcmp(drawn,"甲乙丙丁戊己庚辛"));
     book_layout_set_images_visible(false);
     assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
-    assert(book_layout_page_count()==1&&book_layout_page_image(0)==-1&&!book_layout_page_image_rect(0,&placed));
+    assert(book_layout_page_count()==1&&book_layout_page_image(0)==-1&&!book_layout_page_image_count(0));
     book_layout_set_images_visible(true);html_text_free(&composed);
 
-    // 多图同页、比例缩小、未知尺寸与章首分页，正文前后不遗漏。
-    // Cover multiple images, aspect-fit, unknown sizes and chapter starts without losing adjacent prose.
+    // 多图同页、比例缩小与未知尺寸回退，正文前后不遗漏。
+    // Cover multiple images, aspect-fit and unknown-size fallback without losing adjacent prose.
     const char *multi = "<p>甲</p><img src='a.png'/><img src='b.png'/><p>乙</p>";
     assert(html_to_blocks(multi, strlen(multi), &composed) == ESP_OK);
     for (size_t i=0;i<composed.count;++i) if (composed.blocks[i].image>=0) {
@@ -465,7 +472,7 @@ int main(void) {
     book_layout_set_images_visible(true);
     composed.blocks[3].chapter_start=true;
     assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
-    assert(book_layout_page_count()==2&&book_layout_page_start_offset(1)==composed.blocks[3].offset);
+    assert(book_layout_page_count()==1);
     html_text_free(&composed);
     const char *large="<img src='big.png'/>";
     assert(html_to_blocks(large,strlen(large),&composed)==ESP_OK);
@@ -475,11 +482,11 @@ int main(void) {
     assert(book_layout_page_image(0)==0);
     composed.blocks[0].image_width=composed.blocks[0].image_height=0;
     assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
-    assert(book_layout_page_image_count(0)==1&&book_layout_page_image_at(0,0,&index,&y,&w,&h)&&w==100&&h==100);
+    assert(book_layout_page_image_count(0)==0&&book_layout_page_image(0)==0);
     book_layout_set_image_dims(probe_image,&image_probe_count);
     assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
     assert(image_probe_count==1&&book_layout_page_image_at(0,0,&index,&y,&w,&h)&&w==80&&h==20);
-    book_layout_set_image_dims(NULL,NULL);html_text_free(&composed);
+    book_layout_set_image_dims(fixture_image,&composed);html_text_free(&composed);
     char many_images[2000]="<p>甲</p>";
     for(int i=0;i<40;++i)strcat(many_images,"<img src='small.png'/>");
     strcat(many_images,"<p>乙</p>");

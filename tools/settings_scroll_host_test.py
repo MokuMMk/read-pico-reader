@@ -46,22 +46,26 @@ typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE} app_redraw_t;
 typedef enum {UI_GESTURE_PRESS,UI_GESTURE_MOVE,UI_GESTURE_TAP,UI_GESTURE_CANCEL,UI_GESTURE_SWIPE_U,UI_GESTURE_SWIPE_D} gesture_t;
 typedef struct {gesture_t type;int x,y,x0,y0;} ui_gesture_event_t;
 enum {SETTINGS_MAIN,SETTINGS_BLUETOOTH,SETTINGS_BLE_SCAN,SETTINGS_UPGRADE,SETTINGS_SYSTEM_SIZE,
-      SETTINGS_SHELF_STYLE,SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR};
-enum EpdDrawMode {MODE_GC16,MODE_GL16};
+      SETTINGS_SHELF_STYLE,SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR,SETTINGS_TEXT_EDIT};
+enum EpdDrawMode {MODE_GC16,MODE_GL16,MODE_DU};
 #define UI_NAV_TOP 1096
 #define UI_LOCK_WIDTH 684
 #define UI_GRAY_WHITE 255
 #define UI_GRAY_BLACK 0
 #define EPD_DRAW_ALIGN_LEFT 0
 static const int E0470_WAVEFORM=0;
+static const int E0470_FOLLOW_WAVEFORM=1;
 static int s_page;
 static bool s_scroll_drag_consumed,s_scroll_present_pending;
+static bool s_input_layout,s_input_settle;
+static EpdRect s_input_area;
 static int paints,pushes;
 static EpdRect pushed;
 static enum EpdDrawMode push_mode;
 static void render(app_ctx_t *ctx,uint8_t *fb){(void)ctx;(void)fb;++paints;}
 static int update_display_area_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;(void)wave;pushed=area;push_mode=mode;++pushes;return 0;}
 static int update_display_area_diff_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){return update_display_area_with(hl,wave,mode,area);}
+static int update_display_area_full_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){return update_display_area_with(hl,wave,mode,area);}
 static EpdRect upgrade_progress_area(void){return (EpdRect){52,468,580,64};}
 static void guard_draw_result(void *hl,int status){(void)hl;assert(!status);}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&y>=r.y&&x<r.x+r.width&&y<r.y+r.height;}

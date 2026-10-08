@@ -24,6 +24,7 @@ static bool white_baseline, correct_target_at_draw;
 static const EpdWaveform *waveform_at_draw;
 static enum EpdDrawError water_result;
 static int water_calls;
+static EpdRect last_area;
 
 enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir) {
     assert(hl && area.width > 0 && dir == E0470_TURN_RTL);
@@ -68,7 +69,7 @@ enum EpdDrawError epd_hl_update_area(EpdiyHighlevelState* hl, enum EpdDrawMode m
     return draw(hl, mode, temperature, false);
 }
 enum EpdDrawError epd_hl_update_area_full(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, EpdRect area) {
-    (void)area;
+    last_area = area;
     return draw(hl, mode, temperature, true);
 }
 // 与 highlevel.c:142 相同：白后缓冲后，强制整屏推目标前缓冲。
@@ -97,6 +98,16 @@ int main(void) {
         assert(update_display_area_diff_with(&hl, &E0470_WAVEFORM, MODE_GL16,
                                             (EpdRect){0, 160, 684, 936}) == EPD_DRAW_SUCCESS);
     assert(full_draws == locals_full && last_mode == MODE_GL16);
+    // 词栏停顿整理必须驱动未变化的白底；局部 GL16 不清整屏、不升级 GC16。
+    // Idle word-strip settling drives unchanged white pixels without screen clears or GC16 promotion.
+    for (int i = 0; i < 80; ++i) {
+        int before_full = full_draws, before_draws = draws;
+        assert(update_display_area_full_with(&hl, &E0470_WAVEFORM, MODE_GL16,
+                                            (EpdRect){24, 612, 636, 114}) == EPD_DRAW_SUCCESS);
+        assert(full_draws == before_full + 1 && draws == before_draws + 1 && !clears);
+        assert(last_area.x == 24 && last_area.y == 612 && last_area.width == 636 && last_area.height == 114);
+        assert(last_mode == MODE_GL16 && waveform_at_draw == &E0470_WAVEFORM && correct_target_at_draw);
+    }
     for (int i = 0; i < APP_UI_GC16_EVERY - 1; ++i) {
         assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS);
         assert(last_mode == MODE_GL16);

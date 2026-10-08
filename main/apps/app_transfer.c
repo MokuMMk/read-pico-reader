@@ -9,6 +9,8 @@
  * render只画快照；内置存储单文件上限由book_store提供，不格式化TF卡。
  * 上传并发扫描曾欠载，页内增加预填余量；离页停服后恢复，不改波形或像素时钟。
  * 用户要求设备端配网：停服后扫描选网，ASCII密码只在连接保存时写入，离开输入页即清空。
+ * 用户要求输入光标：密码框常亮光标可轻点定位，显示/隐藏保留位置，离页一并清空。
+ * 用户授权新输入法：WiFi 密码共用英文、大小写、数字及符号键盘，不启用中文候选。
  * 用户验收要求停止后恢复进入传书前的页面或菜单位置；遗忘网络必须确认。
  * 用户要求联网后提供网址二维码；热点用单码切换连接/网页，网络变更清除旧码。
  * 卡失效时停止并汇合接收任务，清除旧容量与二维码；当前请求不得切换存储源。
@@ -18,6 +20,10 @@
  * Render only paints snapshots; book_store defines the flash file limit. Never format the TF card.
  * Concurrent uploads underrun scan queues; increase prefill until service exit without changing waveforms or pixel clocks.
  * User-requested device provisioning scans while stopped; save ASCII passwords only on connect and clear input on leaving the editor.
+ * User-requested caret: tap to position a steady password caret; show/hide preserves position, and exit clears it too.
+ * Authorized keyboard revision: WiFi passwords share English, case, number and symbol keys without Chinese candidates.
+ * 用户修订：输入密码只刷新输入框与字数，布局切换才重画键盘；不在打字时全刷。
+ * User revision: password typing refreshes its field/count; repaint keys only on layout switches, with no typing-triggered wipes.
  * Acceptance requires returning to the page or menu position used to enter transfer; forgetting WiFi requires confirmation.
  * User-requested URL QR follows network readiness; AP switches one code between joining and browsing, discarding stale codes on changes.
  * Lost media stops and joins reception and clears capacity/QR; never switch storage beneath an active request.
@@ -42,6 +48,8 @@
 #include "ttf_font.h"
 #include "ui_gesture.h"
 #include "ui_kit.h"
+#include "ui_text_input.h"
+#include "ui_keyboard.h"
 #include "ui_menu.h"
 #include "ui_nav.h"
 #include "ui_wifi_qr.h"
@@ -67,6 +75,19 @@ static bool s_usb_start_pending;
 static int64_t s_usb_retry_ms;
 static bool s_usb_host_connected;
 static uint64_t s_usb_capacity_bytes;
+
+static uint32_t s_signature_revision, s_signature_seen;
+static bool transfer_signature_get(char *out, size_t cap) {
+    const char *text = app_settings_status_signature();
+    if (!out || !cap || strlen(text) >= cap) return false;
+    snprintf(out, cap, "%s", text); return true;
+}
+static esp_err_t transfer_signature_set(const char *text) {
+    app_settings_set_status_signature(text);
+    if (strcmp(app_settings_status_signature(), text)) return ESP_FAIL;
+    __atomic_add_fetch(&s_signature_revision, 1, __ATOMIC_RELEASE);
+    return ESP_OK;
+}
 
 static bool transfer_book_file(const char *path) {
     const char *ext = strrchr(path, '.');
@@ -180,7 +201,8 @@ static read_pico_transfer_network_t s_networks[READ_PICO_TRANSFER_SCAN_MAX], s_s
 static size_t s_network_count, s_network_page;
 static bool s_scan_pending, s_network_connect_pending, s_saved_configured, s_password_visible, s_forget_confirm;
 static char s_saved_ssid[33], s_password[PASSWORD_MAX + 1], s_network_message[96], s_method_message[96];
-static int s_keyboard_mode;
+static ui_text_edit_t s_password_input;
+
 static esp_err_t s_scan_error;
 
 static void render(app_ctx_t* ctx, uint8_t* fb);
@@ -247,7 +269,9 @@ static void fit_label(char* text, int px, int width) {
 static void clear_password(void) {
     volatile char* p = s_password;
     for (size_t i = 0; i < sizeof(s_password); ++i) p[i] = 0;
+    ui_text_edit_init(&s_password_input, s_password, sizeof(s_password));
     s_password_visible = false;
+    ui_keyboard_end();
 }
 
 static EpdRect network_control_rect(int id) {
@@ -263,22 +287,11 @@ static EpdRect network_control_rect(int id) {
 }
 
 static EpdRect password_control_rect(int id) {
-    if (id < 40) {
-        const int gap = 6;
-        int width = (ui_content_width() - 9 * gap) / 10;
-        return (EpdRect){UI_MARGIN + (id % 10) * (width + gap), 420 + (id / 10) * 100, width, 88};
-    }
-    if (id < 44) return ui_row_rect(id - 40, 4, 830, 78);
-    return ui_bar_rect(id - 44, 3);
-}
-
-static const char* keyboard_chars(void) {
-    static const char* const keys[] = {
-        "1234567890" "qwertyuiop" "asdfghjkl-" "zxcvbnm,./",
-        "1234567890" "QWERTYUIOP" "ASDFGHJKL-" "ZXCVBNM,./",
-        "!\"#$%&'()*" "+,-./:;<=>" "?@[\\]^_`{|" "}~01234567",
-    };
-    return keys[s_keyboard_mode];
+    if (id == 44) return (EpdRect){36, 434, 278, 68};
+    if (id == 45) return (EpdRect){500, 215, 148, 58};
+    if (id == 46) return (EpdRect){330, 434, 318, 68};
+    if (id == 47) return (EpdRect){UI_MARGIN, 288, ui_content_width(), 86};
+    return (EpdRect){0};
 }
 
 static void provisioning_button(uint8_t* fb, EpdRect rect, const char* text, int id) {
@@ -395,29 +408,14 @@ static void draw_password(uint8_t* fb) {
     char caption[80];
     size_t len = strlen(s_password);
     snprintf(caption, sizeof(caption), "%s · %u/%u", s_selected.requires_password ? "密码" : "开放网络，无需密码", (unsigned)len, PASSWORD_MAX);
-    ui_text(fb, UI_MARGIN, 240, UI_PX_CAPTION, caption, EPD_DRAW_ALIGN_LEFT, false);
-    EpdRect field = {UI_MARGIN, 288, ui_content_width(), 86};
-    ui_draw_round_rect(fb, field, UI_BTN_RADIUS, UI_GRAY_BLACK);
-    char shown[PASSWORD_MAX + 1];
-    if (s_password_visible) memcpy(shown, s_password, len + 1);
-    else { memset(shown, '*', len); shown[len] = 0; }
-    const char* tail = shown;
-    while (*tail && ttf_text_width_px(UI_PX_BODY, tail) > field.width - 2 * UI_PAD) ++tail;
-    ui_text_vc(fb, field.x + UI_PAD, field.y + field.height / 2, UI_PX_BODY, tail, EPD_DRAW_ALIGN_LEFT, false);
-    const char* keys = keyboard_chars();
-    for (int i = 0; i < 40; ++i) {
-        char label[2] = {keys[i], 0};
-        provisioning_button(fb, password_control_rect(i), label, i);
-    }
-    provisioning_button(fb, password_control_rect(40), s_keyboard_mode == 1 ? "abc" : "ABC", 40);
-    provisioning_button(fb, password_control_rect(41), s_keyboard_mode == 2 ? "字母" : "#+=", 41);
-    provisioning_button(fb, password_control_rect(42), "空格", 42);
-    provisioning_button(fb, password_control_rect(43), "退格", 43);
-    ui_text(fb, UI_MARGIN, 940, UI_PX_CAPTION,
-            s_network_message[0] ? s_network_message : "支持字母、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, UI_MARGIN, 240, 22, caption, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_input_draw(fb, &s_password_input, password_control_rect(47), UI_PX_BODY,
+                       !s_password_visible, NULL);
+    ui_text_fixed_vc(fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支持英文、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
     provisioning_button(fb, password_control_rect(44), "取消", 44);
     provisioning_button(fb, password_control_rect(45), s_password_visible ? "隐藏" : "显示", 45);
     provisioning_button(fb, password_control_rect(46), "连接并保存", 46);
+    ui_keyboard_draw(fb, 560);
 }
 
 static void queue_network_start(read_pico_transfer_mode_t mode) {
@@ -521,7 +519,7 @@ static int provisioning_hit(uint16_t x, uint16_t y) {
         return -1;
     }
     if (s_view == TRANSFER_PASSWORD) {
-        for (int i = 0; i < 47; ++i) if (ui_rect_hit(password_control_rect(i), x, y)) return i;
+        for (int i = 44; i < 48; ++i) if (ui_rect_hit(password_control_rect(i), x, y)) return i;
     } else {
         for (int i = 0; i < 12; ++i) {
             if (i < NETWORK_ROWS && (s_scan_pending || s_network_page * NETWORK_ROWS + i >= s_network_count)) continue;
@@ -565,7 +563,7 @@ static app_redraw_t provisioning_action(int id) {
             }
             clear_password();
             s_network_message[0] = 0;
-            s_keyboard_mode = 0;
+            ui_keyboard_begin(&s_password_input, true);
             s_view = TRANSFER_PASSWORD;
         } else if (id == 6) {
             if (s_status.network_ready) {
@@ -588,16 +586,7 @@ static app_redraw_t provisioning_action(int id) {
         return APP_REDRAW_PAGE;
     }
     size_t len = strlen(s_password);
-    if (id < 40 || id == 42) {
-        if (len < PASSWORD_MAX) {
-            s_password[len] = id == 42 ? ' ' : keyboard_chars()[id];
-            s_password[len + 1] = 0;
-            s_network_message[0] = 0;
-        } else snprintf(s_network_message, sizeof(s_network_message), "密码最多 64 个字符");
-    } else if (id == 40) s_keyboard_mode = s_keyboard_mode == 1 ? 0 : 1;
-    else if (id == 41) s_keyboard_mode = s_keyboard_mode == 2 ? 0 : 2;
-    else if (id == 43) { if (len) s_password[len - 1] = 0; s_network_message[0] = 0; }
-    else if (id == 44) { clear_password(); s_network_message[0] = 0; s_view = TRANSFER_NETWORKS; return APP_REDRAW_PAGE; }
+    if (id == 44) { clear_password(); s_network_message[0] = 0; s_view = TRANSFER_NETWORKS; return APP_REDRAW_PAGE; }
     else if (id == 45) s_password_visible = !s_password_visible;
     else if (id == 46) {
         if (s_selected.requires_password && len < 8) {
@@ -613,7 +602,53 @@ static app_redraw_t provisioning_action(int id) {
     return APP_REDRAW_AREA;
 }
 
+static bool s_input_layout, s_input_settle;
+static app_redraw_t password_paint(app_ctx_t *ctx, bool field, bool controls) {
+    ui_keyboard_update_t update = ui_keyboard_update(ctx->fb, 560, password_control_rect(47),
+        UI_PX_BODY, !s_password_visible, NULL, field);
+    EpdRect extra = {UI_MARGIN, 215, ui_content_width(), controls ? 287 : 159};
+    if (update.field || controls) {
+        ui_clear_rect_fast(ctx->fb, (EpdRect){UI_MARGIN, 215, ui_content_width() - 156, 58});
+        char caption[80];
+        snprintf(caption, sizeof(caption), "%s · %u/%u", s_selected.requires_password ? "密码" : "开放网络，无需密码", (unsigned)strlen(s_password), PASSWORD_MAX);
+        ui_text_fixed_vc(ctx->fb, UI_MARGIN, 240, 22, caption, EPD_DRAW_ALIGN_LEFT, false);
+    }
+    if (controls) {
+        ui_clear_rect_fast(ctx->fb, (EpdRect){36, 377, 612, 36});
+        ui_text_fixed_vc(ctx->fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支持英文、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
+        for (int i = 44; i <= 46; ++i) {
+            EpdRect button = password_control_rect(i); ui_clear_rect_fast(ctx->fb, button);
+            provisioning_button(ctx->fb, button, i == 44 ? "取消" : i == 45 ? s_password_visible ? "隐藏" : "显示" : "连接并保存", i);
+        }
+    }
+    if (update.field || controls) update.area = update.area.width ? ui_rect_union(update.area, extra) : extra;
+    s_area = update.area; s_input_layout = update.layout; s_input_settle = update.settle; s_settle = false;
+    return update.area.width ? APP_REDRAW_AREA : APP_REDRAW_NONE;
+}
 static app_redraw_t provisioning_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
+    if (s_view == TRANSFER_PASSWORD) {
+        if (ev->type == UI_GESTURE_PRESS)
+            return ui_keyboard_press(ev->x0, ev->y0, 560, ctx->now_ms) ? password_paint(ctx, false, false) : APP_REDRAW_NONE;
+        bool feedback = ev->type != UI_GESTURE_LONG_PRESS && ui_keyboard_release();
+        if (ev->type != UI_GESTURE_TAP) return feedback ? password_paint(ctx, false, false) : APP_REDRAW_NONE;
+        int x = ev->x0, y = ev->y0;
+        if (ui_text_input_tap(&s_password_input, password_control_rect(47), UI_PX_BODY, !s_password_visible, NULL, x, y)) {
+            return password_paint(ctx, true, false);
+        }
+        for (int i = 44; i <= 46; ++i) if (ui_rect_hit(password_control_rect(i), x, y)) {
+            app_redraw_t changed = provisioning_action(i);
+            if (changed == APP_REDRAW_AREA) return password_paint(ctx, true, true);
+            return changed;
+        }
+        ui_keyboard_result_t result = ui_keyboard_tap(x, y, 560, ctx->now_ms);
+        if (result == UI_KEYBOARD_DONE) {
+            app_redraw_t changed = provisioning_action(46);
+            if (changed == APP_REDRAW_PAGE) return changed;
+            result = UI_KEYBOARD_CHANGED;
+        }
+        if (result == UI_KEYBOARD_CHANGED) return password_paint(ctx, false, y >= 990 && x >= 534);
+        return APP_REDRAW_NONE;
+    }
     int old = s_pressed;
     int origin = provisioning_hit(ev->x0, ev->y0);
     s_pressed = ev->type == UI_GESTURE_PRESS ? origin : -1;
@@ -621,6 +656,14 @@ static app_redraw_t provisioning_gesture(app_ctx_t* ctx, const ui_gesture_event_
     EpdRect old_rect = s_view == TRANSFER_PASSWORD ? password_control_rect(old >= 0 ? old : origin >= 0 ? origin : 0)
                                                   : network_control_rect(old >= 0 ? old : origin >= 0 ? origin : 0);
     if (action) {
+        if (s_view == TRANSFER_PASSWORD && origin == 47) {
+            ui_text_input_tap(&s_password_input, password_control_rect(47), UI_PX_BODY,
+                              !s_password_visible, NULL, ev->x0, ev->y0);
+            render(ctx, ctx->fb);
+            s_area = password_control_rect(47);
+            s_settle = false;
+            return APP_REDRAW_AREA;
+        }
         app_redraw_t redraw = provisioning_action(origin);
         if (redraw == APP_REDRAW_PAGE) return redraw;
         render(ctx, ctx->fb);
@@ -924,6 +967,19 @@ static void transfer_on_exit(app_ctx_t* ctx) {
 }
 
 static app_redraw_t on_tick(app_ctx_t* ctx) {
+    if (s_view == TRANSFER_PASSWORD) {
+        if (ctx->consumed) return APP_REDRAW_NONE;
+        bool held = !ctx->released && ctx->touch && ctx->touch->touched && ctx->touch->count == 1;
+        if (ui_keyboard_hold_tick(held, ctx->touch ? ctx->touch->x : 0,
+            ctx->touch ? ctx->touch->y : 0, ctx->now_ms) == UI_KEYBOARD_CHANGED) return password_paint(ctx, false, false);
+        if (ui_keyboard_idle_tick(ctx->touch && ctx->touch->touched, ctx->now_ms) == UI_KEYBOARD_CHANGED)
+            return password_paint(ctx, false, false);
+    }
+    uint32_t revision = __atomic_load_n(&s_signature_revision, __ATOMIC_ACQUIRE);
+    if (revision != s_signature_seen) {
+        s_signature_seen = revision;
+        return APP_REDRAW_PAGE;
+    }
     if (s_usb_entry) {
         if (!s_usb_start_pending) {
             bool connected = usb_storage_connected();
@@ -960,6 +1016,7 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
                 .directory_deleted_cb = transfer_directory_deleted,
                 .directory_moved_cb = transfer_directory_moved,
                 .wallpaper_set_cb = transfer_set_wallpaper,
+                .signature_get_cb = transfer_signature_get, .signature_set_cb = transfer_signature_set,
                 .title_get_cb = NULL, .title_set_cb = NULL};
             err = read_pico_transfer_start(&cfg);
             s_session_started = err == ESP_OK;
@@ -1151,6 +1208,17 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
 
 static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw != APP_REDRAW_AREA) return false;
+    if (s_view == TRANSFER_PASSWORD) {
+        if (s_input_settle) {
+            guard_draw_result(ctx->hl, update_display_area_full_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, s_area));
+            s_input_settle = false;
+            return true;
+        }
+        guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl,
+            s_input_layout ? &E0470_WAVEFORM : &E0470_FOLLOW_WAVEFORM,
+            s_input_layout ? MODE_GL16 : MODE_DU, s_area));
+        return true;
+    }
     guard_draw_result(ctx->hl, update_display_area_with(ctx->hl, s_settle ? &E0470_WAVEFORM : &E0470_FOLLOW_WAVEFORM,
                       s_settle ? MODE_GL16 : MODE_DU, s_area));
     s_settle = false;

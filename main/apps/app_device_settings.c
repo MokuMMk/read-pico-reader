@@ -6,6 +6,10 @@
  * English: Grouped settings; temporary WiFi sync seeds the PMU, whose RTC restores time at boot.
  * 用户修订：设置列表滑动仅差分刷新内容，滑动过程中不周期插入黑白清屏。
  * User revision: settings lists scroll with content-only differentials and no periodic black/white wipe during swipes.
+ * 用户授权新输入法：资料卡和签名共用九宫格/全键盘及离线词语候选，保存仍由设置页负责。
+ * Authorized keyboard revision: profile and signature share T9/QWERTY and offline phrases; this page still owns saving.
+ * 用户修订：资料卡与签名输入只画变化区域，不因输入次数触发整屏黑白清屏。
+ * User revision: profile/signature input paints changed regions without whole-screen wipes based on typing counts.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +35,8 @@
 #include "app_font_context.h"
 #include "ui_gesture.h"
 #include "ui_kit.h"
+#include "ui_text_input.h"
+#include "ui_keyboard.h"
 #include "ui_nav.h"
 #include "ui_wallpaper.h"
 #include "read_pico_search.h"
@@ -193,13 +199,9 @@ static const char *const TAG = "device_settings";
 // with 8 px to spare.
 #define SETTINGS_SCROLL_MAX \
     (SETTINGS_MAINTENANCE_Y + 3 * SETTINGS_ROW_H - UI_NAV_TOP + 12)
-static char s_editor[96], s_editor_pinyin[24], s_editor_notice[80];
-static bool s_editor_chinese;
-static bool s_editor_uppercase;
+static char s_editor[96], s_editor_notice[80];
+static ui_text_edit_t s_editor_input;
 static bool s_editor_signature;
-static int s_editor_candidate_page;
-static size_t s_editor_candidate_count;
-static uint32_t s_editor_candidates[5];
 static const char *system_font_label(const char *path) {
     if (!path || !path[0]) return "思源黑体";
     const char *name = strrchr(path, '/');
@@ -255,51 +257,18 @@ static void wallpaper_scan(void) {
     wallpaper_scan_dir("/sdcard");
 }
 
-static void profile_editor_refresh(void) {
-    s_editor_candidate_count = s_editor_chinese && s_editor_pinyin[0]
-        ? read_pico_search_candidates(s_editor_pinyin, s_editor_candidates, 5,
-                                      s_editor_candidate_page * 5) : 0;
-}
+
 static void profile_editor_open(bool signature) {
     s_editor_signature = signature;
     snprintf(s_editor, sizeof(s_editor), "%s", signature ? app_settings_status_signature() : app_settings_device_name());
-    s_editor_pinyin[0] = s_editor_notice[0] = 0;
-    s_editor_candidate_page = 0;
-    s_editor_candidate_count = 0;
-    s_editor_chinese = true;
-    s_editor_uppercase = false;
+    ui_text_edit_init(&s_editor_input, s_editor, sizeof(s_editor));
+    s_editor_notice[0] = 0;
+    ui_keyboard_begin(&s_editor_input, false);
     s_page = SETTINGS_TEXT_EDIT;
 }
-static void profile_editor_append(const char *text) {
-    size_t used = strlen(s_editor), added = strlen(text);
-    if (used + added < sizeof(s_editor)) {
-        memcpy(s_editor + used, text, added + 1);
-        s_editor_notice[0] = 0;
-    } else snprintf(s_editor_notice, sizeof(s_editor_notice), "文字已达到长度上限");
-}
-static void profile_editor_backspace(void) {
-    if (s_editor_pinyin[0]) {
-        s_editor_pinyin[strlen(s_editor_pinyin) - 1] = 0;
-        s_editor_candidate_page = 0;
-        profile_editor_refresh();
-        return;
-    }
-    size_t n = strlen(s_editor);
-    if (!n) return;
-    do { --n; } while (n && ((unsigned char)s_editor[n] & 0xc0) == 0x80);
-    s_editor[n] = 0;
-}
-static void profile_editor_candidate(int index) {
-    if (index < 0 || (size_t)index >= s_editor_candidate_count) return;
-    uint32_t cp = s_editor_candidates[index];
-    if (cp < 0x800 || cp > 0xffff) return;
-    char glyph[4] = {(char)(0xe0 | (cp >> 12)), (char)(0x80 | ((cp >> 6) & 63)),
-                     (char)(0x80 | (cp & 63)), 0};
-    profile_editor_append(glyph);
-    s_editor_pinyin[0] = 0;
-    s_editor_candidate_page = 0;
-    profile_editor_refresh();
-}
+
+
+
 
 static int days_in_month(int year, int month) {
     static const int days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
@@ -677,48 +646,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         back_header(fb, s_editor_signature ? "状态栏签名" : "设备名称");
         ui_text(fb, 642, 95, 24, "完成", EPD_DRAW_ALIGN_RIGHT, false);
         ui_text(fb, 36, 201, 21, s_editor_signature ? "状态栏中间显示，留空则隐藏" : "显示在设置页的 Pico 资料卡", EPD_DRAW_ALIGN_LEFT, false);
-        ui_draw_round_rect(fb, (EpdRect){36, 243, 612, 82}, 10, UI_GRAY_BLACK);
-        char shown[96]; snprintf(shown, sizeof(shown), "%s", s_editor);
-        fit_value(shown, 552);
-        ui_text_vc(fb, 55, 284, 28, shown[0] ? shown : " ", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 36, 354, 21, s_editor_chinese ? "拼音输入" :
-                s_editor_uppercase ? "英文大写" : "英文小写", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 36, 385, 25, s_editor_pinyin[0] ? s_editor_pinyin : " ", EPD_DRAW_ALIGN_LEFT, false);
-        for (int i = 0; i < 5; ++i) {
-            EpdRect box = {36 + i * 112, 426, 106, 57};
-            ui_draw_round_rect(fb, box, 5, 0x78);
-            if (i < (int)s_editor_candidate_count) {
-                uint32_t cp = s_editor_candidates[i];
-                char glyph[4] = {(char)(0xe0 | (cp >> 12)), (char)(0x80 | ((cp >> 6) & 63)),
-                                 (char)(0x80 | (cp & 63)), 0};
-                ui_text_vc(fb, box.x + 53, box.y + 28, 30, glyph, EPD_DRAW_ALIGN_CENTER, false);
-            }
-        }
-        ui_text_vc(fb, 631, 455, 26, "›", EPD_DRAW_ALIGN_CENTER, false);
-        static const char *keys[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
-        for (int r = 0; r < 3; ++r) {
-            int left = r == 0 ? 36 : r == 1 ? 67 : 123;
-            for (int c = 0; c < (int)strlen(keys[r]); ++c) {
-                EpdRect box = {left + c * 62, 519 + r * 74, 58, 61};
-                ui_draw_round_rect(fb, box, 5, 0x78);
-                char letter[2] = {s_editor_chinese || s_editor_uppercase ? keys[r][c] :
-                                  (char)(keys[r][c] + ('a' - 'A')), 0};
-                ui_text_vc(fb, box.x + 29, box.y + 30, 25, letter, EPD_DRAW_ALIGN_CENTER, false);
-            }
-        }
-        const char *actions[] = {s_editor_chinese ? "中 / a" : s_editor_uppercase ? "A / 中" : "a / A",
-                                 "空格", "删除", "确定"};
-        static const EpdRect buttons[] = {{36, 752, 102, 70}, {148, 752, 298, 70},
-                                          {456, 752, 98, 70}, {564, 752, 84, 70}};
-        for (int i = 0; i < 4; ++i) ui_draw_button(fb, buttons[i], actions[i], i == 3);
-        static const char *punct[] = {"，", "。", "！", "？", "-", "0", "1", "2", "3", "4",
-                                      "5", "6", "7", "8", "9"};
-        for (int i = 0; i < 15; ++i) {
-            EpdRect box = {36 + (i % 10) * 62, 844 + (i / 10) * 70, 58, 58};
-            ui_draw_round_rect(fb, box, 5, 0x78);
-            ui_text_vc(fb, box.x + 29, box.y + 29, 23, punct[i], EPD_DRAW_ALIGN_CENTER, false);
-        }
-        if (s_editor_notice[0]) ui_text(fb, 36, 1001, 21, s_editor_notice, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_input_draw(fb, &s_editor_input, (EpdRect){36, 243, 612, 82}, 28, false, NULL);
+        if (s_editor_notice[0]) ui_text_fixed_vc(fb, 36, 510, 22, s_editor_notice, EPD_DRAW_ALIGN_LEFT, false);
+        ui_keyboard_draw(fb, 560);
         ui_nav_draw(fb, 3);
         return;
     }
@@ -1277,7 +1207,16 @@ static bool ble_receive_feedback(void) {
     return changed;
 }
 
+static app_redraw_t profile_editor_paint(app_ctx_t *ctx, bool field);
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    if (s_page == SETTINGS_TEXT_EDIT) {
+        if (ctx->consumed) return APP_REDRAW_NONE;
+        bool held = !ctx->released && ctx->touch && ctx->touch->touched && ctx->touch->count == 1;
+        if (ui_keyboard_hold_tick(held, ctx->touch ? ctx->touch->x : 0,
+            ctx->touch ? ctx->touch->y : 0, ctx->now_ms) == UI_KEYBOARD_CHANGED) return profile_editor_paint(ctx, false);
+        return ui_keyboard_idle_tick(ctx->touch && ctx->touch->touched, ctx->now_ms) == UI_KEYBOARD_CHANGED
+            ? profile_editor_paint(ctx, false) : APP_REDRAW_NONE;
+    }
     if (s_page == SETTINGS_BLUETOOTH && ble_receive_feedback()) return APP_REDRAW_PAGE;
     // 蓝牙启动失败的原因转成提示。放在这里而不是 render()：render 必须是纯绘制，
     // 而 take_* 会清空状态。
@@ -1366,74 +1305,34 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
     return APP_REDRAW_PAGE;
 }
 
-static app_redraw_t profile_editor_gesture(const ui_gesture_event_t *ev) {
-    if (ev->type == UI_GESTURE_SWIPE_L && s_editor_pinyin[0]) {
-        ++s_editor_candidate_page; profile_editor_refresh(); return APP_REDRAW_PAGE;
+static EpdRect s_input_area;
+static bool s_input_layout, s_input_settle;
+static app_redraw_t profile_editor_paint(app_ctx_t *ctx, bool field) {
+    ui_keyboard_update_t update = ui_keyboard_update(ctx->fb, 560, (EpdRect){36, 243, 612, 82}, 28, false, NULL, field);
+    s_input_area = update.area; s_input_layout = update.layout; s_input_settle = update.settle;
+    return update.area.width ? APP_REDRAW_AREA : APP_REDRAW_NONE;
+}
+static app_redraw_t profile_editor_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (ev->type == UI_GESTURE_PRESS)
+        return ui_keyboard_press(ev->x0, ev->y0, 560, ctx->now_ms) ? profile_editor_paint(ctx, false) : APP_REDRAW_NONE;
+    bool feedback = ev->type != UI_GESTURE_LONG_PRESS && ui_keyboard_release();
+    if (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R) {
+        bool page = ui_keyboard_page(ev->type == UI_GESTURE_SWIPE_L ? 1 : -1);
+        return (page || feedback) ? profile_editor_paint(ctx, false) : APP_REDRAW_NONE;
     }
-    if (ev->type == UI_GESTURE_SWIPE_R && s_editor_candidate_page) {
-        --s_editor_candidate_page; profile_editor_refresh(); return APP_REDRAW_PAGE;
-    }
-    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+    if (ev->type != UI_GESTURE_TAP) return feedback ? profile_editor_paint(ctx, false) : APP_REDRAW_NONE;
     int x = ev->x0, y = ev->y0;
     if (y < 160) {
-        if (x < 160) { s_page = s_editor_signature ? SETTINGS_MAIN : SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
+        if (x < 160) { ui_keyboard_end(); s_page = s_editor_signature ? SETTINGS_MAIN : SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
         if (x > 510) goto save_text;
     }
-    if (y >= 426 && y < 483) {
-        if (x >= 604) { ++s_editor_candidate_page; profile_editor_refresh(); return APP_REDRAW_PAGE; }
-        if (x >= 36) profile_editor_candidate((x - 36) / 112);
-        return APP_REDRAW_PAGE;
-    }
-    static const char *keys[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
-    for (int r = 0; r < 3; ++r) {
-        int left = r == 0 ? 36 : r == 1 ? 67 : 123, top = 519 + r * 74;
-        if (y < top || y >= top + 61 || x < left) continue;
-        int c = (x - left) / 62;
-        if (c < 0 || c >= (int)strlen(keys[r]) || x >= left + c * 62 + 58) continue;
-        char letter = keys[r][c];
-        if (s_editor_chinese) {
-            size_t n = strlen(s_editor_pinyin);
-            if (n + 1 < sizeof(s_editor_pinyin)) {
-                s_editor_pinyin[n] = (char)(letter + ('a' - 'A'));
-                s_editor_pinyin[n + 1] = 0;
-                s_editor_candidate_page = 0;
-                profile_editor_refresh();
-            }
-        } else { char value[2] = {s_editor_uppercase ? letter : (char)(letter + ('a' - 'A')), 0};
-                 profile_editor_append(value); }
-        return APP_REDRAW_PAGE;
-    }
-    if (y >= 752 && y < 822) {
-        if (x >= 36 && x < 138) {
-            if (!s_editor_pinyin[0]) {
-                if (s_editor_chinese) { s_editor_chinese = false; s_editor_uppercase = false; }
-                else if (!s_editor_uppercase) s_editor_uppercase = true;
-                else s_editor_chinese = true;
-            }
-            else snprintf(s_editor_notice, sizeof(s_editor_notice), "请先选择候选字");
-        } else if (x >= 148 && x < 446) {
-            if (s_editor_pinyin[0] && s_editor_candidate_count) profile_editor_candidate(0);
-            else if (s_editor_pinyin[0]) {
-                profile_editor_append(s_editor_pinyin);
-                s_editor_pinyin[0] = 0;
-                profile_editor_refresh();
-            } else profile_editor_append(" ");
-        } else if (x >= 456 && x < 554) profile_editor_backspace();
-        else if (x >= 564) goto save_text;
-        return APP_REDRAW_PAGE;
-    }
-    if (y >= 844 && y < 972 && x >= 36 && x < 648) {
-        static const char *punct[] = {"，", "。", "！", "？", "-", "0", "1", "2", "3", "4",
-                                      "5", "6", "7", "8", "9"};
-        int row = (y - 844) / 70, col = (x - 36) / 62;
-        int i = row * 10 + col;
-        if (row < 2 && col < 10 && i < 15 && (y - 844) % 70 < 58 &&
-            x < 36 + col * 62 + 58) profile_editor_append(punct[i]);
-        return APP_REDRAW_PAGE;
-    }
-    return APP_REDRAW_NONE;
+    if (ui_text_input_tap(&s_editor_input, (EpdRect){36, 243, 612, 82}, 28,
+                          false, NULL, x, y)) return profile_editor_paint(ctx, true);
+    ui_keyboard_result_t result = ui_keyboard_tap(x, y, 560, esp_timer_get_time() / 1000);
+    if (result == UI_KEYBOARD_DONE) goto save_text;
+    return result == UI_KEYBOARD_CHANGED ? profile_editor_paint(ctx, false) : APP_REDRAW_NONE;
 save_text:
-    if (s_editor_pinyin[0]) {
+    if (ui_keyboard_pending()) {
         snprintf(s_editor_notice, sizeof(s_editor_notice), "请先选择候选字");
         return APP_REDRAW_PAGE;
     }
@@ -1445,6 +1344,7 @@ save_text:
         snprintf(s_editor_notice, sizeof(s_editor_notice), "保存失败，请检查设置存储空间");
         return APP_REDRAW_PAGE;
     }
+    ui_keyboard_end();
     s_page = s_editor_signature ? SETTINGS_MAIN : SETTINGS_PROFILE;
     return APP_REDRAW_PAGE;
 }
@@ -1542,7 +1442,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         return APP_REDRAW_NONE;
     }
-    if (s_page == SETTINGS_TEXT_EDIT) return profile_editor_gesture(ev);
+    if (s_page == SETTINGS_TEXT_EDIT) return profile_editor_gesture(ctx, ev);
     if (s_page == SETTINGS_MAIN || s_page == SETTINGS_BLUETOOTH || s_page == SETTINGS_BLE_SCAN) {
         int limit = SETTINGS_SCROLL_MAX;
         int *offset = &s_main_scroll;
@@ -1992,7 +1892,7 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     }
     if (s_page == SETTINGS_WALLPAPER) { s_page = SETTINGS_LOCK_STYLE; return APP_REDRAW_PAGE; }
     if (s_page == SETTINGS_AVATAR) { s_page = SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
-    if (s_page == SETTINGS_TEXT_EDIT) { s_page = s_editor_signature ? SETTINGS_MAIN : SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
+    if (s_page == SETTINGS_TEXT_EDIT) { ui_keyboard_end(); s_page = s_editor_signature ? SETTINGS_MAIN : SETTINGS_PROFILE; return APP_REDRAW_PAGE; }
     if (s_page == SETTINGS_PROFILE) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
     if (s_page == SETTINGS_TIME_EDIT) { s_page = SETTINGS_TIME; return APP_REDRAW_PAGE; }
     if (s_page != SETTINGS_MAIN) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
@@ -2000,7 +1900,7 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 static void settings_exit(app_ctx_t *ctx) {
-    (void)ctx; pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
+    (void)ctx; ui_keyboard_end(); pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
 }
 static void on_before_lock(app_ctx_t *ctx) {
     (void)ctx; pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
@@ -2008,6 +1908,17 @@ static void on_before_lock(app_ctx_t *ctx) {
 }
 static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
 static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
+    if (redraw == APP_REDRAW_AREA && s_page == SETTINGS_TEXT_EDIT) {
+        if (s_input_settle) {
+            guard_draw_result(ctx->hl, update_display_area_full_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, s_input_area));
+            s_input_settle = false;
+            return true;
+        }
+        guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl,
+            s_input_layout ? &E0470_WAVEFORM : &E0470_FOLLOW_WAVEFORM,
+            s_input_layout ? MODE_GL16 : MODE_DU, s_input_area));
+        return true;
+    }
     if (redraw == APP_REDRAW_AREA && s_scroll_present_pending &&
         (s_page == SETTINGS_MAIN || s_page == SETTINGS_BLUETOOTH || s_page == SETTINGS_BLE_SCAN ||
          s_page == SETTINGS_SHELF_STYLE || s_page == SETTINGS_SYSTEM_FONT ||

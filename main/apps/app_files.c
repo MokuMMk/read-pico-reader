@@ -4,6 +4,10 @@
  *
  * 中文：TF 卡文件入口、目录浏览及 USB/Wi-Fi 传输入口。
  * English: SD file entry, directory browser and USB/Wi-Fi transfer routes.
+ * 用户授权新输入法：文件改名使用共用九宫格/全键盘及常亮光标；离页释放候选。
+ * Authorized keyboard revision: rename uses shared T9/QWERTY and a steady caret; exit frees candidates.
+ * 用户修订：输入只刷新变化区域，布局切换局部灰阶，避免打字累计整屏清残影。
+ * User revision: input refreshes changed regions; layout switches use local grayscale, without accumulating whole-page cleanup.
  */
 #include <dirent.h>
 #include <errno.h>
@@ -29,6 +33,10 @@
 #include "app_font_context.h"
 #include "ui_gesture.h"
 #include "ui_kit.h"
+#include "ui_text_input.h"
+#include "ui_keyboard.h"
+#include "e0470_epaper_waveform.h"
+#include "esp_timer.h"
 #include "ui_nav.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -61,10 +69,8 @@ static file_item_t s_selected;
 static bool s_delete_confirm;
 static int s_move_origin_folder, s_move_origin_page;
 static char s_move_origin_dir[288];
-static char s_editor[121], s_editor_ext[16], s_editor_pinyin[9], s_editor_notice[96];
-static bool s_editor_chinese;
-static size_t s_editor_candidate_page, s_editor_candidate_count;
-static uint32_t s_editor_candidates[5];
+static char s_editor[121], s_editor_ext[16], s_editor_notice[96];
+static ui_text_edit_t s_editor_input;
 static void scan_folder(int folder);
 
 static const char *const names[] = {"书籍", "图片", "字体", "TF 卡目录"};
@@ -396,11 +402,7 @@ static void fit_name(char *name, int px, int width) {
     }
 }
 
-static void editor_refresh(void) {
-    s_editor_candidate_count = s_editor_chinese && s_editor_pinyin[0]
-        ? read_pico_search_candidates(s_editor_pinyin, s_editor_candidates, 5,
-                                      s_editor_candidate_page * 5) : 0;
-}
+
 
 static void editor_start(void) {
     if (strlen(s_selected.name) >= sizeof(s_editor)) {
@@ -414,44 +416,17 @@ static void editor_start(void) {
         copy_utf8(s_editor_ext, sizeof(s_editor_ext), dot);
         *dot = 0;
     }
-    s_editor_pinyin[0] = s_editor_notice[0] = 0;
-    s_editor_chinese = true;
-    s_editor_candidate_page = s_editor_candidate_count = 0;
+    ui_text_edit_init(&s_editor_input, s_editor, sizeof(s_editor));
+    s_editor_notice[0] = 0;
+    ui_keyboard_begin(&s_editor_input, false);
     s_view = FILE_VIEW_RENAME;
 }
 
-static bool editor_append(const char *text) {
-    size_t used = strlen(s_editor), more = strlen(text);
-    if (used + more >= sizeof(s_editor)) {
-        snprintf(s_editor_notice, sizeof(s_editor_notice), "文件名过长");
-        return false;
-    }
-    memcpy(s_editor + used, text, more + 1);
-    s_editor_notice[0] = 0;
-    return true;
-}
 
-static void editor_backspace(void) {
-    if (s_editor_pinyin[0]) {
-        s_editor_pinyin[strlen(s_editor_pinyin) - 1] = 0;
-        s_editor_candidate_page = 0; editor_refresh(); return;
-    }
-    size_t n = strlen(s_editor);
-    if (!n) return;
-    do { --n; } while (n && ((unsigned char)s_editor[n] & 0xc0) == 0x80);
-    s_editor[n] = 0;
-}
 
-static void editor_commit_candidate(size_t index) {
-    if (index >= s_editor_candidate_count) return;
-    uint32_t cp = s_editor_candidates[index];
-    if (cp < 0x800 || cp > 0xffff) return;
-    char glyph[4] = {(char)(0xe0 | (cp >> 12)), (char)(0x80 | ((cp >> 6) & 63)),
-                     (char)(0x80 | (cp & 63)), 0};
-    if (editor_append(glyph)) {
-        s_editor_pinyin[0] = 0; s_editor_candidate_page = 0; editor_refresh();
-    }
-}
+
+
+
 
 static void render_actions(uint8_t *fb) {
     // S03：保留当前目录作背景，只叠加文件操作底部面板。/ S03: keep the directory visible and overlay a file-action sheet.
@@ -497,38 +472,9 @@ static void render_rename(uint8_t *fb) {
     file_rule(fb, 36, 157, 612);
     ui_text(fb, 36, 202, 22, "文件名", EPD_DRAW_ALIGN_LEFT, false);
     EpdRect field = {36, 242, 612, 82};
-    ui_draw_round_rect(fb, field, 8, UI_GRAY_BLACK);
-    char visible[128]; copy_utf8(visible, sizeof(visible), s_editor); fit_name(visible, 29, 470);
-    ui_text_vc(fb, 53, 283, 29, visible[0] ? visible : " ", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_vc(fb, 628, 283, 22, s_editor_ext, EPD_DRAW_ALIGN_RIGHT, false);
-    ui_text(fb, 36, 348, 20, s_editor_chinese ? "拼音输入" : "英文输入", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, 36, 380, 25, s_editor_pinyin[0] ? s_editor_pinyin : " ", EPD_DRAW_ALIGN_LEFT, false);
-    for (int i = 0; i < 5; ++i) {
-        EpdRect r = {36 + i * 112, 424, 106, 57};
-        if (i == 0 && s_editor_candidate_count) ui_fill_round_rect(fb, r, 4, UI_GRAY_LIGHT);
-        else ui_draw_round_rect(fb, r, 4, 0x70);
-        if (i < (int)s_editor_candidate_count) {
-            uint32_t cp = s_editor_candidates[i];
-            char glyph[4] = {(char)(0xe0 | (cp >> 12)), (char)(0x80 | ((cp >> 6) & 63)),
-                             (char)(0x80 | (cp & 63)), 0};
-            ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 30, glyph, EPD_DRAW_ALIGN_CENTER, false);
-        }
-    }
-    ui_text_vc(fb, 634, 452, 27, "›", EPD_DRAW_ALIGN_CENTER, false);
-    static const char *keys[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
-    for (int row = 0; row < 3; ++row) {
-        int len = strlen(keys[row]), left = row == 0 ? 36 : row == 1 ? 67 : 123;
-        for (int col = 0; col < len; ++col) {
-            EpdRect r = {left + col * 62, 517 + row * 74, 58, 61};
-            ui_draw_round_rect(fb, r, 5, 0x70);
-            char label[2] = {keys[row][col], 0};
-            ui_text_vc(fb, r.x + 29, r.y + 30, 25, label, EPD_DRAW_ALIGN_CENTER, false);
-        }
-    }
-    static const char *actions[] = {"中 / EN", "空格", "删除", "确定"};
-    static const EpdRect buttons[] = {{36, 751, 102, 70}, {148, 751, 298, 70}, {456, 751, 98, 70}, {564, 751, 84, 70}};
-    for (int i = 0; i < 4; ++i) ui_draw_button(fb, buttons[i], actions[i], i == 3);
-    ui_text(fb, 36, 857, 21, s_editor_notice[0] ? s_editor_notice : "扩展名保持不变", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_input_draw(fb, &s_editor_input, field, 29, false, s_editor_ext);
+    if (s_editor_notice[0]) ui_text_fixed_vc(fb, 36, 510, 22, s_editor_notice, EPD_DRAW_ALIGN_LEFT, false);
+    ui_keyboard_draw(fb, 560);
 }
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
@@ -680,7 +626,7 @@ static void on_enter(app_ctx_t *ctx) {
     else scan_folder(3);
 }
 static void on_media_lost(app_ctx_t *ctx) {
-    (void)ctx; s_folder = -1; s_count = 0; s_scan_pending = false;
+    (void)ctx; ui_keyboard_end(); s_folder = -1; s_count = 0; s_scan_pending = false;
     s_view = FILE_VIEW_LIST; s_delete_confirm = false;
     memset(s_counts, 0, sizeof(s_counts)); read_pico_sd_get_info(&s_sd);
 }
@@ -688,8 +634,16 @@ static void on_media_ready(app_ctx_t *ctx) {
     (void)ctx;
     s_scan_pending = true;
 }
+static app_redraw_t rename_paint(app_ctx_t *ctx, bool field);
 static app_redraw_t on_tick(app_ctx_t *ctx) {
-    (void)ctx;
+    if (s_view == FILE_VIEW_RENAME) {
+        if (ctx->consumed) return APP_REDRAW_NONE;
+        bool held = !ctx->released && ctx->touch && ctx->touch->touched && ctx->touch->count == 1;
+        if (ui_keyboard_hold_tick(held, ctx->touch ? ctx->touch->x : 0,
+            ctx->touch ? ctx->touch->y : 0, ctx->now_ms) == UI_KEYBOARD_CHANGED) return rename_paint(ctx, false);
+        return ui_keyboard_idle_tick(ctx->touch && ctx->touch->touched, ctx->now_ms) == UI_KEYBOARD_CHANGED
+            ? rename_paint(ctx, false) : APP_REDRAW_NONE;
+    }
     if (!s_scan_pending) return APP_REDRAW_NONE;
     if (read_pico_sd_get_info(&s_sd) == ESP_ERR_NOT_FINISHED) return APP_REDRAW_NONE;
     s_scan_pending = false;
@@ -736,7 +690,7 @@ static void delete_selected(void) {
 }
 
 static app_redraw_t save_rename(void) {
-    if (s_editor_pinyin[0]) {
+    if (ui_keyboard_pending()) {
         snprintf(s_editor_notice, sizeof(s_editor_notice), "请先选择候选字");
         return APP_REDRAW_PAGE;
     }
@@ -776,6 +730,7 @@ static app_redraw_t save_rename(void) {
     copy_utf8(s_selected.path, sizeof(s_selected.path), destination);
     copy_utf8(s_selected.name, sizeof(s_selected.name), name);
     s_view = FILE_VIEW_ACTIONS;
+    ui_keyboard_end();
     snprintf(s_message, sizeof(s_message), "重命名完成");
     return APP_REDRAW_PAGE;
 }
@@ -808,59 +763,47 @@ static app_redraw_t action_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev)
     return APP_REDRAW_NONE;
 }
 
-static app_redraw_t rename_gesture(const ui_gesture_event_t *ev) {
-    if (ev->type == UI_GESTURE_SWIPE_L && s_editor_pinyin[0]) {
-        ++s_editor_candidate_page; editor_refresh(); return APP_REDRAW_PAGE;
+static EpdRect s_input_area;
+static bool s_input_layout, s_input_settle;
+static app_redraw_t rename_paint(app_ctx_t *ctx, bool field) {
+    ui_keyboard_update_t update = ui_keyboard_update(ctx->fb, 560, (EpdRect){36, 242, 612, 82}, 29, false, s_editor_ext, field);
+    s_input_area = update.area; s_input_layout = update.layout; s_input_settle = update.settle;
+    return update.area.width ? APP_REDRAW_AREA : APP_REDRAW_NONE;
+}
+static bool files_present(app_ctx_t *ctx, app_redraw_t redraw) {
+    if (redraw != APP_REDRAW_AREA || s_view != FILE_VIEW_RENAME) return false;
+    if (s_input_settle) {
+        guard_draw_result(ctx->hl, update_display_area_full_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, s_input_area));
+        s_input_settle = false;
+        return true;
     }
-    if (ev->type == UI_GESTURE_SWIPE_R && s_editor_candidate_page) {
-        --s_editor_candidate_page; editor_refresh(); return APP_REDRAW_PAGE;
+    guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl,
+        s_input_layout ? &E0470_WAVEFORM : &E0470_FOLLOW_WAVEFORM,
+        s_input_layout ? MODE_GL16 : MODE_DU, s_input_area));
+    return true;
+}
+static app_redraw_t rename_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (ev->type == UI_GESTURE_PRESS)
+        return ui_keyboard_press(ev->x0, ev->y0, 560, ctx->now_ms) ? rename_paint(ctx, false) : APP_REDRAW_NONE;
+    bool feedback = ev->type != UI_GESTURE_LONG_PRESS && ui_keyboard_release();
+    if (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R) {
+        bool page = ui_keyboard_page(ev->type == UI_GESTURE_SWIPE_L ? 1 : -1);
+        return (page || feedback) ? rename_paint(ctx, false) : APP_REDRAW_NONE;
     }
-    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+    if (ev->type != UI_GESTURE_TAP) return feedback ? rename_paint(ctx, false) : APP_REDRAW_NONE;
     int x = ev->x0, y = ev->y0;
-    if (y < 157) {
-        if (x > 510) return save_rename();
-        s_view = FILE_VIEW_ACTIONS; return APP_REDRAW_PAGE;
-    }
-    if (y >= 424 && y < 481) {
-        if (x >= 604) { ++s_editor_candidate_page; editor_refresh(); return APP_REDRAW_PAGE; }
-        int index = (x - 36) / 112;
-        if (x >= 36 && index >= 0 && index < 5) editor_commit_candidate(index);
-        return APP_REDRAW_PAGE;
-    }
-    static const char *keys[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
-    for (int row = 0; row < 3; ++row) {
-        int left = row == 0 ? 36 : row == 1 ? 67 : 123, top = 517 + row * 74;
-        if (y < top || y >= top + 61 || x < left) continue;
-        int col = (x - left) / 62;
-        if (col < 0 || col >= (int)strlen(keys[row]) || x >= left + col * 62 + 58) continue;
-        char letter = keys[row][col];
-        if (s_editor_chinese) {
-            size_t n = strlen(s_editor_pinyin);
-            if (n + 1 < sizeof(s_editor_pinyin)) {
-                s_editor_pinyin[n] = (char)(letter + ('a' - 'A'));
-                s_editor_pinyin[n + 1] = 0; s_editor_candidate_page = 0; editor_refresh();
-            }
-        } else { char value[2] = {letter, 0}; editor_append(value); }
-        return APP_REDRAW_PAGE;
-    }
-    if (y >= 751 && y < 821) {
-        if (x >= 36 && x < 138) {
-            if (s_editor_pinyin[0]) snprintf(s_editor_notice, sizeof(s_editor_notice), "请先选择候选字");
-            else s_editor_chinese = !s_editor_chinese;
-        } else if (x >= 148 && x < 446) {
-            if (s_editor_pinyin[0] && s_editor_candidate_count) editor_commit_candidate(0);
-            else if (s_editor_pinyin[0]) { editor_append(s_editor_pinyin); s_editor_pinyin[0] = 0; editor_refresh(); }
-            else editor_append(" ");
-        } else if (x >= 456 && x < 554) editor_backspace();
-        else if (x >= 564) return save_rename();
-        return APP_REDRAW_PAGE;
-    }
-    return APP_REDRAW_NONE;
+    if (y < 160 && x < 160) { ui_keyboard_end(); s_view = FILE_VIEW_ACTIONS; return APP_REDRAW_PAGE; }
+    if (y < 160 && x > 510) return save_rename();
+    if (ui_text_input_tap(&s_editor_input, (EpdRect){36, 242, 612, 82}, 29,
+                          false, s_editor_ext, x, y)) return rename_paint(ctx, true);
+    ui_keyboard_result_t result = ui_keyboard_tap(x, y, 560, esp_timer_get_time() / 1000);
+    if (result == UI_KEYBOARD_DONE) return save_rename();
+    return result == UI_KEYBOARD_CHANGED ? rename_paint(ctx, false) : APP_REDRAW_NONE;
 }
 
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     if (s_view == FILE_VIEW_ACTIONS) return action_gesture(ctx, ev);
-    if (s_view == FILE_VIEW_RENAME) return rename_gesture(ev);
+    if (s_view == FILE_VIEW_RENAME) return rename_gesture(ctx, ev);
     if (s_view == FILE_VIEW_MOVE) {
         if (ev->type == UI_GESTURE_SWIPE_L && (s_page + 1) * visible_rows() < s_count) {
             ++s_page; return APP_REDRAW_PAGE;
@@ -981,7 +924,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     if (s_view == FILE_VIEW_MOVE) { leave_move(false); return APP_REDRAW_PAGE; }
     if (key == 1) { ui_nav_request(ctx, 0); return APP_REDRAW_NONE; }
-    if (s_view == FILE_VIEW_RENAME) { s_view = FILE_VIEW_ACTIONS; return APP_REDRAW_PAGE; }
+    if (s_view == FILE_VIEW_RENAME) { ui_keyboard_end(); s_view = FILE_VIEW_ACTIONS; return APP_REDRAW_PAGE; }
     if (s_view == FILE_VIEW_ACTIONS) {
         s_view = FILE_VIEW_LIST; s_delete_confirm = false; rescan_current(); return APP_REDRAW_PAGE;
     }
@@ -996,11 +939,12 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
+static void files_exit(app_ctx_t *ctx) { (void)ctx; ui_keyboard_end(); }
 
 const app_desc_t app_files = {
     .title = "文件管理 Files", .detail = "TF 卡文件与传输", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
     .on_enter = on_enter, .on_media_lost = on_media_lost, .on_media_ready = on_media_ready,
-    .render = render, .on_tick = on_tick,
-    .on_gesture = on_gesture, .on_key = on_key,
+    .on_exit = files_exit, .render = render, .on_tick = on_tick,
+    .on_gesture = on_gesture, .on_key = on_key, .present = files_present,
 };

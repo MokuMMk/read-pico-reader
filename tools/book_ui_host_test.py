@@ -49,6 +49,7 @@ typedef enum { UI_GESTURE_SWIPE_L, UI_GESTURE_SWIPE_R, UI_GESTURE_SWIPE_U, UI_GE
 #include <sys/stat.h>
 #include <unistd.h>
 #include <stdatomic.h>
+#include "ui_text_edit.h"
 #define ESP_OK 0
 #define ESP_FAIL -1
 #define ESP_ERR_NVS_NOT_FOUND -2
@@ -87,6 +88,9 @@ typedef struct {uint32_t magic,file_size;uint16_t count,reserved;char path[288];
 #define UI_GAP 12
 static EpdRect ui_row_rect(int i,int count,int y,int height){EpdRect r=ui_bar_rect(i,count);r.y=y;r.height=height;return r;}
 static char s_query[65],s_search_draft[65],s_batch_message[128];
+static ui_text_edit_t s_search_input;
+static void ui_keyboard_begin(ui_text_edit_t *e,bool ascii){(void)e;(void)ascii;}
+static void ui_keyboard_end(void){}
 typedef enum {BATCH_DELETE,BATCH_CLEAR,BATCH_UNSHELF} batch_kind_t;
 static bool s_batch_confirm;
 static batch_kind_t s_batch_kind;
@@ -220,7 +224,7 @@ static uint8_t* s_editor_cover;
 static void editor_start(void){}
 static app_redraw_t editor_save(app_ctx_t* ctx){(void)ctx;return APP_REDRAW_PAGE;}
 static void editor_backspace(void){}
-static app_redraw_t editor_paint(app_ctx_t* ctx){(void)ctx;return APP_REDRAW_PAGE;}
+static app_redraw_t editor_paint(app_ctx_t* ctx,bool field){(void)ctx;(void)field;return APP_REDRAW_AREA;}
 static int test_nav_target=-1;
 static void ui_nav_request(app_ctx_t* ctx,int tab){(void)ctx;test_nav_target=tab;}
 static void app_files_request_folder(int folder){(void)folder;}
@@ -330,7 +334,7 @@ unit += function("book_layout_balanced_rect", layout_source) + "\n"
 unit += function("set_reader_view") + "\n"
 unit += function("ble_pt_action_for_usage", source.parents[2] / "components/ble_page_turner/src/ble_page_turner.c") + "\n"
 for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_hidden_key", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_rows", "row_rect", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
-             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "bulk_nav_rect", "bulk_nav_hit", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_keys", "search_begin", "refresh_search_matches", "search_finish", "search_action", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "bulk_turn_page", "bulk_finish", "bulk_action", "bulk_control_at", "menu_handle_enabled", "reader_manual_refresh", "apply_reader_option", "reader_return", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
+             "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "bulk_nav_rect", "bulk_nav_hit", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_begin", "refresh_search_matches", "search_finish", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "bulk_turn_page", "bulk_finish", "bulk_action", "bulk_control_at", "menu_handle_enabled", "reader_manual_refresh", "apply_reader_option", "reader_return", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 for name in ("book_remote_direction", "shelf_turn_page", "shelf_page_arrow_rect", "reader_vertical_tap", "reader_swipe_direction"):
     unit += function(name) + "\n"
@@ -592,7 +596,9 @@ int main(void) {
     s_batch_confirm=true;assert(on_key(&ctx,UI_KEY_3)==APP_REDRAW_PAGE&&!s_batch_confirm&&ctx.leaf==2);
     s_batch_confirm=true;assert(on_key(&ctx,UI_KEY_1)==APP_REDRAW_PAGE&&!s_batch_confirm&&ctx.leaf==2);
     search_begin();strcpy(s_search_draft,"book001");search_finish(&ctx,true);assert(!selected_count()&&s_visible_count==1);
-    search_begin();memset(s_search_draft,'x',64);s_search_draft[64]=0;search_action(&ctx,0);assert(strlen(s_search_draft)==64);search_action(&ctx,41);assert(strlen(s_search_draft)==63);search_action(&ctx,42);assert(!s_search_draft[0]);search_action(&ctx,43);
+    search_begin();memset(s_search_draft,'x',64);s_search_draft[64]=0;ui_text_edit_place(&s_search_input,64);
+    assert(!ui_text_edit_insert(&s_search_input,"a"));assert(ui_text_edit_backspace(&s_search_input));
+    assert(strlen(s_search_draft)==63);s_search_draft[0]=0;search_finish(&ctx,false);
     strcpy(s_query,"");refresh_search_matches();sort_shelf(&ctx);clear_selection();s_view=BULK;toggle_selection(0);toggle_selection(1);
     s_batch_confirm=true;calls=test_delete_calls;EpdRect bc=ui_row_rect(0,2,620,UI_BTN_H);batch_action(&ctx,bc.x+1,bc.y+1);assert(!s_batch_confirm&&test_delete_calls==calls);
     s_batch_kind=BATCH_DELETE;test_removed=true;test_delete_error=-1;batch_apply(&ctx);assert(selected_count()==2);
@@ -686,5 +692,6 @@ with tempfile.TemporaryDirectory() as tmp:
     exe = Path(tmp) / "test"
     c.write_text(unit, encoding="utf-8")
     subprocess.run(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable",
-                    "-Wno-unused-function", "-fsanitize=address,undefined", str(c), "-o", str(exe)], check=True)
+                    "-Wno-unused-function", "-fsanitize=address,undefined", "-I", str(source.parents[1] / "ui"),
+                    str(c), str(source.parents[1] / "ui/ui_text_edit.c"), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)

@@ -6,6 +6,8 @@
  * 冻结：仅用于主机测试。/ Frozen: Host tests only.
  */
 #include "ui_kit.h"
+#include "ui_font.h"
+#include "ttf_font.h"
 #include <assert.h>
 #include <limits.h>
 #include <stdio.h>
@@ -13,6 +15,54 @@
 #define W 100
 #define H 100
 static enum EpdRotation rotation = EPD_ROT_LANDSCAPE;
+static bool painted_ttf;
+bool ttf_font_is_builtin(void) { return false; }
+static int painted_baseline;
+static int characters(const char *s) {
+    int n = 0;
+    for (; *s; ++s) if (((unsigned char)*s & 0xc0) != 0x80) ++n;
+    return n;
+}
+bool ui_font_has_text(const char *text) {
+    for (; *text; ++text) if ((unsigned char)*text >= 0x80) return false;
+    return true;
+}
+int ui_font_text_width_px(int px, const char *text) { return characters(text) * px / 2; }
+int ttf_text_width_px(int px, const char *text) { return characters(text) * px * 3 / 4; }
+void ui_font_measure_line_px(int px, const char *text, int *above, int *below) {
+    (void)text; *above = px * 3 / 4; *below = px / 4;
+}
+void ttf_measure_line_px(int px, const char *text, int *above, int *below) {
+    (void)text; *above = px * 2 / 3; *below = px / 3;
+}
+void ui_font_draw_text_px(uint8_t *fb, int x, int baseline, int px, const char *text,
+                          enum EpdFontFlags align, uint8_t fg, uint8_t bg, bool bw) {
+    (void)fb; (void)x; (void)px; (void)text; (void)align; (void)fg; (void)bg; (void)bw;
+    painted_ttf = false; painted_baseline = baseline;
+}
+void ttf_draw_text_px(uint8_t *fb, int x, int baseline, int px, const char *text,
+                      enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
+    (void)fb; (void)x; (void)px; (void)text; (void)align; (void)fg; (void)bg;
+    painted_ttf = true; painted_baseline = baseline;
+}
+// ASCII 前缀也须采用整条输入实际使用的回退字体。/ ASCII prefixes must use the full input's fallback face.
+static void test_font_context(void) {
+    uint8_t fb = 0;
+    ui_text_set_system_font(false);
+    assert(ui_text_fixed_context_width_px(24, "AB", "AB你好") == 36);
+    assert(ui_text_fixed_context_width_px(24, "AB", "ABC") == 24);
+    assert(ui_text_fixed_context_width_px(24, "", "") == 0);
+    assert(ui_text_fixed_width_px(24, "AB") == 24);
+    ui_text_fixed_context_vc(&fb, 0, 50, 24, "AB", "AB你好", EPD_DRAW_ALIGN_LEFT, false);
+    assert(painted_ttf && painted_baseline == 54);
+    ui_text_fixed_context_vc(&fb, 0, 50, 24, "AB", "ABC", EPD_DRAW_ALIGN_LEFT, false);
+    assert(!painted_ttf && painted_baseline == 56);
+    ui_text_set_system_font(true);
+    assert(ui_text_fixed_context_width_px(24, "AB", "ABC") == 36);
+    ui_text_fixed_vc(&fb, 0, 50, 24, "AB", EPD_DRAW_ALIGN_LEFT, false);
+    assert(painted_ttf);
+    ui_text_set_system_font(false);
+}
 int epd_width(void) { return W; }
 int epd_height(void) { return H; }
 enum EpdRotation epd_get_rotation(void) { return rotation; }
@@ -98,5 +148,6 @@ int main(void) {
     // 按压底图之后绘制黑字像素，文字不反色。/ Draw black text pixels after the pressed background, without inversion.
     epd_draw_pixel(40,30,UI_GRAY_BLACK,fb); assert(fb[30 * W + 40] == UI_GRAY_BLACK);
     test_icons();
+    test_font_context();
     puts("ui kit host tests passed");
 }

@@ -43,7 +43,7 @@ shelf = r'''
 typedef struct {int x,y,width,height;} EpdRect;
 typedef struct {void *hl;uint8_t *fb;int64_t now_ms;unsigned leaf;} app_ctx_t;
 typedef enum {APP_REDRAW_NONE,APP_REDRAW_DONE,APP_REDRAW_AREA,APP_REDRAW_PAGE,APP_REDRAW_FULL} app_redraw_t;
-enum {SHELF,MANAGE,READING,READER_PANEL_NONE,TOC};
+enum {SHELF,MANAGE,READING,READER_PANEL_NONE,TOC,EDIT,SEARCH};
 enum EpdDrawMode {MODE_GL16,MODE_DU,MODE_GC16};
 enum EpdDrawError {EPD_DRAW_SUCCESS,EPD_DRAW_ERROR};
 #define APP_PAGE_REFRESH_MODE MODE_GL16
@@ -67,7 +67,7 @@ static EpdRect pushed_area;
 static int trace_route[256], trace_mode[256], trace_wave[256];
 static EpdRect trace_area[256];
 static unsigned trace_count;
-enum {DIFF=1,AREA,FULL,WHOLE,FAST,WATER,READER};
+enum {DIFF=1,AREA,FULL,WHOLE,FAST,WATER,READER,LOCAL_FULL};
 static int shelf_rows(void){return 9;}
 static EpdRect row_rect(int row){return (EpdRect){42+(row%3)*210,220+(row/3)*272,176,240};}
 static const char *s_text;
@@ -85,7 +85,7 @@ static EpdRect progress_rect(void){return (EpdRect){36,1040,612,42};}
 static EpdRect reader_fullscreen_progress_area(void){return (EpdRect){0,1200,684,4};}
 static unsigned percent(unsigned page){return page;}
 static unsigned s_page,s_chapter;
-static bool test_hide_images,test_load_failed,s_save_failed;
+static bool test_hide_images,test_load_failed,s_save_failed,s_input_settle;
 static int test_types[2][2],test_push_error,test_effect;
 static uint8_t test_full_pages;
 static unsigned s_turns,s_unsaved,s_stats_pending_turns,s_session_turns;
@@ -117,6 +117,7 @@ static EpdRect ui_rect_union(EpdRect a,EpdRect b){(void)b;return a;}
 static enum EpdDrawError record(int kind,enum EpdDrawMode mode,EpdRect area){assert(trace_count<256);trace_route[trace_count]=kind;trace_mode[trace_count]=mode;trace_area[trace_count++]=area;++pushes;route=kind;pushed_mode=mode;pushed_area=area;return (enum EpdDrawError)test_push_error;}
 static enum EpdDrawError update_display_area_diff_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;trace_wave[trace_count]=*wave;return record(DIFF,mode,area);}
 static enum EpdDrawError update_display_area_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;trace_wave[trace_count]=*wave;return record(AREA,mode,area);}
+static enum EpdDrawError update_display_area_full_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;trace_wave[trace_count]=*wave;return record(LOCAL_FULL,mode,area);}
 static enum EpdDrawError update_display_with(void *hl,const int *wave,enum EpdDrawMode mode){(void)hl;(void)wave;return record(WHOLE,mode,(EpdRect){0});}
 static enum EpdDrawError update_display_full(void *hl){(void)hl;return record(FULL,MODE_GC16,(EpdRect){0});}
 static enum EpdDrawError update_display_fast_page(void *hl){(void)hl;return record(FAST,MODE_GL16,(EpdRect){0});}
@@ -173,6 +174,24 @@ int main(void){
  s_reader_panel=READER_PANEL_NONE;s_reader_fullscreen=true;s_reader_turn_pending=true;trace_count=0;
  assert(present(&ctx,APP_REDRAW_AREA)&&trace_count==2&&trace_route[0]==DIFF&&trace_route[1]==DIFF&&trace_wave[0]==E0470_TEXTTURN_WAVEFORM&&trace_wave[1]==E0470_WAVEFORM);
  puts("PASS: text turn/body/footer, periodic/manual cleanup, grayscale image, water effect, settings and full-screen routes");
+ for(int input_view=EDIT;input_view<=SEARCH;input_view++)for(int repeat=0;repeat<80;repeat++){
+   s_view=input_view;s_reader_fullscreen=true;s_reader_footer_pending=true;
+   s_area=(EpdRect){36,243,612,82};s_mode=repeat==0?MODE_GL16:MODE_DU;s_du_count=10;
+   trace_count=0;assert(present(&ctx,APP_REDRAW_AREA));
+   assert(trace_count==1&&route==DIFF&&trace_wave[0]==(repeat==0?E0470_WAVEFORM:E0470_FOLLOW_WAVEFORM));
+   assert(pushed_area.y==243&&pushed_area.height==82&&!s_du_count);
+ }
+ for(int input_view=EDIT;input_view<=SEARCH;input_view++){
+   s_view=input_view;s_reader_footer_pending=true;s_input_settle=true;
+   s_area=(EpdRect){24,612,636,114};s_mode=MODE_DU;s_du_count=10;
+   trace_count=0;assert(present(&ctx,APP_REDRAW_AREA));
+   assert(trace_count==1&&route==LOCAL_FULL&&pushed_mode==MODE_GL16&&trace_wave[0]==E0470_WAVEFORM);
+   assert(pushed_area.x==24&&pushed_area.y==612&&pushed_area.width==636&&pushed_area.height==114);
+   assert(!s_input_settle&&!s_du_count);
+ }
+ s_view=s_presented_view=READING;s_reader_fullscreen=false;s_reader_footer_pending=false;
+ puts("PASS: 160 search/title updates keep a single local push; idle settles drive only the candidate strip with full-pixel GL16 and never refresh the footer or whole page");
+
  // 实际翻页、绘制和推屏函数共用页类型；混排与跨章不靠纯图标志判定。
  // Actual turn/paint/present functions share page types; mixed and cross-chapter guards do not rely on the pure-image flag.
  for(int full=0;full<2;++full)for(int hidden=0;hidden<2;++hidden)
@@ -252,6 +271,7 @@ typedef struct {bool network_ready;int mode;} read_pico_transfer_status_t;
 static pmu_snapshot_t pmu;
 static int pct;
 static bool wifi,bluetooth,s_system_ttf;
+static bool ttf_font_is_builtin(void){return false;}
 static char signature[96];
 static const pmu_snapshot_t *read_pico_pmu_get(void){return &pmu;}
 static int pmu_battery_percent(const pmu_snapshot_t *snapshot){(void)snapshot;return pct;}
@@ -282,7 +302,9 @@ static void ui_draw_round_rect(uint8_t *fb,EpdRect box,int radius,int gray){(voi
 static void ui_fill_round_rect(uint8_t *fb,EpdRect box,int radius,int gray){(void)fb;(void)box;(void)radius;(void)gray;}
 '''
 status += defines + "\n"
-for path, name in (("main/ui/ui_kit.c", "ui_text_fixed_width_px"),
+for path, name in (("main/ui/ui_kit.c", "ui_text_fixed_context_width_px"),
+                   ("main/ui/ui_kit.c", "ui_text_fixed_width_px"),
+                   ("main/ui/ui_kit.c", "ui_text_fixed_context_vc"),
                    ("main/ui/ui_kit.c", "ui_text_fixed_vc"), ("main/ui/ui_nav.c", "ui_nav_status")):
     status += function(path, name) + "\n"
 status += r'''

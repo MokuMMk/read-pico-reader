@@ -17,7 +17,7 @@ remain in the source. This project is not an official MindReset release.
 | [pypinyin](https://github.com/mozillazg/python-pinyin) dictionary data used by offline book search | MIT | [pypinyin notice](components/read_pico_search/LICENSE.pypinyin) |
 | [CrossMux](https://github.com/0x1abin/crossmux) WeRead protocol, streaming download and EPUB writer, ported from commit `d6a1727bb27a858ba2ee9a44529ba8e458defbad` | MIT | [CrossMux notice](components/pico_weread/vendor/LICENSE-CrossMux.txt) |
 | FreeInk SDK StreamingJsonParser, commit `96de1be6ce08eb732909e6e8149af8f892b9a2c5` | MIT | [FreeInk SDK notice](components/pico_weread/vendor/LICENSE-FreeInk-SDK.txt) |
-| Embedded Noto Sans SC Medium font subset | SIL OFL-1.1 | [Font license](main/assets/OFL-Noto.txt) |
+| Embedded Noto Sans SC Medium font subset and compressed common-Han bitmaps | SIL OFL-1.1 | [Font license](main/assets/OFL-Noto.txt) |
 | [ESP Web Tools](https://github.com/esphome/esp-web-tools) browser flasher | Apache-2.0 | [Bundled web tool license](flash/vendor/LICENSE) |
 | Espressif TinyUSB component | Apache-2.0 | [Component license](components/espressif__esp_tinyusb/LICENSE) |
 
@@ -38,7 +38,7 @@ retaining its mindreset Apache-2.0 file notice and the complete FreeInk/CrossMux
 MIT notices linked above. Only ordinary text turns select it; vendor LUTs,
 scan timing and other screens are unchanged. Panel validation remains required.
 
-The firmware bundles only the embedded Noto Sans SC subset; users may supply
+The firmware bundles only the embedded Noto Sans SC subset and common-Han bitmap supplement; users may supply
 their own fonts on a TF card. The repository and flashing site do not provide
 additional font packages.
 

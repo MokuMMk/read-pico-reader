@@ -50,6 +50,10 @@ idf_component_register(
         "app/app_loop.c"
         "app/app_registry.c"
         "ui/ui_kit.c"
+        "ui/ui_text_edit.c"
+        "ui/ui_text_input.c"
+        "ui/ui_ime.c"
+        "ui/ui_keyboard.c"
         "ui/ui_gesture.c"
         "ui/ui_power_dialog.c"
         "ui/ui_wifi_qr.c"
@@ -87,6 +91,7 @@ idf_component_register(
         "font/ttf_font.c"
         "font/app_font_context.c"
         "font/ui_font.c"
+        "font/ui_hanzi.c"
         "factory/pmu_selftest.c"
         "factory/vcom_setup.c"
     REQUIRES ${main_requires}
@@ -95,6 +100,7 @@ idf_component_register(
         "assets/lock_4bpp.bin"
         "assets/loading_4bpp.bin"
         "assets/builtin.ttf"
+        "assets/ui-hanzi.bin"
         "assets/reading.md"
         "assets/display-test.png"
 )

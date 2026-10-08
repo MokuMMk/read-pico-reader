@@ -19,6 +19,7 @@
 #define HTML_IMAGE_MAX 256u
 #define HTML_IMAGE_PATH_MAX 511u
 #define CSS_RULE_MAX 64u
+#define CSS_ANCESTOR_MAX 64u
 
 enum {
     CSS_ALIGN = 1u << 0,
@@ -32,9 +33,16 @@ typedef struct {
 } css_style_t;
 
 typedef struct {
-    char selector[32];
+    const char *selector;
+    size_t length;
+    unsigned specificity;
     css_style_t style;
 } css_rule_t;
+
+typedef struct {
+    char tag[16];
+    const char *attrs, *end;
+} css_node_t;
 
 typedef struct {
     html_text_t text;
@@ -46,6 +54,8 @@ typedef struct {
     css_style_t current_style, block_style;
     css_rule_t rules[CSS_RULE_MAX];
     size_t rule_count;
+    css_node_t *ancestors;
+    bool scoped_rules;
 } writer_t;
 
 static unsigned char lower(unsigned char c) {
@@ -132,15 +142,24 @@ static void css_declarations(const char* at, const char* end, css_style_t* style
 static void css_add_rule(writer_t* w, const char* selector, size_t len, const css_style_t* style) {
     while (len && ascii_space((unsigned char)*selector)) { ++selector; --len; }
     while (len && ascii_space((unsigned char)selector[len - 1])) --len;
-    const char* last = selector;
-    for (size_t i = 0; i < len; ++i) if (ascii_space((unsigned char)selector[i]) || selector[i] == '>') last = selector + i + 1;
-    len -= (size_t)(last - selector); selector = last;
-    const char* pseudo = memchr(selector, ':', len);
-    if (pseudo) len = (size_t)(pseudo - selector);
-    if (!len || len >= sizeof(w->rules[0].selector) || w->rule_count == CSS_RULE_MAX || !style->mask) return;
+    if (!len || len > 95 || w->rule_count == CSS_RULE_MAX || !style->mask) return;
+    unsigned specificity = 0, parts = 1;
+    bool scoped = false, token = true;
+    for (size_t i = 0; i < len; ++i) {
+        unsigned char c = (unsigned char)selector[i];
+        if (ascii_space(c) || c == '>') { scoped = true; token = true; continue; }
+        // 不支持的选择器整体忽略，绝不把局部规则降成全局规则。
+        // Ignore unsupported selectors as a whole, never broaden a scoped rule into a global rule.
+        if (!(name_char(c) && c != ':') && c != '.' && c != '#' && c != '*') return;
+        if (token) { if (++parts > 9) return; token = false; if (c != '.' && c != '#' && c != '*') ++specificity; }
+        if (c == '.') specificity += 16;
+        if (c == '#') specificity += 256;
+    }
     css_rule_t* rule = &w->rules[w->rule_count++];
-    for (size_t i = 0; i < len; ++i) rule->selector[i] = (char)lower((unsigned char)selector[i]);
-    rule->selector[len] = 0;
+    rule->selector = selector;
+    rule->length = len;
+    rule->specificity = specificity;
+    w->scoped_rules |= scoped;
     rule->style = *style;
 }
 
@@ -248,24 +267,69 @@ static bool void_tag(const char* name) {
     return false;
 }
 
+// 有界祖先链匹配后代和直接子代，选择器与属性借用本次解析的输入。
+// Match descendants and direct children against a bounded ancestor chain; borrow this parse's input.
+static bool css_compound(const char *selector, size_t len, const char *tag,
+                         const char *attrs, const char *end) {
+    size_t i = 0;
+    while (i < len && selector[i] != '.' && selector[i] != '#') ++i;
+    if (i && !(i == 1 && selector[0] == '*') &&
+        (strlen(tag) != i || strncasecmp(selector, tag, i))) return false;
+    while (i < len) {
+        char kind = selector[i++]; size_t start = i;
+        while (i < len && selector[i] != '.' && selector[i] != '#') ++i;
+        if (i == start || i - start >= 96) return false;
+        char token[96]; memcpy(token, selector + start, i - start); token[i - start] = 0;
+        const char *value = NULL; size_t length = 0;
+        if (!attr_value(attrs, end, kind == '#' ? "id" : "class", &value, &length)) return false;
+        if (kind == '#' ? (length != i - start || memcmp(value, token, length)) :
+                         !class_has(value, length, token)) return false;
+    }
+    return true;
+}
+static bool css_scope_match(const writer_t *w, const char *s, size_t len,
+                            const char *tag, const char *attrs, const char *end,
+                            size_t parent, unsigned budget, unsigned *work) {
+    if (!budget || !len || !*work) return false;
+    --*work;
+    size_t begin = len;
+    while (begin && !ascii_space((unsigned char)s[begin - 1]) && s[begin - 1] != '>') --begin;
+    if (!css_compound(s + begin, len - begin, tag, attrs, end)) return false;
+    size_t remaining = begin;
+    while (remaining && ascii_space((unsigned char)s[remaining - 1])) --remaining;
+    bool child = remaining && s[remaining - 1] == '>';
+    if (child) --remaining;
+    while (remaining && ascii_space((unsigned char)s[remaining - 1])) --remaining;
+    if (!remaining) return !child;
+    if (!w->ancestors || parent > CSS_ANCESTOR_MAX) return false;
+    while (parent) {
+        const css_node_t *node = &w->ancestors[--parent];
+        if (css_scope_match(w, s, remaining, node->tag, node->attrs, node->end, parent, budget - 1, work)) return true;
+        if (child) break;
+    }
+    return false;
+}
 static css_style_t style_for(writer_t* w, const char* tag, const char* attrs, const char* attrs_end) {
     css_style_t out = {0};
-    const char *classes = NULL, *inline_css = NULL;
-    size_t class_len = 0, inline_len = 0;
-    (void)attr_value(attrs, attrs_end, "class", &classes, &class_len);
-    (void)attr_value(attrs, attrs_end, "style", &inline_css, &inline_len);
+    unsigned priorities[4] = {0};
     for (size_t i = 0; i < w->rule_count; ++i) {
-        const char* selector = w->rules[i].selector;
-        const char* dot = strchr(selector, '.');
-        bool matches = !strcmp(selector, "body") || (!dot && !strcmp(selector, tag));
-        if (dot) {
-            size_t tag_len = (size_t)(dot - selector);
-            matches = (!tag_len || (strlen(tag) == tag_len && !strncasecmp(selector, tag, tag_len))) &&
-                      classes && class_has(classes, class_len, dot + 1);
-        } else if (selector[0] == '.' && classes) matches = class_has(classes, class_len, selector + 1);
-        if (matches) css_apply(&out, &w->rules[i].style);
+        const css_rule_t *rule = &w->rules[i];
+        bool body = rule->length == 4 && !strncasecmp(rule->selector, "body", 4);
+        unsigned work = 1024;
+        bool matches = body || css_scope_match(w, rule->selector, rule->length,
+                                               tag, attrs, attrs_end, w->depth ? w->depth - 1 : 0, 8, &work);
+        if (!matches) continue;
+        css_style_t chosen = rule->style;
+        unsigned specificity = body ? 0 : rule->specificity;
+        for (unsigned bit = 0; bit < 4; ++bit) {
+            if (!(chosen.mask & (1u << bit))) continue;
+            if (specificity < priorities[bit]) chosen.mask &= ~(1u << bit);
+            else priorities[bit] = specificity;
+        }
+        css_apply(&out, &chosen);
     }
-    if (inline_css) {
+    const char *inline_css = NULL; size_t inline_len = 0;
+    if (attr_value(attrs, attrs_end, "style", &inline_css, &inline_len)) {
         css_style_t inline_style = {0};
         css_declarations(inline_css, inline_css + inline_len, &inline_style);
         css_apply(&out, &inline_style);
@@ -508,6 +572,10 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
     if (css_len) css_parse_rules(&w, css, css + css_len);
     if (len) css_parse_styles(&w, html, len);
     esp_err_t err = ESP_OK;
+    if (w.scoped_rules) {
+        w.ancestors = heap_caps_malloc(CSS_ANCESTOR_MAX * sizeof(*w.ancestors), PSRAM_CAPS);
+        if (!w.ancestors) return ESP_ERR_NO_MEM;
+    }
     char skip[16] = "";
     bool resume_head = false;
     size_t pos = len >= 3 && memcmp(html, "\xef\xbb\xbf", 3) == 0 ? 3 : 0;
@@ -565,6 +633,11 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
                 } else if (!self_closing && !void_tag(name) &&
                            !name_equal(name, "head") && !name_equal(name, "script") && !name_equal(name, "style")) {
                     ++w.depth;
+                    if (w.ancestors && w.depth <= CSS_ANCESTOR_MAX) {
+                        css_node_t *node = &w.ancestors[w.depth - 1];
+                        memcpy(node->tag, name, sizeof(node->tag));
+                        node->attrs = html + at; node->end = html + end;
+                    }
                     if (!w.auxiliary_depth && auxiliary_tag(name, html + at, html + end))
                         w.auxiliary_depth = w.depth;
                     const char* href = NULL; size_t href_len = 0;
@@ -620,8 +693,10 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
     if (err != ESP_OK) goto fail;
     w.text.utf8[w.text.len] = 0;
     *out = w.text;
+    free(w.ancestors);
     return ESP_OK;
 fail:
+    free(w.ancestors);
     html_text_free(&w.text);
     return err;
 }

@@ -1,4 +1,4 @@
-"""Check real reader-setting labels against the shipped UI font cmap.
+"""Check real reader-setting and keyboard labels against the shipped UI font cmap.
 
 SPDX-License-Identifier: Apache-2.0
 中文：说明里缺一个字就会整行回退到阅读字体；直接检查固件内建字库。
@@ -7,6 +7,7 @@ the real embedded font instead of a mocked has-text result. Uses only stdlib.
 """
 from pathlib import Path
 import re
+import ast
 import struct
 
 root = Path(__file__).resolve().parents[1]
@@ -69,10 +70,14 @@ last = source.index("static void draw_font_picker(", first)
 # diagrams. Dynamic book text and user font names intentionally use other paths.
 section = source[first:last]
 labels = re.findall(r'"([^"\n]*)"', section)
+# 共用键盘必须始终使用系统字形；退格图案由线段绘制。
+# Shared keys must always use system glyphs; backspace is drawn with lines.
+keyboard=(root/'main/ui/ui_keyboard.c').read_text()
+labels += [ast.literal_eval(literal) for literal in re.findall(r'"(?:\\.|[^"\\])*"', keyboard)]
 missing = {}
 for label in labels:
-    absent = "".join(dict.fromkeys(ch for ch in label if not has_glyph(ord(ch))))
+    absent = "".join(dict.fromkeys(ch for ch in label if ch != "⌫" and ord(ch) >= 32 and not has_glyph(ord(ch))))
     if absent:
         missing[label] = absent
-assert not missing, f"Reader-setting labels fall back to the reading font: {missing}"
-print(f"PASS: {len(labels)} real reader-setting labels have complete system UI glyphs")
+assert not missing, f"System UI labels fall back to the reading font: {missing}"
+print(f"PASS: {len(labels)} real reader-setting and keyboard labels have complete system UI glyphs")

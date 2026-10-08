@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""中文：缺失插图记录不能阻断正文或让图文重叠。
-English: Missing image records must not abort prose or overlap image space.
+"""中文：按 PR9 原始实现，缺失插图记录不阻断后续正文。
+English: Missing image records must not abort remaining prose, matching PR9.
 SPDX-License-Identifier: Apache-2.0
 """
 from pathlib import Path
@@ -10,7 +10,7 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 source = (root / 'main/book/book_layout.c').read_text()
 start = source.index('void book_layout_draw_page(')
-end = source.index('\nbool book_layout_page_image_rect(', start)
+end = len(source)
 unit = r'''
 #include <assert.h>
 #include <stdint.h>
@@ -23,15 +23,16 @@ static size_t s_count=1,s_len=8,s_pages[]={0};
 static int s_px=10,s_lead_height,s_reading_line,s_reading_line_offset,s_tracking_px;
 static EpdRect s_rect={0,0,100,100};
 static char s_line[16];
-static uint32_t s_page_img_start[]={0,1};
+static uint32_t image_starts[]={0,1};
+static uint32_t *s_page_img_start=image_starts;
 typedef struct {int image,y,width,height;} layout_image_t;
 static layout_image_t s_images[]={{0,10,80,20}};
 static const blk_t block={.offset=0,.len=3,.image=0};
-static bool known=true;
 static int painted,baseline;
 static size_t skip_image_spacing(size_t off){return off;}
 static const blk_t *block_at(size_t off){return off==0?&block:NULL;}
-static bool image_display_size(const blk_t *b,int *w,int *h){assert(b==&block);if(!known)return false;*w=80;*h=20;return true;}
+int book_layout_page_image(size_t page){(void)page;return -1;}
+int book_layout_page_image_count(size_t page){(void)page;return s_page_img_start[1]-s_page_img_start[0];}
 static bool take_line(size_t off,size_t *next,bool *end,int *px,bool *heading,int *width,int *indent,uint8_t *align,int *before,int *after){
  assert(off==4);strcpy(s_line,"tail");*next=8;*end=true;*px=10;*heading=false;*width=40;*indent=0;*align=0;*before=*after=0;return true;
 }
@@ -50,11 +51,10 @@ int main(void){
  uint8_t fb=0;
  book_layout_draw_page(&fb,0,s_rect,10);assert(painted==1&&baseline==45);
  painted=0;s_page_img_start[1]=0;
- book_layout_draw_page(&fb,0,s_rect,10);assert(painted==1&&baseline==35);
+ book_layout_draw_page(&fb,0,s_rect,10);assert(painted==1&&baseline==10);
  painted=0;s_page_img_start[1]=1;s_images[0].image=7;
- book_layout_draw_page(&fb,0,s_rect,10);assert(painted==1&&baseline==35);
- painted=0;known=false;book_layout_draw_page(&fb,0,s_rect,10);assert(!painted);
- puts("PASS: missing/mismatched image slots continue prose with reserved space; unknown sizes retain full-page bounds");
+ book_layout_draw_page(&fb,0,s_rect,10);assert(painted==1&&baseline==10);
+ puts("PASS: PR9 missing/mismatched image slots skip the unmatched record and continue prose");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='book-image-record-') as directory:

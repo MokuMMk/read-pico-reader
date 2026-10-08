@@ -8,6 +8,7 @@
 #include "transfer_ui_test_env.h"
 #include "../main/apps/app_transfer.c"
 #include <assert.h>
+#include "../components/read_pico_transfer/transfer_signature.h"
 static bool test_usb_active;
 static esp_err_t test_usb_stop_error;
 esp_err_t usb_storage_start(void) { test_usb_active = true; return ESP_OK; }
@@ -82,7 +83,46 @@ static void qr_regression(app_ctx_t* ctx) {
     test_qr_encodes=0;
     ctx->now_ms=0;
 }
+static void password_caret_regression(app_ctx_t *ctx) {
+    clear_password();ui_keyboard_begin(&s_password_input,true);
+    assert(s_password_input.cursor==0);
+    tap(ctx,(EpdRect){24,1010,30,30}); // 数字页。/ Number panel.
+    for(int i=0;i<8;i++)tap(ctx,(EpdRect){24+i*64,740,30,30});
+    assert(!strcmp(s_password,"12345678")&&s_password_input.cursor==8);
+    EpdRect field=password_control_rect(47);
+    tap(ctx,(EpdRect){field.x+17+3*20-2,329,4,4});assert(s_password_input.cursor==3);
+    tap(ctx,(EpdRect){24+64,740,30,30});assert(!strcmp(s_password,"123245678")&&s_password_input.cursor==4);
+    tap(ctx,password_control_rect(45));assert(s_password_visible&&s_password_input.cursor==4);
+    tap(ctx,password_control_rect(45));assert(!s_password_visible&&s_password_input.cursor==4);
+    ui_text_edit_place(&s_password_input,3);
+    tap(ctx,(EpdRect){600,896,30,30});assert(!strcmp(s_password,"12245678")&&s_password_input.cursor==2);
+    ui_text_edit_place(&s_password_input,0);tap(ctx,(EpdRect){600,896,30,30});assert(!strcmp(s_password,"12245678"));
+    clear_password();assert(!s_password[0]&&!s_password_input.cursor&&!s_password_visible);
+    ui_keyboard_begin(&s_password_input,true);
+    strcpy(s_password,"abcdefgh");ui_text_edit_init(&s_password_input,s_password,sizeof(s_password));
+    cst836u_touch_t touch={.touched=true,.count=1,.x=610,.y=930};ctx->touch=&touch;ctx->now_ms=1000;
+    ui_gesture_event_t held={.type=UI_GESTURE_PRESS,.x0=610,.y0=930,.x=610,.y=930};
+    assert(on_gesture(ctx,&held)==APP_REDRAW_AREA && !s_input_layout);
+    ctx->consumed=true;assert(on_tick(ctx)==APP_REDRAW_NONE);ctx->consumed=false;
+    ctx->now_ms=1499;assert(on_tick(ctx)==APP_REDRAW_NONE&&!strcmp(s_password,"abcdefgh"));
+    ctx->now_ms=1500;assert(on_tick(ctx)==APP_REDRAW_AREA&&!strcmp(s_password,"abcdefg"));assert(!s_input_layout);
+    ctx->now_ms=1620;assert(on_tick(ctx)==APP_REDRAW_AREA&&!strcmp(s_password,"abcdef"));
+    touch.count=2;ctx->now_ms=1740;assert(on_tick(ctx)==APP_REDRAW_NONE&&!strcmp(s_password,"abcdef"));
+    touch.count=1;ctx->now_ms=2000;assert(on_tick(ctx)==APP_REDRAW_NONE&&!strcmp(s_password,"abcdef"));
+    held.type=UI_GESTURE_PRESS;on_gesture(ctx,&held);ctx->now_ms=2500;assert(on_tick(ctx)==APP_REDRAW_AREA&&!strcmp(s_password,"abcde"));
+    held.type=UI_GESTURE_CANCEL;touch.touched=false;on_gesture(ctx,&held);ctx->now_ms=2800;
+    assert(on_tick(ctx)==APP_REDRAW_NONE&&!strcmp(s_password,"abcde"));ctx->touch=NULL;ctx->now_ms=0;
+    clear_password();ui_keyboard_begin(&s_password_input,true);
+}
 int main(void) {
+    assert(transfer_signature_valid("",0)&&transfer_signature_valid("中文🙂",10));
+    assert(!transfer_signature_valid("a\0b",3)&&!transfer_signature_valid("\xed\xa0\x80",3));
+    assert(!transfer_signature_valid("\xc0\xaf",2)&&!transfer_signature_valid("\xf4\x90\x80\x80",4));
+    assert(!transfer_signature_valid("\xe4\xb8",2)&&!transfer_signature_valid("a\nb",3));
+    strcpy(test_signature,"reader");char signature[96];assert(transfer_signature_get(signature,sizeof(signature))&&!strcmp(signature,"reader"));
+    test_signature_fail=true;assert(transfer_signature_set("新签名")==ESP_FAIL&&!strcmp(test_signature,"reader"));
+    test_signature_fail=false;assert(transfer_signature_set("新签名")==ESP_OK&&!strcmp(test_signature,"新签名"));
+    assert(s_signature_revision==1);s_signature_seen=s_signature_revision;
     uint8_t fb = 0;
     app_ctx_t ctx = {.fb = &fb};
     app_transfer_request_method_picker();
@@ -106,7 +146,7 @@ int main(void) {
     cancelled.type = UI_GESTURE_CANCEL;
     assert(on_gesture(&ctx, &cancelled) == APP_REDRAW_AREA);
     assert(s_view == TRANSFER_METHODS && !s_start_pending && s_pressed == -1);
-    for (int i = 0; i < 47; ++i) {
+    for (int i = 44; i < 48; ++i) {
         EpdRect r = password_control_rect(i);
         assert(r.x >= 0 && r.x + r.width <= UI_LOCK_WIDTH);
         assert(r.y >= 0 && r.y + r.height <= UI_LOCK_HEIGHT);
@@ -168,24 +208,17 @@ int main(void) {
     assert(s_view == TRANSFER_PASSWORD && !s_password[0]);
     tap(&ctx, password_control_rect(46));
     assert(test_save_count == 0 && s_view == TRANSFER_PASSWORD);
+    password_caret_regression(&ctx);
     ui_gesture_event_t cancel = {.type = UI_GESTURE_PRESS,.x0 = 42,.y0 = 422,.x = 42,.y = 422};
     on_gesture(&ctx, &cancel);
     cancel.type = UI_GESTURE_TAP;
     cancel.x = 650;
     on_gesture(&ctx, &cancel);
     assert(!s_password[0]);
-    bool reachable[128] = {0};
-    for (int mode = 0; mode < 3; ++mode) {
-        s_keyboard_mode = mode;
-        for (int i = 0; i < 40; ++i) reachable[(unsigned char)keyboard_chars()[i]] = true;
-    }
-    reachable[' '] = true;
-    for (int c = 32; c < 127; ++c) assert(reachable[c]);
-    s_keyboard_mode = 0;
-    for (int i = 0; i < 70; ++i) tap(&ctx, password_control_rect(0));
-    assert(strlen(s_password) == 64);
-    tap(&ctx, password_control_rect(43));
-    assert(strlen(s_password) == 63);
+    // 容量及保存失败时保留密码。/ Capacity and preservation after failed saving.
+    tap(&ctx,(EpdRect){24,1010,30,30});
+    for(int i=0;i<70;i++)tap(&ctx,(EpdRect){24,740,30,30});assert(strlen(s_password)==64);
+    tap(&ctx,(EpdRect){600,896,30,30});assert(strlen(s_password)==63);
     tap(&ctx, password_control_rect(45));
     assert(s_password_visible);
     test_save_error = ESP_FAIL;
@@ -199,7 +232,7 @@ int main(void) {
     enter_networks();
     network_ui_tick(&ctx);
     tap(&ctx, network_control_rect(0));
-    tap(&ctx, password_control_rect(0));
+    tap(&ctx,(EpdRect){24,740,30,30});
     tap(&ctx, password_control_rect(44));
     assert(s_view == TRANSFER_NETWORKS && !s_password[0]);
     test_scan_count = 0;

@@ -438,6 +438,7 @@ static int list_books(const char *root, const char *query, size_t page, transfer
 
 #ifndef READ_PICO_TRANSFER_HOST_TEST
 #include "read_pico_transfer.h"
+#include "transfer_signature.h"
 #include "ble_page_turner.h"
 static bool s_ble_network_reserved;
 #include "transfer_policy.h"
@@ -1209,6 +1210,30 @@ static bool recv_small_body(httpd_req_t *req, char *body, size_t cap) {
     body[done] = 0;
     return true;
 }
+// 两种传书模式共用签名接口，沿用文件操作的忙碌与停止保护。
+// Both transfer modes share this endpoint and the existing mutation/stop admission guard.
+static esp_err_t signature_handler(httpd_req_t *req) {
+    if (!management_request(req)) return respond_error(req, 403);
+    if (!s_cfg.signature_get_cb || !s_cfg.signature_set_cb) return respond_error(req, 503);
+    char text[96] = {0};
+    if (req->method == HTTP_POST && (req->content_len > 95 ||
+        !recv_small_body(req, text, sizeof(text)) || !transfer_signature_valid(text, req->content_len)))
+        return wifi_response(req, "400 Bad Request", "{\"error\":\"签名最多95字节，不能含换行或控制字符\"}");
+    portENTER_CRITICAL(&s_lock);
+    bool accepted = admission_begin(s_stopping, &s_upload_active);
+    portEXIT_CRITICAL(&s_lock);
+    if (!accepted) return wifi_response(req, "409 Conflict", "{\"error\":\"正在传输，请完成后再设置签名\"}");
+    esp_err_t err = req->method == HTTP_POST ? s_cfg.signature_set_cb(text) :
+                   s_cfg.signature_get_cb(text, sizeof(text)) ? ESP_OK : ESP_FAIL;
+    portENTER_CRITICAL(&s_lock); s_upload_active = false; portEXIT_CRITICAL(&s_lock);
+    if (err != ESP_OK) return wifi_response(req, "500 Internal Server Error", "{\"error\":\"签名保存或读取失败，请重试\"}");
+    cJSON *json = cJSON_CreateObject();
+    if (!json) return ESP_ERR_NO_MEM;
+    cJSON_AddStringToObject(json, "signature", text);
+    cJSON_AddBoolToObject(json, "ok", true);
+    return send_json(req, json);
+}
+
 static esp_err_t clock_handler(httpd_req_t *req) {
     if (!management_request(req)) return respond_error(req, 403);
     if (req->content_len < 12 || req->content_len > 48) return respond_error(req, 400);
@@ -1872,7 +1897,7 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
     // File metadata and wallpaper settings access NVS; the HTTP stack must remain readable while caches are disabled.
     // 在无线电启动前预留网页任务，避免 WiFi 内存碎片导致任务创建失败。
     // Reserve the HTTP task before starting the radio to avoid WiFi heap fragmentation.
-    http.stack_size = 12288; http.max_uri_handlers = 16; http.max_open_sockets = 3;
+    http.stack_size = 12288; http.max_uri_handlers = 18; http.max_open_sockets = 3;
     http.recv_wait_timeout = 15;
     http.send_wait_timeout = 15;
     http.task_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
@@ -1899,6 +1924,8 @@ esp_err_t read_pico_transfer_start(const read_pico_transfer_cfg_t *cfg) {
         { .uri = "/books", .method = HTTP_GET, .handler = books_handler },
         { .uri = "/books", .method = HTTP_DELETE, .handler = books_handler },
         { .uri = "/books", .method = HTTP_POST, .handler = books_handler },
+        { .uri = "/signature", .method = HTTP_GET, .handler = signature_handler },
+        { .uri = "/signature", .method = HTTP_POST, .handler = signature_handler },
         { .uri = "/clock", .method = HTTP_POST, .handler = clock_handler },
         { .uri = "/titles", .method = HTTP_GET, .handler = titles_handler },
         { .uri = "/titles", .method = HTTP_POST, .handler = titles_handler },

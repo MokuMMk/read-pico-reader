@@ -22,7 +22,8 @@ typedef int esp_err_t;
 typedef struct { int x,y,width,height; } EpdRect;
 typedef enum { APP_REDRAW_NONE, APP_REDRAW_AREA, APP_REDRAW_PAGE, APP_REDRAW_FULL, APP_REDRAW_DONE } app_redraw_t;
 struct app_desc;
-typedef struct { uint8_t* fb; void* hl; bool consumed; int64_t now_ms; const struct app_desc* request_app; bool request_return; } app_ctx_t;
+typedef struct { bool touched; uint8_t count; uint16_t x,y; } cst836u_touch_t;
+typedef struct { uint8_t* fb; void* hl; bool consumed,released; int64_t now_ms; const cst836u_touch_t* touch; const struct app_desc* request_app; bool request_return; } app_ctx_t;
 typedef enum { UI_GESTURE_PRESS, UI_GESTURE_TAP, UI_GESTURE_CANCEL, UI_GESTURE_LONG_PRESS } ui_gesture_type_t;
 typedef struct { ui_gesture_type_t type; uint16_t x,y,x0,y0; } ui_gesture_event_t;
 typedef struct app_desc { const char *title,*detail; bool enter_full,owns_keys; bool(*menu_handle_enabled)(app_ctx_t*); void(*on_enter)(app_ctx_t*); void(*on_exit)(app_ctx_t*); void(*on_media_lost)(app_ctx_t*); void(*render)(app_ctx_t*,uint8_t*); bool(*present)(app_ctx_t*,app_redraw_t); app_redraw_t(*on_tick)(app_ctx_t*); app_redraw_t(*on_gesture)(app_ctx_t*,const ui_gesture_event_t*); app_redraw_t(*on_key)(app_ctx_t*,int); } app_desc_t;
@@ -31,6 +32,7 @@ enum EpdDrawMode { MODE_DU,MODE_GL16,MODE_GC16 };
 #define UI_CONTENT_TOP 176
 #define UI_BTN_H 84
 #define UI_BTN_RADIUS 14
+#define UI_LONG_PRESS_MS 500
 #define UI_PX_CAPTION 28
 #define UI_PX_BODY 38
 #define UI_PX_BTN 34
@@ -48,6 +50,8 @@ enum EpdDrawMode { MODE_DU,MODE_GL16,MODE_GC16 };
 #define UI_GRAY_WHITE 0xff
 #define MALLOC_CAP_8BIT 1
 #define MALLOC_CAP_INTERNAL 2
+#define MALLOC_CAP_SPIRAM 4
+static inline void* heap_caps_malloc(size_t n,int caps){(void)caps;return malloc(n);}
 static const int E0470_WAVEFORM = 0;
 static const int E0470_FOLLOW_WAVEFORM = 1;
 #define ESP_LOGI(tag,...) ((void)(tag))
@@ -71,12 +75,18 @@ static inline void ui_hairline(uint8_t* f,...) {(void)f;}
 static inline void ui_text(uint8_t* f,...) {(void)f;}
 static inline int ui_text_effective_px(int px) {return px + 2;}
 static inline void ui_text_vc(uint8_t* f,...) {(void)f;}
+static inline void ui_text_fixed_vc(uint8_t* f,...) {(void)f;}
+static inline int ui_text_fixed_width_px(int px,const char* s) {return (int)strlen(s)*px/2;}
+static inline int ui_text_fixed_context_width_px(int px,const char* s,const char* sample) {(void)sample;return ui_text_fixed_width_px(px,s);}
+static inline void ui_text_fixed_context_vc(uint8_t* f,...) {(void)f;}
 static inline void epd_fill_rect(EpdRect r,...) {(void)r;}
 static inline void epd_draw_rect(EpdRect r,...) {(void)r;}
 static inline void epd_draw_circle(int x,int y,int radius,...) {(void)x;(void)y;(void)radius;}
 static inline void epd_draw_line(int x0,int y0,int x1,int y1,...) {(void)x0;(void)y0;(void)x1;(void)y1;}
 static inline int ttf_text_width_px(int px,const char* s) {return (int)strlen(s)*px/2;}
 static inline void display_set_bulk_io(bool b) {(void)b;}
+static inline int update_display_area_diff_with(void* p,...) {(void)p;return 0;}
+static inline int update_display_area_full_with(void* p,...) {(void)p;return 0;}
 static inline int update_display_area_with(void* p,...) {(void)p;return 0;}
 static inline int update_display_white(void* p) {(void)p;return 0;}
 static inline int update_display_full(void* p) {(void)p;return 0;}
@@ -93,7 +103,7 @@ static inline int app_count(void) {return 0;}
 static inline const app_desc_t* app_at(int i) {(void)i;return NULL;}
 typedef enum {READ_PICO_TRANSFER_MODE_AP,READ_PICO_TRANSFER_MODE_STA} read_pico_transfer_mode_t;
 typedef enum {READ_PICO_TRANSFER_STOPPED,READ_PICO_TRANSFER_STARTING,READ_PICO_TRANSFER_READY,READ_PICO_TRANSFER_UPLOADING,READ_PICO_TRANSFER_ERROR} read_pico_transfer_state_t;
-typedef struct {read_pico_transfer_mode_t mode;bool network_only;const char* root_dir;bool is_flash;size_t file_limit;uint64_t(*free_bytes_cb)(void*);void* free_bytes_ctx;bool(*title_get_cb)(const char*,char*,size_t);int(*title_set_cb)(const char*,const char*);int(*file_changed_cb)(const char*);void(*file_deleted_cb)(const char*);void(*file_moved_cb)(const char*,const char*,uint32_t);void(*directory_deleted_cb)(const char*);void(*directory_moved_cb)(const char*,const char*);bool(*wallpaper_set_cb)(const char*);} read_pico_transfer_cfg_t;
+typedef struct {read_pico_transfer_mode_t mode;bool network_only;const char* root_dir;bool is_flash;size_t file_limit;uint64_t(*free_bytes_cb)(void*);void* free_bytes_ctx;bool(*title_get_cb)(const char*,char*,size_t);int(*title_set_cb)(const char*,const char*);int(*file_changed_cb)(const char*);void(*file_deleted_cb)(const char*);void(*file_moved_cb)(const char*,const char*,uint32_t);void(*directory_deleted_cb)(const char*);void(*directory_moved_cb)(const char*,const char*);bool(*wallpaper_set_cb)(const char*);bool(*signature_get_cb)(char*,size_t);int(*signature_set_cb)(const char*);} read_pico_transfer_cfg_t;
 typedef struct {read_pico_transfer_mode_t mode;read_pico_transfer_state_t state;bool wifi_configured,network_ready;char ssid[33],wifi_ssid[33],url[64],cur_name[241];unsigned sta_count,done_count,changed_count;size_t cur_bytes,cur_total;int last_error;} read_pico_transfer_status_t;
 #define READ_PICO_TRANSFER_PASSWORD "readpico"
 static read_pico_transfer_status_t test_status;
@@ -130,3 +140,8 @@ static inline bool book_progress_load(const char* path,uint32_t size,book_progre
 static inline bool book_progress_save(const char* path,const book_progress_t* progress) {(void)path;(void)progress;return true;}
 static inline bool book_progress_last_path(char* out,size_t cap) {if(cap)out[0]=0;return false;}
 static inline bool book_progress_set_last_path(const char* path) {(void)path;return true;}
+
+static char test_signature[96];
+static bool test_signature_fail;
+static inline const char *app_settings_status_signature(void){return test_signature;}
+static inline void app_settings_set_status_signature(const char *text){if(!test_signature_fail)snprintf(test_signature,sizeof(test_signature),"%s",text);}

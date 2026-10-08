@@ -73,6 +73,21 @@ int main(void) {
     assert(t.image_count == 3 && !strcmp(t.images[0], "../图&文.png") &&
            !strcmp(t.images[1], "../svg.png") && !strcmp(t.images[2], "../obj.png"));
     html_text_free(&t);
+    // 后代、子元素、优先级和不支持的选择器不能扩散到普通正文。
+    // Descendants, children, specificity and unsupported selectors never broaden to ordinary prose.
+    t = parse("<style>.js p{text-align:right}.js > p{text-align:center} p{text-align:left}"
+              " .x:before p{text-align:right}.s + p{text-align:right}</style>"
+              "<p>normal</p><div class='js'><p>direct</p><section><p>deep</p></section></div><p>tail</p>",
+              "normal\ndirect\ndeep\ntail");
+    assert(t.count==4&&t.blocks[0].align==0&&t.blocks[1].align==1&&t.blocks[2].align==2&&t.blocks[3].align==0);
+    html_text_free(&t);
+    t = parse("<style>#one p.x{text-align:right}.x{text-align:center}</style>"
+              "<div id='one'><p class='x' style='text-align:left'>inline</p><p class='x'>scoped</p></div><p class='x'>outside</p>",
+              "inline\nscoped\noutside");
+    assert(t.blocks[0].align==0&&t.blocks[1].align==2&&t.blocks[2].align==1);html_text_free(&t);
+    const char *scoped_oom="<style>.js p{text-align:right}</style><p>body</p>";
+    html_test_fail_after=0;assert(html_to_blocks(scoped_oom,strlen(scoped_oom),&t)==ESP_ERR_NO_MEM);
+    assert(!t.utf8&&!t.count&&!t.blocks);html_test_fail_after=-1;
     const char* external = ".center{text-align:center}";
     assert(html_to_blocks_with_css("<p class='center'>甲</p>", strlen("<p class='center'>甲</p>"),
                                     external, strlen(external), &t) == ESP_OK);

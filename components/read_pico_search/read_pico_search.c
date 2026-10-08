@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "search_table.h"
+#include "search_candidates.h"
 
 static unsigned char lower(unsigned char c) {
     return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
@@ -133,16 +134,6 @@ bool read_pico_search_match(const char* filename, const char* query) {
     return false;
 }
 
-static bool reading_is(uint32_t cp, const char* syllable) {
-    int group = lookup(cp);
-    if (group < 0) return false;
-    for (unsigned i = search_group_offsets[group]; i < search_group_offsets[group + 1]; ++i) {
-        const char* candidate = search_syllables + search_syllable_offsets[search_readings[i]];
-        if (!strcmp(candidate, syllable)) return true;
-    }
-    return false;
-}
-
 size_t read_pico_search_candidates(const char* syllable, uint32_t* out, size_t cap, size_t skip) {
     if (!syllable || !out || !cap) return 0;
     char normalized[9];
@@ -154,31 +145,23 @@ size_t read_pico_search_candidates(const char* syllable, uint32_t* out, size_t c
         normalized[i] = c;
     }
     normalized[n] = 0;
-    static const char common[] =
-        "的一是不了人我在有他这中大来上国个到说们为子和你地出道也时年得就那要下以生会自着去之过家学对可她里后小心多天而能好都然没日于起还发成只如事把无明看本面知现所同手时方女新前想最太见被高用开么将行长身三间加由其从两情进已又些点样意力第话走实定才爱亲当问比很世书水名作每海边信安静远山慢读清晨章客花月风雨空云春夏秋冬你我他她它孩文字篇页故事";
-    size_t filled = 0, seen = 0, at = 0, length = sizeof(common) - 1;
-    while (at < length) {
-        size_t start = at;
-        uint32_t cp;
-        if (!utf8(common, length, &at, &cp)) break;
-        char encoded[4] = {(char)(0xe0 | (cp >> 12)),
-                           (char)(0x80 | ((cp >> 6) & 63)), (char)(0x80 | (cp & 63)), 0};
-        if (strstr(common, encoded) != common + start) continue;
-        if (!reading_is(cp, normalized)) continue;
-        if (seen++ < skip) continue;
-        out[filled++] = cp;
-        if (filled == cap) return filled;
+    size_t low = 0, high = sizeof(search_syllable_offsets) / sizeof(search_syllable_offsets[0]);
+    while (low < high) {
+        size_t mid = low + (high - low) / 2;
+        int order = strcmp(search_syllables + search_syllable_offsets[mid], normalized);
+        if (order < 0) low = mid + 1; else high = mid;
     }
-    const size_t count = sizeof(search_codepoints) / sizeof(search_codepoints[0]);
-    for (size_t i = 0; i < count; ++i) {
-        uint32_t cp = search_codepoints[i];
-        if (cp < 0x4e00 || cp > 0x9fff || !reading_is(cp, normalized)) continue;
-        char encoded[4] = {(char)(0xe0 | (cp >> 12)),
-                           (char)(0x80 | ((cp >> 6) & 63)), (char)(0x80 | (cp & 63)), 0};
-        if (strstr(common, encoded)) continue;
-        if (seen++ < skip) continue;
-        out[filled++] = cp;
-        if (filled == cap) return filled;
-    }
-    return filled;
+    if (low >= sizeof(search_syllable_offsets) / sizeof(search_syllable_offsets[0]) ||
+        strcmp(search_syllables + search_syllable_offsets[low], normalized)) return 0;
+    // 直接定位读音区间，候选翻页不再扫描整张字表。/ Locate the reading range without scanning the character table per page.
+    size_t begin = ime_character_offsets[low], count = ime_character_offsets[low + 1] - begin;
+    if (skip >= count) return 0;
+    count -= skip; if (count > cap) count = cap;
+    for (size_t i = 0; i < count; ++i) out[i] = ime_characters[begin + skip + i];
+    return count;
+}
+
+const char *read_pico_search_syllable(size_t index) {
+    return index < sizeof(search_syllable_offsets) / sizeof(search_syllable_offsets[0])
+        ? search_syllables + search_syllable_offsets[index] : NULL;
 }

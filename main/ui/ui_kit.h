@@ -121,6 +121,13 @@ void ui_text_fixed(
     enum EpdFontFlags align, bool inverted
 );
 int ui_text_fixed_width_px(int px, const char* text);
+/// 按完整输入内容确定字体；子串的测量与绘制不因缺字滚出视口而切换字体。
+/// Resolve the face from complete input text, keeping substring metrics/painting stable as missing glyphs scroll away.
+int ui_text_fixed_context_width_px(int px, const char* text, const char* font_sample);
+void ui_text_fixed_context_vc(
+    uint8_t* framebuffer, int x, int center_y, int px, const char* text,
+    const char* font_sample, enum EpdFontFlags align, bool inverted
+);
 /// 按固定字号和实际字形范围居中，不受系统字号缩放影响。
 /// Center fixed-size text by its ink extents, independently of system scaling.
 void ui_text_fixed_vc(

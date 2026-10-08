@@ -70,6 +70,7 @@
         ["Confirm Installation", "确认安装"],
         ["Installation complete!", "安装完成！"],
         ["Installation failed", "安装失败"],
+        ["Failed to initialize. Try resetting your device or holding the BOOT button while clicking INSTALL.", "未连接到刷写模式，尚未开始写入。请关闭此窗口，在 Pico 上打开「设置 → 升级和恢复 → BOOT 刷机」，点击「进入 BOOT 模式」，再重新连接安装。"],
         ["Preparing installation", "正在准备安装"],
         ["Erasing device...", "正在擦除设备…"],
         ["Device erased", "设备已擦除"],
@@ -108,16 +109,19 @@
       function translateText(node) {
         const raw = node.nodeValue;
         if (!raw) return;
-        // 只去前导空白：lit 在文本前留缩进，而片段尾部的空格是拼接的一部分，
-        // 用 trim 会把它去掉，整句片段就再也匹配不上。
-        // Strip leading whitespace only: lit leaves indentation in front, while a fragment's
-        // trailing space is part of how the fragments join. Trimming it would stop the sentence
-        // fragments from matching at all.
+        // 先保留片段尾部的拼接空格；未匹配时再忽略模板尾部的缩进，兼容按钮和错误提示。
+        // Preserve fragment join spaces first, then ignore trailing template indentation for
+        // buttons and error messages when the first exact match fails.
         const key = raw.replace(/^\s+/, "");
         if (!key.trim()) return;
         let next = raw;
-        const exact = EXACT.get(key);
-        if (exact !== undefined) next = raw.replace(key, exact);
+        let matched = key;
+        let exact = EXACT.get(matched);
+        if (exact === undefined) {
+          matched = key.trimEnd();
+          exact = EXACT.get(matched);
+        }
+        if (exact !== undefined) next = raw.replace(matched, exact);
         else {
           let done = false;
           for (const [from, to] of PREFIX) {
@@ -368,15 +372,24 @@
       <p>升级到 rc79 后，也可在系统升级页连接 WiFi，检查并安装官网后续更新。在线更新需要官网发布新版清单；升级期间请保持供电。</p>
     </section>
     <section class="release" aria-labelledby="release-title">
-      <div class="eyebrow">0.3.3-rc85 · 阅读翻页与兼容优化</div><h2 id="release-title">这次更新了什么</h2>
+      <div class="eyebrow">0.3.3-rc86 · 输入法与阅读兼容优化</div><h2 id="release-title">这次更新了什么</h2>
       <ul>
-        <li>文字翻页优化：普通与全屏阅读减少重复擦白和新字等待；图片与图文混排保留原灰阶刷新。</li>
-        <li>EPUB 图文兼容：改善 SVG 包装图片、较长 JPEG 头部的识别，缺失插图记录时正文继续显示。</li>
-        <li>蓝牙扫描隐藏没有广播名称的设备；后续收到设备名称时正常显示。</li>
-        <li>翻页器适配，保留自定义映射优先。</li>
+        <li>全新输入法：九宫格拼音、全键盘中英文与大小写、独立数字和符号页面。</li>
+        <li>连续拼音与联想：488 个离线常用词组，同音字持续翻页，九宫格可切换读音。</li>
+        <li>输入光标：支持点选位置、中途插入与删除，长文字自动跟随光标滚动。</li>
+        <li>按键反馈与长按删除：按下加深、松手恢复；长按删除连续退格，移开即停止。</li>
+        <li>打字更流畅：保持局部快刷，暂停后仅整理联想词栏，减轻连续换词残影。</li>
+        <li>内建黑体补齐常用汉字；WiFi 与热点传书网页可设置状态栏签名。</li>
+        <li>修复部分 EPUB 兼容性，优化图片缩放和图文混排；完善网页刷机中文提示。</li>
       </ul>
-      <p>体验文字翻页优化：在“阅读设置 → 翻页效果”选择“默认效果”。水波纹、周期全刷与手动全刷继续可用。</p>
-      <p>rc84 及以后的固件，在“检查更新”发现新版本后会显示简短更新日志与“稍后 / 开始更新”按钮。</p>
+      <p>rc84 及以后的固件，在“检查更新”发现新版本后会显示简短更新日志与“稍后 / 开始更新”按钮。已有配置、阅读数据和 TF 卡内容继续保留。</p>
+      <details><summary>上一版 rc85 的更新</summary>
+      <ul>
+        <li>优化普通与全屏阅读的文字翻页，减少重复擦白和等待。</li>
+        <li>修复部分 EPUB 插图兼容，保留水波纹、周期及手动全刷。</li>
+        <li>蓝牙扫描隐藏无名设备，增加翻页器适配。</li>
+      </ul>
+      </details>
       <details><summary>上一版 rc84 的更新</summary>
 
       <ul>
@@ -431,7 +444,7 @@
         <li>统一采用 PMU 软件油量表与有效位，状态栏和资料卡电量取整保持一致。</li>
       </ul>
       </details>
-      <p>rc79 及以后版本可在“设置 → 升级和恢复 → 系统升级”检查联网更新到 rc85。在线刷机、TF 升级 Bin 和联网 OTA 来自同一次编译，保留已有设置与阅读数据。</p>
+      <p>rc79 及以后版本可在“设置 → 升级和恢复 → 系统升级”检查联网更新到 rc86。在线刷机、TF 升级 Bin 和联网 OTA 来自同一次编译，保留已有设置与阅读数据。</p>
       <img src="./weread-preview.png" alt="微读跨页选择与逐本下载界面" style="display:block;width:100%;height:auto;margin-top:24px;border-radius:16px;">
     </section>
     <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点、USB 或微读传书导入书籍和文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>

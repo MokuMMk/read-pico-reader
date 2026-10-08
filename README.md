@@ -6,9 +6,13 @@ An independent, open-source reading firmware for the **MindReset Read Pico (RDP-
 
 The current interface has Home, Bookshelf, Files, and Settings. It reads EPUB and TXT books from a TF card, remembers reading progress, and supports Wi-Fi, hotspot, or USB file transfer. The online flasher installs the same firmware image as the local `flash/` bundle.
 
-## Current release: rc85
+## Current release: rc86
 
-Improved text-only page turns in normal and full-screen reading, EPUB image compatibility, named-device Bluetooth scanning and Bluetooth pager compatibility. Choose **Reading settings → Page-turn effect → Default effect** to try the text-turn optimization. Water turns and periodic/manual cleanup remain available. See the [changelog](docs/CHANGELOG.md).
+A shared keyboard adds continuous Pinyin, offline phrases, steady carets, press feedback and held backspace. Candidate-strip settling reduces ghosting while typing retains fast local updates. This release also improves EPUB compatibility and lets AP/STA web transfer save the status signature. USB, TF and online updates share the release, with short notes on the device. See the [changelog](docs/CHANGELOG.md).
+
+## Keyboard
+
+Rename, profile name, status signature, shelf search and WiFi password fields share one keyboard. T9 inputs Chinese Pinyin only; QWERTY supports Chinese/English and case switching. Digits are entered from the numeric panel only. Continuous Pinyin uses 488 offline common phrases, pageable homophones and continuations; select a candidate before saving. Tap text or caret arrows to insert and delete in the middle. Holding backspace for half a second repeats deletion, removing pending Pinyin before text at the caret; release or move away to stop. Ordinary input/deletion refreshes changed regions only. After six candidate-strip changes, a 700 ms touch-free pause triggers one local grayscale settle; typing, held deletion and layout switches defer or cancel it. Keys darken/inset on press and restore on release. T9 More cycles through readings; homophones remain available across batches. The embedded black face covers all 6,763 GB2312 Han characters without a TF font package. WiFi passwords use ASCII QWERTY, digits and symbols. Both AP and STA web transfer pages can save or clear the persistent status signature (up to 95 UTF-8 bytes). These features are included in the rc86 release.
 
 ## Online installation
 

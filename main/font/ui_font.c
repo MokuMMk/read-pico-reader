@@ -2,10 +2,11 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 中文：内建 Noto Sans SC 子集与独立的 PSRAM 位图缓存。未知字交给阅读字体回退。
- * English: Built-in Noto Sans SC subset with its own PSRAM bitmap cache; unknown glyphs fall back to the reading font.
+ * 中文：内建 Noto Sans SC 子集与独立的 PSRAM 位图缓存。常用汉字以分块压缩位图补齐，其他未知字交给阅读字体回退。
+ * English: Built-in Noto Sans SC subset with its own PSRAM bitmap cache; block-compressed common Han glyphs, with other unknown glyphs falling back to the reader face.
  */
 #include "ui_font.h"
+#include "ui_hanzi.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -77,7 +78,10 @@ static uint32_t next_cp(const char **p) {
 
 bool ui_font_has_text(const char *text) {
     if (!text || !ready()) return false;
-    while (*text) if (!stbtt_FindGlyphIndex(&s_font, (int)next_cp(&text))) return false;
+    while (*text) {
+        uint32_t cp = next_cp(&text);
+        if (!stbtt_FindGlyphIndex(&s_font, (int)cp) && !ui_hanzi_has(cp)) return false;
+    }
     return true;
 }
 
@@ -96,7 +100,12 @@ void ui_font_measure_line_px(int px, const char *text, int *above, int *below) {
         float scale = scale_for(px);
         while (*text) {
             int x0, y0, x1, y1;
-            stbtt_GetCodepointBitmapBox(&s_font, (int)next_cp(&text), scale, scale, &x0, &y0, &x1, &y1);
+            uint32_t cp = next_cp(&text); uint8_t extra[UI_HANZI_RECORD];
+            if (!stbtt_FindGlyphIndex(&s_font, (int)cp) && ui_hanzi_get(cp, extra)) {
+                y0 = (int)floorf((int8_t)extra[1] * (float)clamp_px(px) / UI_HANZI_BASE_PX);
+                y1 = y0 + (extra[3] * clamp_px(px) + UI_HANZI_BASE_PX - 1) / UI_HANZI_BASE_PX;
+                x0 = 0; x1 = 1;
+            } else stbtt_GetCodepointBitmapBox(&s_font, (int)cp, scale, scale, &x0, &y0, &x1, &y1);
             if (x1 <= x0 || y1 <= y0) continue;
             if (-y0 > top) top = -y0;
             if (y1 > bottom) bottom = y1;
@@ -132,9 +141,19 @@ static ui_glyph_t *glyph(uint32_t cp, int px) {
     stbtt_GetCodepointHMetrics(&s_font, (int)cp, &advance, &left);
     int x0, y0, x1, y1;
     stbtt_GetCodepointBitmapBox(&s_font, (int)cp, scale, scale, &x0, &y0, &x1, &y1);
+    uint8_t extra[UI_HANZI_RECORD];
+    bool supplemental = !stbtt_FindGlyphIndex(&s_font, (int)cp) && ui_hanzi_get(cp, extra);
+    int fallback_advance = 0;
+    if (supplemental) {
+        x0 = (int)floorf((int8_t)extra[0] * (float)px / UI_HANZI_BASE_PX);
+        y0 = (int)floorf((int8_t)extra[1] * (float)px / UI_HANZI_BASE_PX);
+        x1 = x0 + (extra[2] * px + UI_HANZI_BASE_PX - 1) / UI_HANZI_BASE_PX;
+        y1 = y0 + (extra[3] * px + UI_HANZI_BASE_PX - 1) / UI_HANZI_BASE_PX;
+        fallback_advance = (extra[4] * px + UI_HANZI_BASE_PX / 2) / UI_HANZI_BASE_PX;
+    }
     *g = (ui_glyph_t){.cp = cp, .px = px, .age = ++s_age, .used = true,
         .x0 = x0, .y0 = y0, .width = x1 - x0, .height = y1 - y0,
-        .advance = (int16_t)lroundf(advance * scale)};
+        .advance = (int16_t)(supplemental ? fallback_advance : lroundf(advance * scale))};
     if (g->width <= 0 || g->height <= 0) return g;
     g->bytes = (size_t)g->width * g->height;
     while (s_bytes + g->bytes > UI_GLYPH_LIMIT) {
@@ -146,8 +165,13 @@ static ui_glyph_t *glyph(uint32_t cp, int px) {
     }
     g->bitmap = heap_caps_malloc(g->bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (g->bitmap) {
-        stbtt_MakeCodepointBitmap(&s_font, g->bitmap, g->width, g->height, g->width,
-                                  scale, scale, (int)cp);
+        if (supplemental) for (int y = 0; y < g->height; ++y) for (int x = 0; x < g->width; ++x) {
+            int sx = x * extra[2] / g->width, sy = y * extra[3] / g->height;
+            unsigned bit = (unsigned)sy * UI_HANZI_BASE_PX + sx;
+            g->bitmap[y * g->width + x] = extra[5 + bit / 8] & (1u << (bit & 7)) ? 255 : 0;
+        }
+        else stbtt_MakeCodepointBitmap(&s_font, g->bitmap, g->width, g->height, g->width,
+                                      scale, scale, (int)cp);
         s_bytes += g->bytes;
     } else g->bytes = 0;
     return g;

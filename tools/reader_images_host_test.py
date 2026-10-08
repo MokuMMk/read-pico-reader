@@ -62,11 +62,19 @@ static int reading_image;
 static EpdRect body={40,20,100,200};
 static struct {int image,y,width,height;} slots[40];
 static int slot_count;
+static int whole_image=-1;
+typedef struct {size_t chapter;char **images;size_t count;} reader_dims_ctx_t;
+static reader_dims_ctx_t s_reader_dims_ctx;
+static bool (*dims_fn)(void*,int,int*,int*);
+static void *dims_ctx;
+static size_t measured_chapter;
 static uint32_t generation=1;
 static bool app_settings_reader_hide_images(void){return hidden;}
 static EpdRect body_rect(void){return body;}
 static uint32_t book_layout_generation(void){return generation;}
 static int book_layout_page_image_count(size_t page){return page==s_page?slot_count:0;}
+static int book_layout_page_image(size_t page){return page==s_page?whole_image:-1;}
+static void book_layout_set_image_dims(bool (*fn)(void*,int,int*,int*),void *ctx){dims_fn=fn;dims_ctx=ctx;}
 static bool book_layout_page_image_at(size_t page,int i,int *image,int *y,int *w,int *h){
  if(page!=s_page||i<0||i>=slot_count)return false;
  if(image)*image=slots[i].image;if(y)*y=slots[i].y;if(w)*w=slots[i].width;if(h)*h=slots[i].height;return true;
@@ -80,7 +88,7 @@ static void fit_text(char *out,int px,int max){(void)px;if(max<40)out[0]=0;}
 static const char *esp_err_to_name(int err){(void)err;return "error";}
 static void vTaskDelay(unsigned ticks){(void)ticks;}
 static esp_err_t book_chapter_image(size_t chapter,const char *path,uint8_t **out,size_t *size,bool *png){
- assert(!locked&&chapter==s_chapter&&path);++reads;reading_image=atoi(path);
+ assert(path);if(locked)measured_chapter=chapter;else assert(chapter==s_chapter);++reads;reading_image=atoi(path);
  if(reading_image==read_failure)return ESP_FAIL;
  *out=malloc(1);assert(*out);*size=1;*png=false;return ESP_OK;
 }
@@ -112,9 +120,6 @@ static void unlock_draw(void){assert(locked);locked=false;}
 static int book_kind(void){return 0;}
 static const char *ttf_font_path(void){return "font";}
 static esp_err_t book_chapter_title(size_t chapter,char *out,size_t cap){snprintf(out,cap,"chapter%zu",chapter);return ESP_OK;}
-static esp_err_t book_chapter_image_dimensions(size_t chapter,const char *path,unsigned *w,unsigned *h){
- (void)chapter;assert(!locked&&path);*w=60;*h=20;return ESP_OK;
-}
 void html_text_free(html_text_t *text){
  free(text->utf8);free(text->blocks);for(size_t i=0;i<text->image_count;++i)free(text->images[i]);free(text->images);memset(text,0,sizeof(*text));
 }
@@ -127,6 +132,7 @@ static esp_err_t book_chapter_load_blocks_target(size_t chapter,const char *anch
 static void book_layout_set_chapter_lead(size_t skip,unsigned height){(void)skip;(void)height;}
 static bool book_layout_build_blocks(const char *text,size_t len,const blk_t *blocks,size_t count,EpdRect r,int px){
  (void)text;(void)len;(void)blocks;(void)count;(void)r;(void)px;assert(locked);++reflows;++generation;
+ if(dims_fn){int w=0,h=0;assert(dims_fn(dims_ctx,0,&w,&h)&&w==60&&h==20);}
  if(reflow_failures){--reflow_failures;return false;}return true;
 }
 static size_t book_layout_page_count(void){return 2;}
@@ -135,16 +141,17 @@ static void release_page_images(void);
 static void free_book(void){
  release_page_images();free(s_text);free(s_blocks);for(size_t i=0;i<s_image_count;++i)free(s_images[i]);free(s_images);
  s_text=NULL;s_blocks=NULL;s_images=NULL;s_image_count=0;
+ book_layout_set_image_dims(NULL,NULL);s_reader_dims_ctx=(reader_dims_ctx_t){0};
 }
 '''
-for name in ('inline_ink_gray', 'release_page_images', 'prepare_inline_image', 'draw_reader_images', 'load_chapter_at'):
+for name in ('inline_ink_gray', 'reader_image_slots', 'reader_image_slot', 'reader_image_dims', 'release_page_images', 'prepare_inline_image', 'draw_reader_images', 'load_chapter_at'):
     unit += '\n' + function(name)
 unit += r'''
 static void setup_images(int count){
  release_page_images();for(size_t i=0;i<s_image_count;++i)free(s_images[i]);free(s_images);
  s_images=calloc((size_t)count,sizeof(char*));s_image_count=(size_t)count;slot_count=count;
  for(int i=0;i<count;++i){char path[16];snprintf(path,sizeof(path),"%d",i);s_images[i]=strdup(path);slots[i].image=i;slots[i].y=i*12;slots[i].width=20;slots[i].height=10;}
- ++generation;alloc_fail_after=-1;hidden=false;read_failure=decode_failure=-1;reads=decodes=pixels=notices=0;
+ ++generation;alloc_fail_after=-1;hidden=false;read_failure=decode_failure=-1;reads=decodes=pixels=notices=0;whole_image=-1;
 }
 int main(void){
  uint8_t fb=0;
@@ -160,6 +167,10 @@ int main(void){
  // Unknown-size slots still decode proportionally in grayscale; failures stay in their own slots.
  setup_images(1);slots[0].width=100;slots[0].height=200;
  prepare_inline_image();assert(s_page_images[0].width==60&&s_page_images[0].height==20);
+ draw_reader_images(&fb,s_page,body);assert(pixels==1200);
+ // PR9 整页回退没有混排记录，调用侧仍须显示图片。/ PR9's full-page fallback has no inline record but must still draw.
+ setup_images(1);slot_count=0;whole_image=0;prepare_inline_image();
+ assert(s_page_image_count==1&&s_page_images[0].gray&&reads==1);
  draw_reader_images(&fb,s_page,body);assert(pixels==1200);
  setup_images(3);for(int i=0;i<3;++i){slots[i].width=100;slots[i].height=40;slots[i].y=i*50;}
  read_failure=0;decode_failure=1;prepare_inline_image();draw_reader_images(&fb,s_page,body);
@@ -178,14 +189,18 @@ int main(void){
  s_blocks[0]=(blk_t){.offset=0,.len=3,.image=-1};s_blocks[1]=(blk_t){.offset=4,.len=3,.image=0};
  s_chapter=3;s_page=1;s_selected_toc=2;s_chapter_lead_skip=2;s_chapter_lead_height=12;
  strcpy(s_chapter_heading_title,"old title");char *old_text=s_text;char **old_images=s_images;app_ctx_t ctx={0};
+ s_reader_dims_ctx=(reader_dims_ctx_t){s_chapter,s_images,s_image_count};book_layout_set_image_dims(reader_image_dims,&s_reader_dims_ctx);
  load_error=1;assert(!load_chapter_at(&ctx,4,0,false,NULL,SIZE_MAX));
  assert(s_text==old_text&&s_images==old_images&&s_chapter==3&&s_page==1&&s_selected_toc==2&&!locked);
  load_error=0;reflow_failures=1;assert(!load_chapter_at(&ctx,4,0,false,NULL,SIZE_MAX));
  assert(reflows==2&&s_text==old_text&&s_images==old_images&&s_chapter==3&&s_page==1&&s_selected_toc==2&&!locked);
  assert(s_chapter_lead_skip==2&&s_chapter_lead_height==12&&!strcmp(s_chapter_heading_title,"old title"));
+ assert(measured_chapter==3&&s_reader_dims_ctx.images==old_images);
  assert(load_chapter_at(&ctx,4,0,false,NULL,SIZE_MAX));
  assert(s_chapter==4&&!strcmp(s_text,"new\nIMG")&&s_page==0&&s_selected_toc==SIZE_MAX&&!locked);
+ assert(measured_chapter==4&&s_reader_dims_ctx.images==s_images);
  reflow_failures=2;assert(!load_chapter_at(&ctx,5,0,false,NULL,SIZE_MAX));assert(!s_text&&s_view==SHELF&&!locked);
+ assert(!dims_fn&&!s_reader_dims_ctx.images);
  free_book();release_page_images();
  puts("PASS: >8 images, layout cache generation, grayscale bounds, partial decode/OOM, fallback aspect fit and chapter rollback");
 }
