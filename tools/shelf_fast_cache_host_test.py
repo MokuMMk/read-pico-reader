@@ -51,21 +51,28 @@ static int s_view=SHELF,rows=9,contrast=100,phase_shift;
 static bool fast=true,alloc_fail;
 static size_t free_psram=4*1024*1024,allocated_bytes;
 static unsigned allocations,s_cover_pending_mask;
-static struct {int index;uint8_t *gray,*fast_bits;uint8_t fast_contrast,fast_phase;} s_covers[BOOK_ROWS];
+static struct {int index;uint8_t *gray,*fast_bits;uint8_t fast_contrast,fast_phase;bool fast_white_edge;} s_covers[BOOK_ROWS];
 static int shelf_rows(void){return rows;}
 static bool app_settings_main_fast_refresh(void){return fast;}
 static uint8_t app_settings_system_contrast(void){return contrast;}
+static struct {void *ptr;size_t bytes;} live[40];
+static void* remember(void *ptr,size_t bytes){if(!ptr)return NULL;for(int i=0;i<40;++i)if(!live[i].ptr){live[i].ptr=ptr;live[i].bytes=bytes;allocated_bytes+=bytes;return ptr;}assert(0);return NULL;}
+static void tracked_free(void *ptr){if(!ptr)return;for(int i=0;i<40;++i)if(live[i].ptr==ptr){allocated_bytes-=live[i].bytes;live[i].ptr=NULL;free(ptr);return;}assert(0);}
+#define free tracked_free
+static uint8_t source_pixel(int row,int p){return (uint8_t)(p*19+row*31);}
+static void seed_gray(int row){assert(!s_covers[row].gray);s_covers[row].gray=remember(malloc(176*240),176*240);for(int p=0;p<176*240;++p)s_covers[row].gray[p]=source_pixel(row,p);}
 static size_t heap_caps_get_free_size(unsigned caps){assert(caps==3);return free_psram;}
 static void* heap_caps_calloc(size_t count,size_t bytes,unsigned caps){
     assert(caps==3 && count==1 && bytes==4494);++allocations;
     if(alloc_fail)return NULL;
-    allocated_bytes+=bytes;return calloc(count,bytes);
+    return remember(calloc(count,bytes),bytes);
 }
 static EpdRect row_rect(int row){return (EpdRect){36+(row%3)*210+phase_shift,224+(row/3)*282,192,260};}
 '''
 unit += function('ui_contrast_gray', ROOT / 'main/ui/ui_kit.c') + '\n'
 unit += function('book_cover_crop', ROOT / 'main/book/book_cover.c') + '\n'
-for name in ('invalidate_covers', 'release_fast_covers', 'fast_cover_matches', 'prepare_fast_covers'):
+unit += function('cover_favorite_needs_white_edge', book) + '\n'
+for name in ('invalidate_covers', 'release_fast_covers', 'fast_cover_matches', 'prepare_fast_covers', 'app_book_cover_mode_changed'):
     unit += function(name, book) + '\n'
 unit += r'''
 typedef struct {int leaf;} app_ctx_t;
@@ -92,38 +99,47 @@ static void verify_bitmap(int row) {
     for(int y=0;y<214;++y)for(int x=0;x<164;++x) {
         unsigned sx=crop.x+(uint64_t)(unsigned)x*crop.width/164;
         unsigned sy=crop.y+(uint64_t)(unsigned)y*crop.height/214;
-        uint8_t tone=(ui_contrast_gray(s_covers[row].gray[sy*176+sx])>>4)*17u;
+        uint8_t tone=(ui_contrast_gray(source_pixel(row,sy*176+sx))>>4)*17u;
         int expected=ui_image_dither_cover_bw(tone,image_x+x,image_y+y)!=0;
         assert(!!(s_covers[row].fast_bits[y*21+x/8]&(1u<<(x&7)))==expected);
     }
     assert(fast_cover_matches(row,(EpdRect){image_x,image_y-16,164,214}));
 }
 int main(void) {
-    for(int i=0;i<BOOK_ROWS;++i) {
-        s_covers[i].index=i;s_covers[i].gray=malloc(176*240);assert(s_covers[i].gray);
-        for(int p=0;p<176*240;++p)s_covers[i].gray[p]=(uint8_t)(p*19+i*31);
-    }
+    for(int i=0;i<BOOK_ROWS;++i) {s_covers[i].index=i;seed_gray(i);}
     rows=13;prepare_fast_covers();
     assert(allocations==9 && allocated_bytes==40446);
     for(int row=0;row<9;++row)verify_bitmap(row);
+    for(int row=0;row<13;++row)assert(!s_covers[row].gray);
     for(int row=9;row<13;++row)assert(!s_covers[row].fast_bits);
     unsigned before=allocations;
     for(int i=0;i<80;++i)prepare_fast_covers();
-    assert(allocations==before);
-    contrast=200;prepare_fast_covers();assert(allocations==before+9);
+    assert(allocations==before && allocated_bytes==40446);
+    // 原灰阶已经释放，修改对比度/位置的真实准备流程会重新提供解码缓冲。
+    // Gray has been released; re-preparation supplies decoding buffers for changed contrast/position.
+    contrast=200;for(int i=0;i<9;++i)seed_gray(i);prepare_fast_covers();assert(allocations==before+9);
+    for(int row=0;row<9;++row){verify_bitmap(row);assert(!s_covers[row].gray);}
+    phase_shift=1;before=allocations;for(int i=0;i<9;++i)seed_gray(i);prepare_fast_covers();assert(allocations==before+9);
     for(int row=0;row<9;++row)verify_bitmap(row);
-    phase_shift=1;before=allocations;prepare_fast_covers();assert(allocations==before+9);
-    for(int row=0;row<9;++row)verify_bitmap(row);
-    free_psram=512*1024;prepare_fast_covers();
-    for(int row=0;row<13;++row)assert(!s_covers[row].fast_bits && s_covers[row].gray);
-    free_psram=4*1024*1024;alloc_fail=true;prepare_fast_covers();
-    for(int row=0;row<13;++row)assert(!s_covers[row].fast_bits && s_covers[row].gray);
-    alloc_fail=false;rows=9;prepare_fast_covers();
-    fast=false;prepare_fast_covers();
+    // 有效黑白不会因内存减少被丢弃；灰阶释放后仍保持同一份热缓存。
+    // Memory pressure does not evict already valid packed artwork.
+    free_psram=1;prepare_fast_covers();assert(allocated_bytes==40446);
+    app_book_cover_mode_changed();assert(!allocated_bytes);
+    for(int i=0;i<9;++i)seed_gray(i);prepare_fast_covers();
+    for(int row=0;row<13;++row)assert(!s_covers[row].fast_bits && !s_covers[row].gray);
+    assert(!allocated_bytes);
+    free_psram=4*1024*1024;alloc_fail=true;for(int i=0;i<9;++i)seed_gray(i);prepare_fast_covers();
+    for(int row=0;row<13;++row)assert(!s_covers[row].fast_bits && !s_covers[row].gray);
+    assert(!allocated_bytes);
+    alloc_fail=false;rows=9;for(int i=0;i<9;++i)seed_gray(i);prepare_fast_covers();
+    fast=false;prepare_fast_covers();assert(!allocated_bytes);
+    // 普通/水波纹只保留灰阶；模式变化释放，快刷再按需生成。
+    // Ordinary/ripple retain gray only; mode changes release the obsolete representation.
+    for(int i=0;i<9;++i)seed_gray(i);prepare_fast_covers();assert(allocated_bytes==9u*176*240);
     for(int row=0;row<13;++row)assert(!s_covers[row].fast_bits);
-    fast=true;prepare_fast_covers();s_view=MANAGE;prepare_fast_covers();
-    for(int row=0;row<13;++row)assert(!s_covers[row].fast_bits);
-    s_view=SHELF;prepare_fast_covers();invalidate_covers();
+    app_book_cover_mode_changed();assert(!allocated_bytes);
+    fast=true;for(int i=0;i<9;++i)seed_gray(i);prepare_fast_covers();s_view=MANAGE;prepare_fast_covers();assert(!allocated_bytes);
+    s_view=SHELF;for(int i=0;i<9;++i)seed_gray(i);prepare_fast_covers();invalidate_covers();assert(!allocated_bytes);
     for(int row=0;row<13;++row)assert(!s_covers[row].gray && !s_covers[row].fast_bits && s_covers[row].index==-1);
     // 快刷封面白底纯白，黑区少量白点；字形与收藏在缓存之外绘制。
     // Pure white cover backgrounds remain white, while solid blacks contain sparse white dots; glyphs and favorites are outside the cache.
@@ -143,7 +159,7 @@ int main(void) {
     refresh_cached_progress(&ctx);assert(sorts==2);
     added=true;s_recent_sort=false;refresh_cached_progress(&ctx);assert(sorts==3);
     added=false;last_valid=false;refresh_cached_progress(&ctx);assert(sorts==3);
-    puts("shelf fast cache: 40,446-byte PSRAM bound; 80 hot reuses without allocation; exact cover pixels, contrast/phase invalidation, low-memory/OOM fallback, reader/media release and unchanged-progress sort avoidance passed");
+    puts("shelf fast cache: 40,446-byte PSRAM bound; 80 hot reuses without allocation; exact cover pixels, contrast/phase invalidation, mutually exclusive gray/BW ownership, immediate gray release, low-memory/OOM fallback, reader/media release and unchanged-progress sort avoidance passed");
 }
 '''
 with tempfile.TemporaryDirectory(dir=ROOT / 'build') as directory:

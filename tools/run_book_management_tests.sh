@@ -17,11 +17,19 @@ cc -std=gnu11 -Wall -Wextra -Werror -Itools/settings_backup_stubs \
     tools/book_history_backup_host_test.c -o build/book-tests/book-history-backup
 build/book-tests/book-history-backup
 python3 tools/book_ui_host_test.py
+python3 tools/reader_fullscreen_host_test.py
+python3 tools/lock_font_host_test.py
 python3 tools/shelf_fast_cache_host_test.py
+python3 tools/home_cover_cache_host_test.py
+cc -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -fsanitize=address,undefined -Itools/settings_backup_stubs -Imain \
+    tools/boot_state_host_test.c -o build/book-tests/boot-state
+python3 tools/boot_recovery_host_test.py
+build/book-tests/boot-state
 bash tools/run_text_input_host_tests.sh
 python3 tools/reader_images_host_test.py
 python3 tools/book_layout_draw_host_test.py
 python3 tools/ui_font_coverage_host_test.py
+python3 tools/ui_hanzi_host_test.py
 python3 tools/test_home_recent.py
 python3 tools/test_book_toc.py
 cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \

@@ -80,18 +80,17 @@ code+=r'''
 static void patterned(void){for(size_t i=0;i<BYTES;++i)frame[i]=(uint8_t)(i*13u+7u);memcpy(saved,frame,BYTES);}
 int main(void){
  for(rotation=0;rotation<4;++rotation){
-  for(int mono=0;mono<2;++mono){
-   patterned();int before=allocs;ui_quick_menu_draw(frame,true,false,mono);
+  for(int policy=0;policy<3;++policy){
+   patterned();int before=allocs;ui_quick_menu_draw(frame,true,false);
    assert(allocs==before&&!live);int grays=0;
    for(int y=0;y<epd_rotated_display_height();++y)for(int x=0;x<epd_rotated_display_width();++x){
     bool mask=y<UI_QUICK_HEIGHT&&layer_pixel(x,y,epd_rotated_display_width());
     uint8_t p=pixel(frame,x,y);
     if(!mask)assert(p==pixel(saved,x,y));
-    else if(mono)assert(p==0||p==255);
     else grays+=p!=0&&p!=255;
    }
-   if(!mono)assert(grays>1000);
-   memcpy(again,frame,BYTES);memcpy(frame,saved,BYTES);ui_quick_menu_draw(frame,true,false,mono);assert(!memcmp(frame,again,BYTES));
+   assert(grays>1000);
+   memcpy(again,frame,BYTES);memcpy(frame,saved,BYTES);ui_quick_menu_draw(frame,true,false);assert(!memcmp(frame,again,BYTES));
   }
   for(fast=false;;fast=true){
    patterned();ui_click_feedback_begin(frame);
@@ -145,7 +144,7 @@ int main(void){
  assert(intermediate>100);
  memset(han+5,0,sizeof(han)-5);for(int y=0;y<72;++y)for(int x=0;x<72;++x)assert(!ui_hanzi_coverage(han,72,72,x,y));
  memset(han+5,255,sizeof(han)-5);assert(ui_hanzi_coverage(han,39,39,19,19)==255);
- puts("PASS: actual quick layer uses no allocations, gray/BW modes and deterministic masks across four rotations; 12 navigation presses preserve gray backgrounds/labels/marker/neighbors in all modes; click cache <=4096 bytes restores exact pixels, ignores prefetch and tolerates OOM; Han scaling retains native bits and smooths enlarged edges");
+ puts("PASS: actual quick layer uses no allocations, grayscale in all three modes and deterministic masks across four rotations; 12 navigation presses preserve gray backgrounds/labels/marker/neighbors in all modes; click cache <=4096 bytes restores exact pixels, ignores prefetch and tolerates OOM; Han scaling retains native bits and smooths enlarged edges");
  return 0;
 }
 '''

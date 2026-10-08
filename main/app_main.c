@@ -2,6 +2,8 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
+ * 用户修订：硬件前建立持久化启动保护；深睡恢复入口先消费再开书，中断图书进入可操作恢复页。
+ * User revision: persist startup protection before hardware; consume deep-sleep checkpoints before opening books, and show an operable recovery page after interrupted opening.
  * 只做开机装配：拉起板级硬件、读设置、定 VCOM、放开机图、开字体；
  * 未标定则先拦住进设定页。然后把控制权交给 app_loop。
  *
@@ -10,9 +12,18 @@
  */
 
 #include <stdint.h>
+#include <string.h>
 #include <sys/time.h>
 
 #include "app_loop.h"
+#include "app_content_open.h"
+#include "boot_state.h"
+#include "book_store.h"
+#include "esp_system.h"
+#include "read_pico_sd.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <sys/stat.h>
 #include "app_registry.h"
 #include "display.h"
 #include "epd_highlevel.h"
@@ -33,6 +44,7 @@
 #include "vcom_setup.h"
 
 static const char* TAG = "read_pico";
+extern const app_desc_t app_boot_recovery;
 
 // 主机上电会丢失系统时间；PMU 在主机断电后继续走时。先取实时值再恢复，
 // 不使用启动时缓存的快照，以免将已经经过的开机耗时丢掉。
@@ -86,10 +98,15 @@ void app_main(void) {
     usb_storage_phy_init();
     REG_CLR_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
 
+    const esp_reset_reason_t reset = esp_reset_reason();
+    ESP_LOGI(TAG, "startup reset=%d stack=%u", (int)reset, (unsigned)uxTaskGetStackHighWaterMark(NULL));
+    app_settings_init();
+    pico_boot_init(reset == ESP_RST_PANIC || reset == ESP_RST_INT_WDT ||
+                   reset == ESP_RST_TASK_WDT || reset == ESP_RST_WDT);
+
     read_pico_handle_t hw;
     if (read_pico_init(&hw) != ESP_OK) return;
     if (hw.pmu_ready) restore_time_from_pmu();
-    app_settings_init();
     const bool vcom_ok = resolve_vcom_at_boot();
     pmu_selftest_bind(hw.sensor);
 
@@ -120,14 +137,37 @@ void app_main(void) {
     // Confirm a new slot only after hardware, display, touch, and required setup succeed.
     pico_ota_confirm_running();
 
+    const app_desc_t *first = app_home_page();
+    pico_resume_t resume;
+    if (pico_boot_take_resume(&resume)) {
+        if (!resume.reader) first = app_at(resume.tab);
+        else {
+            // 挂载等待有界；恢复入口已消费，无卡或资源失败不会反复自动开书。
+            // Bound mount waiting after consuming the checkpoint; absent media or failed resources cannot auto-open in a loop.
+            if (!strncmp(resume.path, "/sdcard/", 8)) {
+                read_pico_sd_info_t info;
+                for (unsigned wait = 0; wait < 150 && read_pico_sd_get_info(&info) == ESP_ERR_NOT_FINISHED; ++wait)
+                    vTaskDelay(pdMS_TO_TICKS(20));
+            }
+            if (!strncmp(resume.path, "/flash/books/", 13) && !book_store_flash_ready()) {
+                book_store_root_t roots[BOOK_STORE_ROOT_MAX]; int count;
+                (void)book_store_roots(roots, &count);
+            }
+            struct stat st;
+            if (!stat(resume.path, &st) && S_ISREG(st.st_mode) &&
+                app_book_request_resume(resume.path, resume.fullscreen)) first = app_at(1);
+        }
+    }
+    char interrupted[PICO_BOOT_PATH_MAX];
+    if (pico_boot_interrupted_book(interrupted, sizeof(interrupted))) first = &app_boot_recovery;
     app_loop_run(&(app_loop_config_t){
         .hl = &hl,
         .fb = framebuffer,
         .acc = hw.sensor,
         .tp = hw.touch,
         .sensor_ready = hw.sensor_ready,
-        // 正式固件始终进入产品首页；工厂自检不再进入用户导航。
-        // Production firmware always enters the product home; factory diagnostics stay outside user navigation.
-        .first_app = app_home_page(),
+        // 用户修订：深睡一次性恢复上次阅读或主页面；异常启动安全回首页。
+        // User revision: resume the last reader/main tab once after deep sleep; abnormal starts safely enter Home.
+        .first_app = first,
     });
 }

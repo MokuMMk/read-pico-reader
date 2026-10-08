@@ -6,6 +6,8 @@
  * 票面上下以裁纸缺口绘制，最近阅读的 EPUB 封面作为灰阶背景。
  * English: Build the ticket from persisted progress and measured reading data; omit daily data without a valid clock.
  * Scalloped paper edges sit over a grayscale wallpaper made from the latest EPUB cover.
+ * 用户修订：锁屏入口统一系统字体，截短测量须与实际界面字体及字号一致。
+ * User revision: lock entry selects the system face; truncation must measure the actual UI face and size.
  */
 #include "book_ticket.h"
 #include <stdio.h>
@@ -107,7 +109,7 @@ bool book_ticket_recent_days(uint32_t seconds[30]) {
     return true;
 }
 static void text_fit(char *text, int px, int width) {
-    while (*text && ttf_text_width_px(px, text) > width) {
+    while (*text && ui_text_fixed_width_px(ui_text_effective_px(px), text) > width) {
         size_t n = strlen(text) - 1;
         while (n && ((unsigned char)text[n] & 0xc0) == 0x80) --n;
         text[n] = 0;

@@ -18,6 +18,7 @@ static enum EpdRotation rotation = EPD_ROT_LANDSCAPE;
 static bool painted_ttf;
 bool ttf_font_is_builtin(void) { return false; }
 static int painted_baseline;
+static int painted_px;
 static int characters(const char *s) {
     int n = 0;
     for (; *s; ++s) if (((unsigned char)*s & 0xc0) != 0x80) ++n;
@@ -28,6 +29,7 @@ bool ui_font_has_text(const char *text) {
     return true;
 }
 int ui_font_text_width_px(int px, const char *text) { return characters(text) * px / 2; }
+int ui_font_title_px(int px, const char *text) { return strchr(text, 'Z') ? 24 : px; }
 int ttf_text_width_px(int px, const char *text) { return characters(text) * px * 3 / 4; }
 void ui_font_measure_line_px(int px, const char *text, int *above, int *below) {
     (void)text; *above = px * 3 / 4; *below = px / 4;
@@ -45,6 +47,15 @@ void ttf_draw_text_px(uint8_t *fb, int x, int baseline, int px, const char *text
     (void)fb; (void)x; (void)px; (void)text; (void)align; (void)fg; (void)bg;
     painted_ttf = true; painted_baseline = baseline;
 }
+void ui_font_draw_title_px(uint8_t *fb, int x, int baseline, int px,
+                           const char *text, enum EpdFontFlags align) {
+    ui_font_draw_text_px(fb, x, baseline, px, text, align, 0, 15, true); painted_px = px;
+}
+void ttf_draw_text_px_bw(uint8_t *fb, int x, int baseline, int px, const char *text,
+                        enum EpdFontFlags align, uint8_t fg, uint8_t bg) {
+    assert(fg == 0 && bg == 15);
+    ttf_draw_text_px(fb, x, baseline, px, text, align, fg, bg); painted_px = px;
+}
 // ASCII 前缀也须采用整条输入实际使用的回退字体。/ ASCII prefixes must use the full input's fallback face.
 static void test_font_context(void) {
     uint8_t fb = 0;
@@ -61,6 +72,27 @@ static void test_font_context(void) {
     assert(ui_text_fixed_context_width_px(24, "AB", "ABC") == 36);
     ui_text_fixed_vc(&fb, 0, 50, 24, "AB", EPD_DRAW_ALIGN_LEFT, false);
     assert(painted_ttf);
+    ui_text_set_system_font(false);
+}
+static void test_native_titles(void) {
+    uint8_t fb = 0;
+    ui_text_set_system_font(false);
+    char title[64] = "ABZ";
+    int px = ui_text_title_fit(title, 40, 24, "ABZ");
+    assert(px == 24 && !strcmp(title, "AB"));
+    ui_text_title_vc(&fb, 0, 50, px, title, "ABZ", EPD_DRAW_ALIGN_LEFT);
+    assert(!painted_ttf && painted_px == 24 && painted_baseline == 56);
+    strcpy(title, "AB你好");
+    px = ui_text_title_fit(title, 32, 48, "AB你好");
+    assert(px == 32 && !strcmp(title, "AB"));
+    ui_text_title_vc(&fb, 0, 50, px, title, "AB你好", EPD_DRAW_ALIGN_LEFT);
+    assert(painted_ttf && painted_px == 32);
+    ui_text_set_system_font(true);
+    strcpy(title, "ABZ");
+    px = ui_text_title_fit(title, 40, 120, "ABZ");
+    assert(px == 40 && !strcmp(title, "ABZ"));
+    ui_text_title_vc(&fb, 0, 50, px, title, "ABZ", EPD_DRAW_ALIGN_LEFT);
+    assert(painted_ttf && painted_px == 40);
     ui_text_set_system_font(false);
 }
 int epd_width(void) { return W; }
@@ -149,5 +181,6 @@ int main(void) {
     epd_draw_pixel(40,30,UI_GRAY_BLACK,fb); assert(fb[30 * W + 40] == UI_GRAY_BLACK);
     test_icons();
     test_font_context();
+    test_native_titles();
     puts("ui kit host tests passed");
 }

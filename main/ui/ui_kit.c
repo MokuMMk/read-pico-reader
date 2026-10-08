@@ -6,6 +6,8 @@
  *
  * Implementation of the ui_kit drawing primitives. Layout constants live
  * in the header.
+ * 用户修订：标题使用原生位图尺寸或目标字号轮廓，不放大补充位图；截短时保持完整内容所选字体。
+ * User revision: titles use native bitmap sizes or target-size outlines; never enlarge supplements or switch faces during truncation.
  */
 
 #include "ui_kit.h"
@@ -276,6 +278,35 @@ void ui_text_fixed_context_vc(
     } else {
         ttf_measure_line_px(px, text, &above, &below);
         ttf_draw_text_px(framebuffer, x, center_y + (above - below) / 2, px, text, align, fg, bg);
+    }
+}
+
+int ui_text_title_fit(char *text, int preferred_px, int width, const char *font_sample) {
+    const char *sample = font_sample ? font_sample : text;
+    bool builtin = (!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(sample);
+    int px = builtin ? ui_font_title_px(preferred_px, sample) : preferred_px;
+    if (px < 12) px = 12;
+    if (px > 120) px = 120;
+    if (!text) return px;
+    while (*text && ui_text_fixed_context_width_px(px, text, sample) > width) {
+        size_t n = strlen(text) - 1;
+        while (n && ((unsigned char)text[n] & 0xc0) == 0x80) --n;
+        text[n] = 0;
+    }
+    return px;
+}
+
+void ui_text_title_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
+                      const char *font_sample, enum EpdFontFlags align) {
+    if (!fb || !text || !*text) return;
+    int above = 0, below = 0;
+    if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(font_sample ? font_sample : text)) {
+        ui_font_measure_line_px(px, text, &above, &below);
+        ui_font_draw_title_px(fb, x, center_y + (above - below) / 2, px, text, align);
+    } else {
+        ttf_measure_line_px(px, text, &above, &below);
+        ttf_draw_text_px_bw(fb, x, center_y + (above - below) / 2, px, text,
+                            align, UI_INK_BLACK, UI_INK_WHITE);
     }
 }
 

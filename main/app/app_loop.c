@@ -25,8 +25,8 @@
  * User revision: ordinary main screens also retain navigation and move only its marker locally; fast acrylic uses a regular one-pixel checkerboard in the same output as cached covers. Ordinary/water retain grays; initial entry and unlock still draw complete navigation.
  * 冻结：返回消费最近切页来源，恢复原页及菜单位置，不跳固定首页。
  * Frozen: Return consumes the latest page origin, restoring its page and menu position.
- * 用户采用顶部快捷层：仅顶部32px起手下滑72px才接管，覆盖时冻结页内输入/轮询，WiFi直接连接最近保存网络/再次断开，蓝牙切换开关，全刷和锁屏复用原路径。普通/水波真实灰阶，快刷规则点阵；关闭重绘当前页并局部整理，不修改底栏。
- * User adopts the top quick layer: capture only a 72px downward swipe starting within the top 32px; suspend page input/ticks while covered. WiFi connects saved credentials or disconnects on the next tap; Bluetooth toggles its setting. Reuse full refresh and lock. Ordinary/water retain grays, fast uses stable dots. Closing redraws and locally settles the underlay, retaining navigation.
+ * 用户采用顶部快捷层：仅顶部32px起手下滑72px才接管，覆盖时冻结页内输入/轮询，WiFi直接连接最近保存网络/再次断开，蓝牙切换开关，全刷和锁屏复用原路径。用户要求三个模式均真实灰阶并加深轮廓；关闭重绘当前页并局部整理，不修改底栏。
+ * User adopts the top quick layer: capture only a 72px downward swipe starting within the top 32px; suspend page input/ticks while covered. WiFi connects saved credentials or disconnects on the next tap; Bluetooth toggles its setting. Reuse full refresh and lock. Per the user, all modes retain grays with clearer outlines. Closing redraws and locally settles the underlay, retaining navigation.
  * 用户点击反馈：底栏及圆形返回键按下局部放大，释放复位；只暂存一个小控件，切页、全刷及锁屏丢弃缓存，不回放旧画面。
  * User click feedback: locally enlarge navigation/round backs on press and restore on release. Retain one small control only; navigation, full refresh and lock discard it without replaying old frames.
  */
@@ -38,6 +38,7 @@
 
 #include "app_registry.h"
 #include "app_content_open.h"
+#include "boot_state.h"
 #include "ble_page_turner.h"
 #include "ota_online.h"
 extern const app_desc_t app_weread;
@@ -103,12 +104,9 @@ static void quick_present(app_ctx_t *ctx, const app_desc_t *current, bool full) 
     display_main_transition_cancel();
     if (current->render) current->render(ctx, ctx->fb);
     s_quick_status = quick_status();
-    if (s_quick.open) ui_quick_menu_draw(ctx->fb, s_quick_status & 1u, s_quick_status & 2u,
-                                      app_settings_main_refresh_mode() == APP_MAIN_REFRESH_FAST);
+    if (s_quick.open) ui_quick_menu_draw(ctx->fb, s_quick_status & 1u, s_quick_status & 2u);
     enum EpdDrawError error = full ? update_display_full(ctx->hl)
-        : s_quick.open && app_settings_main_refresh_mode() == APP_MAIN_REFRESH_FAST
-            ? update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM, MODE_DU, ui_quick_menu_rect())
-            : update_display_area_full_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, ui_quick_menu_rect());
+        : update_display_area_full_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, ui_quick_menu_rect());
     guard_draw_result(ctx->hl, error);
     if (error != EPD_DRAW_SUCCESS) {
         ui_quick_menu_reset(&s_quick);
@@ -363,12 +361,26 @@ static bool poll_media(app_ctx_t* ctx, const app_desc_t* current,
 
 // 电源动作先保存当前页面，再定稿一张不带时钟的静态画面；避免关机后留下会误读的冻结时间。
 // Save the current page first, then settle a clock-free static frame so shutdown never leaves a misleading frozen time.
-static void run_power_action(app_ctx_t *ctx, const app_desc_t *current, bool restart) {
+// 锁屏前先由页面保存进度，再持久化一次恢复上下文；不在翻页或点击时写入。
+// Flush page progress before persisting one lock checkpoint; never write it on page turns or taps.
+static void prepare_lock(app_ctx_t *ctx, const app_desc_t *current) {
     if (current->on_before_lock) current->on_before_lock(ctx);
+    int tab = app_index_of(current);
+    pico_resume_t resume = {.tab = tab >= 0 && tab < 4 ? (uint8_t)tab : 0};
+    bool fullscreen = false;
+    if (tab == 1 && app_book_resume_context(resume.path, sizeof(resume.path), &fullscreen)) {
+        resume.reader = 1;
+        resume.fullscreen = fullscreen;
+    }
+    (void)pico_boot_save_resume(&resume);
+}
+static void run_power_action(app_ctx_t *ctx, const app_desc_t *current, bool restart) {
+    prepare_lock(ctx, current);
     ui_power_final_draw(ctx->fb, restart);
     guard_draw_result(ctx->hl, update_display_full(ctx->hl));
     app_lock_wait_key_idle(800);
     epd_poweroff();
+    pico_boot_clear_resume();
     if (restart) app_restart_host();
     app_enter_host_sleep(APP_SLEEP_OFF);
 }
@@ -415,6 +427,7 @@ void app_loop_run(const app_loop_config_t* config) {
     int64_t last_input_ms = esp_timer_get_time() / 1000;
     uint32_t last_ble_input = ble_pt_input_serial();
     unsigned idle_minutes = app_settings_auto_lock_minutes();
+    unsigned cover_policy = (unsigned)app_settings_main_refresh_mode() | ((unsigned)app_settings_system_contrast() << 8);
     read_pico_sd_info_t initial_media = {0};
     (void)read_pico_sd_get_info(&initial_media);
     bool media_mounted = initial_media.mounted || (ttf_font_ready() && !ttf_font_is_builtin());
@@ -429,9 +442,15 @@ void app_loop_run(const app_loop_config_t* config) {
     // 首帧必须整屏 GC16：fb 里还是 app_main 画的开机图，DU 盖不掉。
     // First frame must be full GC16: fb still holds the splash; DU cannot cover it.
     app_present(&ctx, current, APP_REDRAW_FULL);
+    pico_boot_ready();
     ESP_LOGI(TAG, "UI ready on %s", current->title);
 
     while (true) {
+        unsigned requested_cover_policy = (unsigned)app_settings_main_refresh_mode() | ((unsigned)app_settings_system_contrast() << 8);
+        if (requested_cover_policy != cover_policy) {
+            app_home_cover_mode_changed(); app_book_cover_mode_changed();
+            cover_policy = requested_cover_policy;
+        }
         cst836u_touch_t touch = { 0 };
         esp_err_t err = cst836u_read(config->tp, &touch);
         if (err != ESP_OK) {
@@ -518,7 +537,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     } else {
                         power_dialog_open = false;
                         ui_gesture_reset(&power_gesture);
-                        if (current->on_before_lock) current->on_before_lock(&ctx);
+                        prepare_lock(&ctx, current);
                         extern const app_desc_t app_book;
                         main_lock_boundary();
                         enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
@@ -673,7 +692,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     bool reader_power_lock = !menu_open && current == &app_book &&
                         app_book_reader_body_visible() && app_settings_reader_power_turn();
                     if (reader_power_lock) {
-                        if (current->on_before_lock) current->on_before_lock(&ctx);
+                        prepare_lock(&ctx, current);
                         main_lock_boundary();
                         enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, true);
                         ctx.now_ms = esp_timer_get_time() / 1000;
@@ -702,7 +721,7 @@ void app_loop_run(const app_loop_config_t* config) {
                         present_page(&ctx, current, &gesture, power_redraw);
                         ctx.consumed = true;
                     } else {
-                        if (current->on_before_lock) current->on_before_lock(&ctx);
+                        prepare_lock(&ctx, current);
                         extern const app_desc_t app_book;
                         main_lock_boundary();
                         enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
@@ -808,7 +827,7 @@ void app_loop_run(const app_loop_config_t* config) {
             cancel_gesture(&ctx, current, &gesture);
             if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
             menu_pressed = UI_MENU_HIT_NONE;
-            if (current->on_before_lock) current->on_before_lock(&ctx);
+            prepare_lock(&ctx, current);
             extern const app_desc_t app_book;
             main_lock_boundary();
             enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,

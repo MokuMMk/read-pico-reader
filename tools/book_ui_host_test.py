@@ -144,6 +144,7 @@ static size_t s_shelf_capacity;
 static int s_count,s_visible_count;
 static char s_message[128],s_shelf_warning[128],s_storage[128];
 static bool s_pending_invalidated,test_oom,test_degraded;
+static bool pico_boot_asset_allowed(const char *path){(void)path;return true;}
 static unsigned s_store_revision;
 typedef struct {char path[288];bool is_flash;} book_store_root_t;
 typedef struct {uint32_t file_size;uint16_t chapter;uint32_t byte_off;uint8_t px,pct;uint32_t last_open_s;} book_progress_t;
@@ -189,7 +190,7 @@ static delete_retry_t* s_delete_retries;
 static char s_latest_path[288],test_last_path[288];
 static bool s_save_failed;
 static char s_path[288],s_requested_open[288];
-static bool s_requested_open_home,s_reader_return_home;
+static bool s_requested_open_home,s_reader_return_home,s_requested_fullscreen;
 static int test_open_calls;
 static char* s_text;
 static int s_unsaved,s_px=48,s_margin=36,s_line_spacing=130;
@@ -340,6 +341,8 @@ input_header='\n'.join(line for line in input_header.splitlines() if not line.st
 unit+=enum+'\n'+input_header+r'''
 static book_reader_tap_t s_reader_tap;
 static app_reader_key_action_t test_keys[3]={APP_READER_KEY_PREV,APP_READER_KEY_TOOLS,APP_READER_KEY_NEXT};
+static app_reader_key_action_t test_hold_action=APP_READER_KEY_REFRESH;
+static app_reader_key_action_t app_settings_reader_hold_action(void){return test_hold_action;}
 static app_reader_key_action_t app_settings_reader_key_action(unsigned key){return test_keys[key];}
 static bool app_settings_main_fast_refresh(void){return false;}
 static app_redraw_t toggle_reader_fullscreen(app_ctx_t *ctx){(void)ctx;s_reader_fullscreen=!s_reader_fullscreen;return APP_REDRAW_PAGE;}
@@ -680,6 +683,9 @@ int main(void) {
     assert(apply_reader_option(&ctx,2)==APP_REDRAW_PAGE&&test_hide_images&&!test_images_visible&&s_page==1);
     assert(test_reflows==4&&test_image_preparations==2);
     assert(apply_reader_option(&ctx,2)==APP_REDRAW_PAGE&&!test_hide_images&&test_images_visible&&s_page==1);
+    test_hold_action=APP_READER_KEY_HOME;test_nav_target=-1;
+    assert(on_key_long(&ctx,UI_KEY_2)==APP_REDRAW_NONE && test_nav_target==0);
+    test_hold_action=APP_READER_KEY_REFRESH;
     test_hold_refresh=test_power_turn=false;s_reader_fullscreen=test_reader_immersive=false;
     s_view=TOC;s_toc_jump_open=true;s_toc_jump_percent=50;
     assert(on_key(&ctx,UI_KEY_1)==APP_REDRAW_PAGE&&s_toc_jump_percent==45);

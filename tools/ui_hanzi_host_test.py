@@ -50,7 +50,9 @@ static inline tinfl_status tinfl_decompress(tinfl_decompressor *s,const unsigned
 #include <string.h>
 int fail;
 static unsigned painted;
-void epd_draw_pixel(int x,int y,uint8_t color,uint8_t *fb){(void)x;(void)y;(void)color;(void)fb;painted++;}
+static bool capture;
+static uint8_t actual[192*192];
+void epd_draw_pixel(int x,int y,uint8_t color,uint8_t *fb){(void)fb;painted++;if(capture){assert(x>=0&&x<192&&y>=0&&y<192);assert(color==0);actual[y*192+x]=1;}}
 int main(void){
  uint8_t record[77],fb=0;
  fail=1;assert(!ui_hanzi_get(TEST_CP,record));fail=0;
@@ -60,8 +62,14 @@ int main(void){
   assert(ui_hanzi_has(cps[i])&&ui_hanzi_get(cps[i],record));
   char utf[4]={0xe0|(cps[i]>>12),0x80|((cps[i]>>6)&63),0x80|(cps[i]&63),0};assert(ui_font_has_text(utf));
   if(i%487==0)for(int px=18;px<=64;px+=7){int top,bottom;ui_font_measure_line_px(px,utf,&top,&bottom);assert(top>0&&bottom>=0);assert(ui_font_text_width_px(px,utf)>0);
-   painted=0;ui_font_draw_text_px(&fb,100,100,px,utf,EPD_DRAW_ALIGN_LEFT,0,15,false);assert(painted>0);}
+   painted=0;ui_font_draw_text_px(&fb,100,100,px,utf,EPD_DRAW_ALIGN_LEFT,0,15,false);assert(painted>0);
+   assert(ui_font_title_px(px,utf)==24);memset(actual,0,sizeof(actual));capture=true;
+   ui_font_draw_title_px(&fb,100,100,px,utf,EPD_DRAW_ALIGN_LEFT);capture=false;
+   for(int y=0;y<192;++y)for(int x=0;x<192;++x){int xx=x-100-(int8_t)record[0],yy=y-100-(int8_t)record[1];
+    unsigned expected=0;if(xx>=0&&yy>=0&&xx<record[2]&&yy<record[3]){unsigned bit=yy*24+xx;expected=(record[5+bit/8]>>(bit&7))&1u;}
+    assert(actual[y*192+x]==expected);}}
  }
+ assert(ui_font_title_px(48,"ABC")==48);
  puts("Han supplement: PASS (actual decoder/cache, common glyphs, rendering, OOM and metrics)");
 }
 '''.replace('TEST_CP',str(chars[0])).replace('CPS',','.join(map(str,chars)))

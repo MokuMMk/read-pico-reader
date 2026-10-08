@@ -7,6 +7,14 @@
 #include "ui_menu.h"
 #include "ui_power_dialog.h"
 #include "ui_quick_menu.h"
+#include "boot_state.h"
+uint8_t app_settings_system_contrast(void) {return 100;}
+void pico_boot_ready(void) {}
+void app_book_cover_mode_changed(void) {}
+void app_home_cover_mode_changed(void) {}
+esp_err_t pico_boot_save_resume(const pico_resume_t *resume) { (void)resume; return ESP_OK; }
+void pico_boot_clear_resume(void) {}
+bool app_book_resume_context(char *p,size_t c,bool *f) { (void)p;(void)c;(void)f;return false; }
 #include "read_pico_transfer.h"
 #include "ble_page_turner.h"
 #include <assert.h>
@@ -33,7 +41,7 @@ static bool online_busy;
 static bool ble_enabled, saved_wifi, upload_busy, click_enabled, click_active;
 static read_pico_transfer_status_t transfer_status;
 static int quick_draws, quick_gl, quick_du, wifi_starts, wifi_stops, ble_resets, click_presses, click_restores;
-static bool quick_last_bw;
+
 static app_redraw_t long_key(app_ctx_t* c, int k) { assert(k==UI_KEY_2); ++long_keys; c->request_menu=true; return APP_REDRAW_NONE; }
 static app_redraw_t response;
 static bool request_on_touch, request_on_tick, menu_on_tick, menu_on_touch, cancel_clobber;
@@ -64,7 +72,7 @@ enum EpdDrawError update_display_area_full_with(EpdiyHighlevelState*h,const void
     assert(a.x==0&&a.y==0&&a.width==684&&a.height==UI_QUICK_HEIGHT);++quick_gl;
     return update_display_area_with(h,w,m,a);
 }
-void ui_quick_menu_draw(uint8_t *fb,bool wifi,bool bluetooth,bool bw) {(void)fb;(void)wifi;(void)bluetooth;++quick_draws;quick_last_bw=bw;}
+void ui_quick_menu_draw(uint8_t *fb,bool wifi,bool bluetooth) {(void)fb;(void)wifi;(void)bluetooth;++quick_draws;}
 bool app_settings_ble_turner(void) {return ble_enabled;}
 void app_settings_set_ble_turner(bool enabled) {ble_enabled=enabled;}
 void ble_pt_reset_failure(void) {++ble_resets;}
@@ -167,7 +175,7 @@ static app_redraw_t tick(app_ctx_t*c) {
 static void reset(void) {
     ble_enabled=saved_wifi=upload_busy=click_enabled=click_active=false;
     transfer_status=(read_pico_transfer_status_t){0};
-    quick_draws=quick_gl=quick_du=wifi_starts=wifi_stops=ble_resets=click_presses=click_restores=0;quick_last_bw=false;
+    quick_draws=quick_gl=quick_du=wifi_starts=wifi_stops=ble_resets=click_presses=click_restores=0;
     main_fast=main_water=false;shelf_exit_arms=0;idle_minutes=0;idle_locks=before_locks=0;online_busy=false;
     nav_arms=nav_draws=nav_full_arms=nav_area_draws=0;nav_armed=NULL;
     main_source_visible=main_target_visible=true;
@@ -379,13 +387,13 @@ int main(void) {
     reset();first.on_gesture=gesture;
     add(300,20,1,0);add(300,110,1,0);add(300,120,1,0);add(0,0,0,0);
     add(300,500,1,0);add(0,0,0,0);add(100,400,1,0);add(0,0,0,0);run();
-    assert(quick_draws==1&&quick_gl==2&&!quick_du&&!quick_last_bw);
+    assert(quick_draws==1&&quick_gl==2&&!quick_du);
     assert(events[UI_GESTURE_PRESS]==1&&events[UI_GESTURE_TAP]==1);
     reset();main_fast=true;saved_wifi=true;
     add(300,20,1,0);add(300,110,1,0);add(0,0,0,0);
     add(85,156,1,0);add(85,156,1,0);add(0,0,0,0);
     add(85,156,1,0);add(0,0,0,0);run();
-    assert(wifi_starts==1&&wifi_stops==1&&quick_du==3&&!quick_gl&&quick_last_bw&&!touch_calls);
+    assert(wifi_starts==1&&wifi_stops==1&&quick_gl==3&&!quick_du&&!touch_calls);
     reset();upload_busy=true;transfer_status=(read_pico_transfer_status_t){.state=1,.mode=READ_PICO_TRANSFER_MODE_STA};
     add(300,20,1,0);add(300,110,1,0);add(0,0,0,0);add(85,156,1,0);add(0,0,0,0);run();
     assert(!wifi_starts&&!wifi_stops&&transfer_status.state==1);

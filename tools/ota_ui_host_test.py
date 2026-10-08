@@ -54,11 +54,11 @@ static char s_book_title[128]="海边的信",s_title[128]="chapter";
 static bool s_reader_favorite;
 static int back_center,title_center,favorite_center;
 static void ui_nav_back(uint8_t *fb,int x,int y){(void)fb;(void)x;back_center=y+35;}
-static void ui_text_vc(uint8_t *fb,int x,int y,int px,const char *text,int align,bool inverted){(void)fb;(void)x;(void)px;(void)text;(void)align;(void)inverted;title_center=y;}
+static void ui_text_title_vc(uint8_t *fb,int x,int y,int px,const char *text,const char *sample,int align){(void)fb;assert(x==342&&px==24&&align==EPD_DRAW_ALIGN_CENTER);assert(!strcmp(text,sample));title_center=y;}
 static void draw_favorite_icon(uint8_t *fb,int x,int y,int w,int h,bool favorite,int gray){(void)fb;(void)x;(void)w;(void)favorite;(void)gray;favorite_center=y+h/2;}
 static void ui_hairline(uint8_t *fb,int y,int x,int width,int gray){(void)fb;(void)y;(void)x;(void)width;(void)gray;}
 static void copy_text(char *out,size_t cap,const char *text){snprintf(out,cap,"%s",text);}
-static void fit_text(char *text,int px,int width){(void)text;(void)px;(void)width;}
+static int ui_text_title_fit(char *text,int px,int width,const char *sample){assert(px==32&&width==450&&!strcmp(text,sample));return 24;}
 static char note_lines[6][384];
 static int note_count;
 static int ui_text_fixed_width_px(int px,const char *text){

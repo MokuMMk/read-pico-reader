@@ -1482,6 +1482,19 @@ esp_err_t book_epub_metadata_cached(const char *path, char *title, size_t title_
     return ESP_ERR_NOT_FOUND;
 }
 
+// 首页/书架封面入口使用受检 PSRAM 工作区，不能在嵌套 ZIP 调用上叠加大块栈数组。
+// Home/shelf artwork uses checked PSRAM scratch instead of stacking large arrays above nested ZIP calls.
+typedef struct {
+    char opf[EPUB_PATH_CAP];
+    xml_t xml;
+    epub_meta_cache_payload_t payload;
+} metadata_scratch_t;
+typedef struct {
+    char opf[EPUB_PATH_CAP], cover_path[EPUB_PATH_CAP], href[EPUB_PATH_CAP];
+    char cover_id[EPUB_ID_CAP], id[EPUB_ID_CAP], media[80], props[256], name[64], content[EPUB_ID_CAP];
+    xml_t xml;
+} cover_scratch_t;
+
 esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, char *author, size_t author_cap) {
     if (!path || !title || !title_cap || !author || !author_cap) return ESP_ERR_INVALID_ARG;
     if (book_epub_metadata_cached(path, title, title_cap, author, author_cap) == ESP_OK) return ESP_OK;
@@ -1490,16 +1503,19 @@ esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, ch
                                               cache_path, sizeof(cache_path), &cache_key);
     book_epub_t *book = psram(sizeof(*book));
     if (!book) return ESP_ERR_NO_MEM;
+    metadata_scratch_t *scratch = psram(sizeof(*scratch));
+    if (!scratch) { free(book); return ESP_ERR_NO_MEM; }
+    memset(scratch, 0, sizeof(*scratch));
     memset(book, 0, sizeof(*book));
     esp_err_t err = zip_open(path, &book->zip);
-    char opf[EPUB_PATH_CAP];
-    if (err == ESP_OK) err = container_path(book, opf);
+
+    if (err == ESP_OK) err = container_path(book, scratch->opf);
     char *text = NULL; size_t len = 0;
-    if (err == ESP_OK) err = load_entry(book, zip_find(book->zip, opf), &text, &len);
+    if (err == ESP_OK) err = load_entry(book, zip_find(book->zip, scratch->opf), &text, &len);
     if (err == ESP_OK) {
-        xml_t xml; token_t t; xml_reader(&xml, text, len);
+        token_t t; xml_reader(&scratch->xml, text, len);
         size_t title_depth = 0, creator_depth = 0;
-        while (xml_next(&xml, &t)) {
+        while (xml_next(&scratch->xml, &t)) {
             if (t.kind == XML_OPEN && !title[0] && local_name(t.name, "title")) title_depth = t.depth;
             else if (t.kind == XML_OPEN && !author[0] && local_name(t.name, "creator")) creator_depth = t.depth;
             else if (t.kind == XML_TEXT && title_depth && t.depth == title_depth) {
@@ -1513,18 +1529,18 @@ esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, ch
         }
         if (!title[0]) err = ESP_ERR_NOT_FOUND;
         else if (cacheable) {
-            epub_meta_cache_payload_t payload = {0};
-            snprintf(payload.title, sizeof(payload.title), "%s", title);
-            snprintf(payload.author, sizeof(payload.author), "%s", author);
+            epub_meta_cache_payload_t *payload = &scratch->payload;
+            snprintf(payload->title, sizeof(payload->title), "%s", title);
+            snprintf(payload->author, sizeof(payload->author), "%s", author);
             char temp[120];
             FILE* cache = book_index_cache_open_write(cache_path, &cache_key, temp, sizeof(temp));
             if (cache) {
-                bool ok = fwrite(&payload, 1, sizeof(payload), cache) == sizeof(payload);
+                bool ok = fwrite(payload, 1, sizeof(*payload), cache) == sizeof(*payload);
                 (void)book_index_cache_finish_write(cache, temp, cache_path, ok);
             }
         }
     }
-    free(text); book_epub_close(book);
+    free(scratch); free(text); book_epub_close(book);
     return err;
 }
 
@@ -1533,38 +1549,41 @@ esp_err_t book_epub_cover(const char *path, uint8_t **data, size_t *size, bool *
     *data = NULL; *size = 0; *is_png = false;
     book_epub_t *book = psram(sizeof(*book));
     if (!book) return ESP_ERR_NO_MEM;
+    cover_scratch_t *scratch = psram(sizeof(*scratch));
+    if (!scratch) { free(book); return ESP_ERR_NO_MEM; }
+    memset(scratch, 0, sizeof(*scratch));
     memset(book, 0, sizeof(*book));
     esp_err_t err = zip_open(path, &book->zip);
-    char opf[EPUB_PATH_CAP] = {0};
-    if (err == ESP_OK) err = container_path(book, opf);
+
+    if (err == ESP_OK) err = container_path(book, scratch->opf);
     char *xml_text = NULL; size_t xml_len = 0;
-    if (err == ESP_OK) err = load_entry(book, zip_find(book->zip, opf), &xml_text, &xml_len);
+    if (err == ESP_OK) err = load_entry(book, zip_find(book->zip, scratch->opf), &xml_text, &xml_len);
     if (err == ESP_OK) {
-        char cover_id[EPUB_ID_CAP] = {0}, cover_path[EPUB_PATH_CAP] = {0};
+
         bool cover_png = false;
-        xml_t xml; token_t t; xml_reader(&xml, xml_text, xml_len);
-        while (xml_next(&xml, &t)) {
+        token_t t; xml_reader(&scratch->xml, xml_text, xml_len);
+        while (xml_next(&scratch->xml, &t)) {
             if (t.kind == XML_OPEN && local_name(t.name, "meta")) {
-                char name[64], content[EPUB_ID_CAP];
-                if (attribute(t, "name", name, sizeof(name)) && attribute(t, "content", content, sizeof(content)) && !strcmp(name, "cover"))
-                    snprintf(cover_id, sizeof(cover_id), "%s", content);
+
+                if (attribute(t, "name", scratch->name, sizeof(scratch->name)) && attribute(t, "content", scratch->content, sizeof(scratch->content)) && !strcmp(scratch->name, "cover"))
+                    snprintf(scratch->cover_id, sizeof(scratch->cover_id), "%s", scratch->content);
             }
         }
-        if (!xml.failed) {
-            xml_reader(&xml, xml_text, xml_len);
-            while (xml_next(&xml, &t)) {
+        if (!scratch->xml.failed) {
+            xml_reader(&scratch->xml, xml_text, xml_len);
+            while (xml_next(&scratch->xml, &t)) {
                 if (t.kind != XML_OPEN || !local_name(t.name, "item")) continue;
-                char id[EPUB_ID_CAP], href[EPUB_PATH_CAP], media[80], props[256];
-                if (!attribute(t, "id", id, sizeof(id)) || !attribute(t, "href", href, sizeof(href)) ||
-                    !attribute(t, "media-type", media, sizeof(media)) || !attribute(t, "properties", props, sizeof(props))) continue;
-                bool png = !strcmp(media, "image/png"), jpeg = !strcmp(media, "image/jpeg") || !strcmp(media, "image/jpg");
-                if (!(png || jpeg) || !(word(props, "cover-image") || (cover_id[0] && !strcmp(id, cover_id)))) continue;
-                if (resolve_path(opf, href, cover_path)) { cover_png = png; break; }
+
+                if (!attribute(t, "id", scratch->id, sizeof(scratch->id)) || !attribute(t, "href", scratch->href, sizeof(scratch->href)) ||
+                    !attribute(t, "media-type", scratch->media, sizeof(scratch->media)) || !attribute(t, "properties", scratch->props, sizeof(scratch->props))) continue;
+                bool png = !strcmp(scratch->media, "image/png"), jpeg = !strcmp(scratch->media, "image/jpeg") || !strcmp(scratch->media, "image/jpg");
+                if (!(png || jpeg) || !(word(scratch->props, "cover-image") || (scratch->cover_id[0] && !strcmp(scratch->id, scratch->cover_id)))) continue;
+                if (resolve_path(scratch->opf, scratch->href, scratch->cover_path)) { cover_png = png; break; }
             }
         }
-        if (!cover_path[0]) err = ESP_ERR_NOT_FOUND;
+        if (!scratch->cover_path[0]) err = ESP_ERR_NOT_FOUND;
         else {
-            int index = zip_find(book->zip, cover_path);
+            int index = zip_find(book->zip, scratch->cover_path);
             size_t bytes = zip_entry_size(book->zip, index);
             if (index < 0) err = ESP_ERR_NOT_FOUND;
             else if (!bytes || bytes > ZIP_OUTPUT_MAX) err = ESP_ERR_INVALID_SIZE;
@@ -1579,7 +1598,7 @@ esp_err_t book_epub_cover(const char *path, uint8_t **data, size_t *size, bool *
             }
         }
     }
-    free(xml_text); book_epub_close(book); return err;
+    free(scratch); free(xml_text); book_epub_close(book); return err;
 }
 
 esp_err_t book_epub_image_dimensions(book_epub_t *book, size_t chapter, const char *src, unsigned *width, unsigned *height) {

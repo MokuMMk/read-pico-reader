@@ -2,8 +2,14 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
+ * 用户修订：快刷只保留 1 位封面，转码后立即释放灰阶；切换模式或对比度清理旧格式。
+ * User revision: fast Home retains only a 1-bit cover, releases gray after conversion, and drops stale formats on mode/contrast changes.
  * 中文：首页显示继续阅读与近七天阅读时长；封面跨页面缓存。
  * English: Home shows the current read and seven days of reading time; covers survive tab changes.
+ * 用户修订：缓存原位换位，只用一个条目的栈空间；保留复用速度，避免启动时复制七条占用半个主任务栈。
+ * User revision: reorder the cache in place with one stack entry, retaining hot reuse without copying seven entries into half the main stack at boot.
+ * 用户修订：续读书名使用原生字形，不放大24px补充位图，标题笔画保持一致黑色。
+ * User revision: resume titles use native glyphs, never enlarge 24px supplements and retain consistent black strokes.
  */
 #include <dirent.h>
 #include <stdio.h>
@@ -15,6 +21,7 @@
 
 #include "app.h"
 #include "app_content_open.h"
+#include "boot_state.h"
 #include "app_registry.h"
 #include "book_cover.h"
 #include "ui_image_dither.h"
@@ -38,6 +45,7 @@ typedef struct {
     char title[128];
     char author[128];
     uint8_t *cover;
+    bool cover_fast;
     time_t modified;
     book_progress_t progress;
     bool has_progress;
@@ -51,8 +59,12 @@ typedef struct {
     off_t size;
     time_t modified;
     uint8_t *pixels;
+    bool fast;
 } home_cover_cache_t;
 static home_cover_cache_t s_cover_cache[7];
+#define HOME_FAST_COVER_W 172
+#define HOME_FAST_COVER_H 250
+#define HOME_FAST_COVER_STRIDE ((HOME_FAST_COVER_W + 7) / 8)
 static int s_cover_next;
 static bool s_scan_pending;
 static bool s_books_cache_valid;
@@ -143,7 +155,7 @@ static void scan_books(void) {
     for (int i = 0; i < 6; ++i) if (s_recent[i].path[0]) title_for(&s_recent[i]);
     home_book_t *featured = s_current.path[0] ? &s_current : &s_recent[0];
     const char *ext = strrchr(featured->path, '.');
-    if (ext && !strcasecmp(ext, ".epub")) {
+    if (ext && !strcasecmp(ext, ".epub") && pico_boot_asset_allowed(featured->path)) {
         char metadata_title[256];
         if (book_epub_metadata(featured->path, metadata_title, sizeof(metadata_title),
                                featured->author, sizeof(featured->author)) != ESP_OK)
@@ -181,35 +193,73 @@ static void clear_cover_cache(void) {
     for (int i = 0; i < 6; ++i) s_recent[i].cover = NULL;
 }
 
+void app_home_cover_mode_changed(void) {
+    clear_cover_cache();
+    s_cover_next = 0;
+}
 static void restore_cover_cache(void) {
-    home_cover_cache_t old[7];
-    memcpy(old, s_cover_cache, sizeof(old));
-    memset(s_cover_cache, 0, sizeof(s_cover_cache));
+    bool used[7] = {0};
+    int match[7];
     for (int i = 0; i < 7; ++i) {
         home_book_t *book = book_at(i);
         struct stat st;
         book->cover = NULL;
+        match[i] = -1;
         if (!book->path[0] || stat(book->path, &st) || !S_ISREG(st.st_mode)) continue;
         for (int j = 0; j < 7; ++j) {
-            if (!old[j].pixels || strcmp(book->path, old[j].path) ||
-                strcmp(book->title, old[j].title) || strcmp(book->author, old[j].author) ||
-                st.st_size != old[j].size || st.st_mtime != old[j].modified) continue;
-            s_cover_cache[i] = old[j];
-            book->cover = old[j].pixels;
-            old[j].pixels = NULL;
+            home_cover_cache_t *cached = &s_cover_cache[j];
+            if (used[j] || !cached->pixels || strcmp(book->path, cached->path) ||
+                strcmp(book->title, cached->title) || strcmp(book->author, cached->author) ||
+                st.st_size != cached->size || st.st_mtime != cached->modified) continue;
+            match[i] = j;
+            used[j] = true;
             break;
         }
     }
-    for (int i = 0; i < 7; ++i) free(old[i].pixels);
+    for (int j = 0; j < 7; ++j) if (!used[j]) {
+        free(s_cover_cache[j].pixels);
+        memset(&s_cover_cache[j], 0, sizeof(s_cover_cache[j]));
+    }
+    for (int i = 0; i < 7; ++i) {
+        int j = match[i];
+        if (j < 0) {
+            for (j = i; j < 7 && s_cover_cache[j].pixels; ++j) {}
+        }
+        if (j < 7 && j != i) {
+            home_cover_cache_t swap = s_cover_cache[i];
+            s_cover_cache[i] = s_cover_cache[j];
+            s_cover_cache[j] = swap;
+            for (int k = i + 1; k < 7; ++k) {
+                if (match[k] == i) match[k] = j;
+                else if (match[k] == j) match[k] = i;
+            }
+        }
+        book_at(i)->cover = s_cover_cache[i].pixels;
+        book_at(i)->cover_fast = s_cover_cache[i].fast;
+    }
 }
 
 static bool load_cover(home_book_t *item, int slot) {
+    if (!pico_boot_asset_allowed(item->path)) return false;
     uint8_t *pixels = heap_caps_malloc(BOOK_COVER_W * BOOK_COVER_H, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     bool ok = pixels && book_cover_load_gray(item->path, item->title, item->author,
                                               pixels, true, NULL);
     if (!ok) { free(pixels); return false; }
     struct stat st;
     if (stat(item->path, &st) || !S_ISREG(st.st_mode)) { free(pixels); return false; }
+    const bool fast = app_settings_main_fast_refresh();
+    if (fast) {
+        uint8_t *bits = heap_caps_calloc(HOME_FAST_COVER_STRIDE * HOME_FAST_COVER_H, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!bits) { free(pixels); return false; }
+        book_crop_t crop = book_cover_crop(BOOK_COVER_W, BOOK_COVER_H, HOME_FAST_COVER_W, HOME_FAST_COVER_H);
+        for (int y = 0; y < HOME_FAST_COVER_H; ++y) for (int x = 0; x < HOME_FAST_COVER_W; ++x) {
+            unsigned sx = crop.x + (uint64_t)(unsigned)x * crop.width / HOME_FAST_COVER_W;
+            unsigned sy = crop.y + (uint64_t)(unsigned)y * crop.height / HOME_FAST_COVER_H;
+            uint8_t gray = ui_contrast_gray(pixels[sy * BOOK_COVER_W + sx]);
+            if (ui_image_dither_bw(gray, 36 + x, 292 + y)) bits[y * HOME_FAST_COVER_STRIDE + x / 8] |= 1u << (x & 7);
+        }
+        free(pixels); pixels = bits;
+    }
     home_cover_cache_t *cached = &s_cover_cache[slot];
     free(cached->pixels);
     snprintf(cached->path, sizeof(cached->path), "%s", item->path);
@@ -218,7 +268,9 @@ static bool load_cover(home_book_t *item, int slot) {
     cached->size = st.st_size;
     cached->modified = st.st_mtime;
     cached->pixels = pixels;
+    cached->fast = fast;
     item->cover = pixels;
+    item->cover_fast = fast;
     return ok;
 }
 
@@ -230,16 +282,17 @@ static void fit(char *title, int px, int width) {
     }
 }
 
-static int home_title_px(const char *title, int width) {
-    for (int px = 39; px > 24; --px)
-        if (ui_text_fixed_width_px(ui_text_effective_px(px), title) <= width) return px;
-    return 24;
-}
-
 static void draw_cover(uint8_t *fb, const home_book_t *item, EpdRect box) {
 
     epd_fill_rect(box, UI_GRAY_LIGHT, fb);
-    if (item->cover) {
+    if (item->cover && item->cover_fast) {
+        for (int y = 0; y < box.height; ++y) for (int x = 0; x < box.width; ++x) {
+            unsigned sx = (unsigned)x * HOME_FAST_COVER_W / (unsigned)box.width;
+            unsigned sy = (unsigned)y * HOME_FAST_COVER_H / (unsigned)box.height;
+            epd_draw_pixel(box.x + x, box.y + y,
+                item->cover[sy * HOME_FAST_COVER_STRIDE + sx / 8] & (1u << (sx & 7)) ? 255 : 0, fb);
+        }
+    } else if (item->cover) {
         // 封面缓冲固定 176×240，而卡片未必同比例；按长边铺满再居中裁剪，避免拉伸变形。
         // The cover buffer is fixed at 176x240 while the card is a different shape; fill by the
         // longer side and centre-crop so the artwork is never stretched.
@@ -277,9 +330,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (featured->path[0]) {
         draw_cover(fb, featured, (EpdRect){36, 292, 172, 250});
         char title[128]; snprintf(title, sizeof(title), "%s", featured->title);
-        int title_px = home_title_px(title, 374);
-        fit(title, title_px, 374);
-        ui_text_vc(fb, 248, 322, title_px, title, EPD_DRAW_ALIGN_LEFT, false);
+        int title_px = ui_text_title_fit(title, 40, 374, featured->title);
+        ui_text_title_vc(fb, 248, 322, title_px, title, featured->title, EPD_DRAW_ALIGN_LEFT);
         if (featured->author[0]) {
             char author[sizeof(featured->author)];
             snprintf(author, sizeof(author), "%s", featured->author);

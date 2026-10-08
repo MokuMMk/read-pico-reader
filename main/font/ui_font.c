@@ -6,6 +6,8 @@
  * English: Built-in Noto Sans SC subset with its own PSRAM bitmap cache; block-compressed common Han glyphs, with other unknown glyphs falling back to the reader face.
  * 用户反馈书名锯齿：补充位图缩放改为覆盖率插值，保留字体来源、字宽及缓存上限；快刷最终仍为黑白。
  * User-reported jagged titles: interpolate supplemental bitmap coverage, retaining font sources, advances and cache bounds; final fast output remains monochrome.
+ * 用户最新修订：书名及章节标题禁止放大补充位图；整行采用其原生24px，轮廓字形直接生成，并统一标题笔画黑度。
+ * Latest user revision: book/chapter titles never enlarge supplemental bitmaps; use their native 24px for the entire line, rasterize outlines directly and keep title strokes equally black.
  */
 #include "ui_font.h"
 #include "ui_hanzi.h"
@@ -90,6 +92,15 @@ bool ui_font_has_text(const char *text) {
 
 static int clamp_px(int px) { return px < 8 ? 8 : px > 72 ? 72 : px; }
 static float scale_for(int px) { return stbtt_ScaleForPixelHeight(&s_font, (float)clamp_px(px)); }
+
+int ui_font_title_px(int preferred_px, const char *text) {
+    if (text && ready()) while (*text) {
+        uint32_t cp = next_cp(&text);
+        if (!stbtt_FindGlyphIndex(&s_font, (int)cp) && ui_hanzi_has(cp))
+            return UI_HANZI_BASE_PX;
+    }
+    return clamp_px(preferred_px);
+}
 
 int ui_font_ascender_px(int px) {
     if (!ready()) return 0;
@@ -188,9 +199,9 @@ int ui_font_text_width_px(int px, const char *text) {
     return width;
 }
 
-void ui_font_draw_text_px(uint8_t *fb, int x, int baseline, int px,
+static void draw_text_px(uint8_t *fb, int x, int baseline, int px,
                           const char *text, enum EpdFontFlags align,
-                          uint8_t fg, uint8_t bg, bool black_white) {
+                          uint8_t fg, uint8_t bg, unsigned threshold) {
     if (!fb || !text || !ready()) return;
     int cursor = x;
     if (align & EPD_DRAW_ALIGN_CENTER) cursor -= ui_font_text_width_px(px, text) / 2;
@@ -202,11 +213,24 @@ void ui_font_draw_text_px(uint8_t *fb, int x, int baseline, int px,
             for (int xx = 0; xx < g->width; ++xx) {
                 uint8_t alpha = g->bitmap[y * g->width + xx];
                 if (!alpha) continue;
-                uint8_t shade = black_white ? (alpha >= 128 ? fg : bg) :
+                uint8_t shade = threshold ? (alpha >= threshold ? fg : bg) :
                     (uint8_t)(bg + s_cover[alpha] * ((int)fg - (int)bg) / 255);
                 if (shade != bg) epd_draw_pixel(cursor + g->x0 + xx, baseline + g->y0 + y,
                                                  shade << 4, fb);
             }
         cursor += g->advance;
     }
+}
+
+void ui_font_draw_text_px(uint8_t *fb, int x, int baseline, int px,
+                          const char *text, enum EpdFontFlags align,
+                          uint8_t fg, uint8_t bg, bool black_white) {
+    draw_text_px(fb, x, baseline, px, text, align, fg, bg, black_white ? 128 : 0);
+}
+
+void ui_font_draw_title_px(uint8_t *fb, int x, int baseline, int px,
+                          const char *text, enum EpdFontFlags align) {
+    // 和补充位图生成器的96门限一致，避免同一行出现不同笔画深度。
+    // Match the supplement generator's threshold of 96 to keep stroke weight consistent within a line.
+    draw_text_px(fb, x, baseline, ui_font_title_px(px, text), text, align, 0, 15, 96);
 }

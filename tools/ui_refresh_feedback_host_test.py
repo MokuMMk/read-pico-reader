@@ -51,7 +51,7 @@ enum EpdDrawError {EPD_DRAW_SUCCESS,EPD_DRAW_ERROR};
 #define portMAX_DELAY 0
 static const int E0470_WAVEFORM=0,E0470_FULL_WAVEFORM=1,E0470_FOLLOW_WAVEFORM=2,E0470_TEXTTURN_WAVEFORM=3;
 static const char *TAG="test";
-static int s_view,s_presented_view,s_reader_panel,s_pressed_control;
+static int s_view,s_presented_view,s_reader_panel,s_pressed_control,s_reader_slider;
 static bool s_shelf_page_pending,s_shelf_feedback_pending,s_reader_cleanup,s_reader_image_refresh_pending,s_toolbar,s_clear_confirm;
 static bool s_reader_fullscreen,s_water_turn_pending,s_reader_footer_pending,s_reader_turn_pending,s_reader_text_frame;
 static enum EpdDrawMode s_mode;
@@ -119,6 +119,8 @@ static bool load_chapter(app_ctx_t *ctx,unsigned chapter,int off,bool last){(voi
 static void set_reader_view(int view){s_view=view;}
 static void lock_draw(void){}
 static void unlock_draw(void){}
+static void invalidate_prep(void){}
+static app_redraw_t toggle_reader_fullscreen(app_ctx_t *ctx){(void)ctx;s_reader_fullscreen=!s_reader_fullscreen;return APP_REDRAW_PAGE;}
 static size_t fb_bytes(void){return 1;}
 static void draw_reader(uint8_t *fb,unsigned page){*fb=(uint8_t)page;}
 
@@ -134,7 +136,7 @@ static enum EpdDrawError update_display_mode_diff(void *hl,enum EpdDrawMode mode
 static enum EpdDrawError update_display_water_turn(void *hl,EpdRect area,int dir){(void)hl;(void)dir;assert(test_tick_us==E0470_TURN_FAST_TICK_US);return record(WATER,MODE_GL16,area);}
 '''
 shelf += function("main/apps/app_book.c", "paint_control") + "\n"
-for name in ("present", "paint_reading", "turn_page"):
+for name in ("present", "paint_reading", "reader_turn_chrome", "turn_page"):
     shelf += function("main/apps/app_book.c", name) + "\n"
 shelf += r'''
 int main(void){
@@ -236,6 +238,8 @@ int main(void){
    assert(s_reader_text_frame==(hidden||from==0));
    app_redraw_t redraw=turn_page(&ctx,1);
    bool eligible=hidden||(from==0&&to==0);
+   assert(s_reader_fullscreen && s_reader_panel==READER_PANEL_NONE);
+   if (!full) {assert(redraw==APP_REDRAW_PAGE&&!s_reader_turn_pending);trace_count=0;present(&ctx,redraw);assert(trace_route[0]==(to==2&&!hidden?WHOLE:READER));continue;}
    assert(redraw==APP_REDRAW_AREA&&s_reader_turn_pending==eligible);
    trace_count=0;present(&ctx,redraw);
    if(eligible)assert(trace_route[0]==DIFF&&trace_wave[0]==E0470_TEXTTURN_WAVEFORM);
@@ -243,7 +247,7 @@ int main(void){
    else assert(trace_wave[0]==E0470_WAVEFORM&&trace_route[0]==(full?DIFF:AREA));
    assert(!s_reader_turn_pending&&s_reader_text_frame==(hidden||to==0));
  }
- s_reader_fullscreen=false;test_hide_images=false;
+ s_reader_fullscreen=true;test_hide_images=false;
  for(int from=0;from<3;++from)for(int to=0;to<3;++to)for(int dir=-1;dir<=1;dir+=2){
    int old=dir>0?0:1,new=1-old;
    test_types[old][dir>0?1:0]=from;test_types[new][dir>0?0:1]=to;

@@ -6,9 +6,12 @@
  *
  * Enter lock and sleep, light-sleep wait for key or pickup, and drop EN
  * for soft sleep / power-off.
+ * 用户修订：票根从任意页面进入均用系统字体；浅睡唤醒恢复此前阅读字体，深睡由启动检查点恢复。
+ * User revision: tickets use the system face from every page; light wake restores the previous reader face, while deep wake uses the startup checkpoint.
  */
 
 #include "sleep.h"
+#include "boot_state.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +21,7 @@
 #include <time.h>
 
 #include "app.h"
+#include "app_font_context.h"
 #include "book_cover.h"
 #include "book_ticket.h"
 #include "display.h"
@@ -349,6 +353,7 @@ void enter_lock_and_sleep(
     // this function returns, and the user can lock again after the transfer.
     bool radio_paused = read_pico_transfer_pause_for_sleep();
     if (!radio_paused) {
+        pico_boot_clear_resume();
         ESP_LOGW(TAG, "lock postponed while transfer is busy");
         return;
     }
@@ -356,9 +361,12 @@ void enter_lock_and_sleep(
     epd_poweron();
     epd_clear();
     epd_hl_set_all_white(hl);
+    bool ticket = app_settings_lock_style() == 0;
+    app_lock_font_t lock_font = {0};
+    if (ticket) app_font_begin_lock(&lock_font);
     // 阅读票根独占锁屏画布：始终先画最近书籍封面，再叠票根；自定义壁纸只属于壁纸模式。
     // Ticket mode owns the lock canvas: book cover first, ticket on top. Custom wallpaper is wallpaper-only.
-    bool lock_drawn = app_settings_lock_style() == 0
+    bool lock_drawn = ticket
         ? book_ticket_draw(framebuffer, reader_background)
         : draw_wallpaper(framebuffer);
     if (!lock_drawn) {
@@ -368,8 +376,8 @@ void enter_lock_and_sleep(
     epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
 
     app_lock_wait_key_idle(800);
-    // 短按电源键只锁屏并浅睡；深度关机只由长按电源菜单触发。
-    // A short press only locks and light-sleeps; deep shutdown belongs to the long-press menu.
+    // 锁屏先浅睡，十分钟后进入深睡；按键唤醒使用已保存的页面检查点。
+    // Locks light-sleep first, enter deep sleep after ten minutes and wake through the saved page checkpoint.
     ESP_LOGI(TAG, "lock LIGHT");
     epd_poweroff();
     app_wake_source_t wake = app_light_sleep_wait_timed(acc, APP_LOCK_LIGHT_SLEEP_MS);
@@ -378,6 +386,8 @@ void enter_lock_and_sleep(
         // power-key press boots the host; the e-paper keeps this lock image.
         app_enter_host_sleep(APP_SLEEP_DEEP);
     }
+    pico_boot_clear_resume();
+    if (ticket) app_font_end_lock(&lock_font);
     read_pico_transfer_resume_after_sleep();
 
     // 参考帧和屏幕都归零，回到主循环后由当前页自己画一遍，不必知道是哪一页。

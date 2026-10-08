@@ -28,6 +28,7 @@
 #include "app_registry.h"
 #include "app_transfer_mode.h"
 #include "settings.h"
+#include "boot_state.h"
 #include "ble_page_turner.h"
 #include "read_pico_pmu.h"
 #include "read_pico_pmu_protocol.h"
@@ -1105,7 +1106,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     const int profile_y = 164 - s_main_scroll;
     if (profile_y + 106 > 160) {
         settings_card(fb, (EpdRect){36, profile_y, 612, 106}, 24, UI_GRAY_WHITE, 0x70);
-        bool avatar_ok = app_settings_avatar_path()[0] &&
+        bool avatar_ok = !pico_boot_recovery() && app_settings_avatar_path()[0] &&
             ui_wallpaper_draw_rounded(fb, app_settings_avatar_path(),
                                       (EpdRect){57, profile_y + 11, 82, 82}, 20);
         if (app_settings_main_fast_refresh() && avatar_ok) ui_image_bw_rect(fb, (EpdRect){57, profile_y + 11, 82, 82});
