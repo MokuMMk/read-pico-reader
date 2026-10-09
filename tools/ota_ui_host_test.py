@@ -111,7 +111,7 @@ void pico_online_get_status(pico_update_status_t *out){*out=backend_status;}
 #include "ui/ui_nav_layout.h"
 typedef struct {uint8_t *fb;void *hl;} app_ctx_t;
 static enum {SETTINGS_MAIN,SETTINGS_TEXT_EDIT,SETTINGS_BLUETOOTH,SETTINGS_BLE_SCAN,SETTINGS_SHELF_STYLE,
- SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR,SETTINGS_UPGRADE} s_page;
+ SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR,SETTINGS_UPGRADE,SETTINGS_PIN_ENTRY} s_page;
 static bool s_input_settle,s_input_layout,s_scroll_present_pending;
 static EpdRect s_input_area;
 typedef struct {int kind;} EpdWaveform;
@@ -132,6 +132,7 @@ static enum EpdDrawError update_display_area_full_with(void *hl,const EpdWavefor
  ++full_pushes;return update_display_area_diff_with(hl,waveform,mode,area);
 }
 '''
+unit += "static EpdRect ui_pinpad_full(void){return (EpdRect){0,0,684,1216};}\n"
 for name in ("upgrade_percent", "upgrade_remember", "upgrade_status_redraw", "upgrade_progress_area", "draw_upgrade_percent", "draw_upgrade_progress",
              "draw_upgrade_progress_delta", "upgrade_schedule", "upgrade_start_pending", "settings_present",
              "upgrade_note_line", "draw_upgrade_notes", "upgrade_confirm_button"):

@@ -44,11 +44,11 @@ unit=r"""
 #include <stdlib.h>
 typedef struct {int x,y,width,height;} EpdRect;
 typedef struct {uint8_t *fb;void *hl;} app_ctx_t;
-typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE} app_redraw_t;
+typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE,APP_REDRAW_FULL} app_redraw_t;
 typedef enum {UI_GESTURE_PRESS,UI_GESTURE_MOVE,UI_GESTURE_TAP,UI_GESTURE_CANCEL,UI_GESTURE_SWIPE_U,UI_GESTURE_SWIPE_D} gesture_t;
 typedef struct {gesture_t type;int x,y,x0,y0;} ui_gesture_event_t;
 enum {SETTINGS_MAIN,SETTINGS_BLUETOOTH,SETTINGS_BLE_SCAN,SETTINGS_UPGRADE,SETTINGS_SYSTEM_SIZE,SETTINGS_MAIN_REFRESH,
-      SETTINGS_SHELF_STYLE,SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR,SETTINGS_TEXT_EDIT};
+      SETTINGS_SHELF_STYLE,SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR,SETTINGS_TEXT_EDIT,SETTINGS_PIN_ENTRY};
 enum EpdDrawMode {MODE_GC16,MODE_GL16,MODE_DU};
 #define UI_NAV_TOP 1096
 #define UI_NAV_REFRESH_END (UI_NAV_TOP & ~31)
@@ -69,6 +69,7 @@ static void render(app_ctx_t *ctx,uint8_t *fb){(void)ctx;(void)fb;++paints;}
 static int update_display_area_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;(void)wave;pushed=area;push_mode=mode;++pushes;return 0;}
 static int update_display_area_diff_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){return update_display_area_with(hl,wave,mode,area);}
 static int update_display_area_full_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){return update_display_area_with(hl,wave,mode,area);}
+static EpdRect ui_pinpad_full(void){return (EpdRect){0,0,684,1216};}
 static EpdRect upgrade_progress_area(void){return (EpdRect){52,468,580,64};}
 static void display_main_transition_cancel(void){}
 static void guard_draw_result(void *hl,int status){(void)hl;assert(!status);}

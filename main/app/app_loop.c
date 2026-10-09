@@ -539,7 +539,7 @@ void app_loop_run(const app_loop_config_t* config) {
                         prepare_lock(&ctx, current);
                         extern const app_desc_t app_book;
                         main_lock_boundary();
-                        enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
+                        enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, ctx.tp,
                                              current == &app_book && app_book_reader_body_visible());
                         ctx.now_ms = esp_timer_get_time() / 1000;
                         last_input_ms = ctx.now_ms;
@@ -693,7 +693,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     if (reader_power_lock) {
                         prepare_lock(&ctx, current);
                         main_lock_boundary();
-                        enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, true);
+                        enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, ctx.tp, true);
                         ctx.now_ms = esp_timer_get_time() / 1000;
                         last_input_ms = ctx.now_ms;
                         poll_media(&ctx, current, &media_mounted, &media_invalidated);
@@ -723,7 +723,7 @@ void app_loop_run(const app_loop_config_t* config) {
                         prepare_lock(&ctx, current);
                         extern const app_desc_t app_book;
                         main_lock_boundary();
-                        enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
+                        enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, ctx.tp,
                                              !menu_open && current == &app_book && app_book_reader_body_visible());
                         ctx.now_ms = esp_timer_get_time() / 1000;
                         last_input_ms = ctx.now_ms;
@@ -829,7 +829,7 @@ void app_loop_run(const app_loop_config_t* config) {
             prepare_lock(&ctx, current);
             extern const app_desc_t app_book;
             main_lock_boundary();
-            enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc,
+            enter_lock_and_sleep(ctx.hl, &s_lock_ignore_until_ms, ctx.acc, ctx.tp,
                                  !menu_open && current == &app_book && app_book_reader_body_visible());
             ctx.now_ms = esp_timer_get_time() / 1000;
             last_input_ms = ctx.now_ms;

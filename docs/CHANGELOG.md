@@ -7,9 +7,11 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 - 新增 D 版书架拼贴锁屏：原比例真实封面、15° 倾斜、圆角与16级灰阶；资料卡名字及大小分明的书籍数量使用导入系统字体原生绘制，TF缓存、有界工作内存与低内存回退。
 - 移除半透明书袋和书脊样式，旧设置及备份回退亚克力；保留票根、壁纸、两种原书架样式及原睡眠恢复逻辑。
+- 浅色拼贴封面增加沿真实圆角边缘的细灰描边，缓存自动重建；深色封面保持原样。
+- 新增可选四位数字锁屏密码：开启确认、验证原密码后修改/关闭，真实锁屏模糊背景、导入系统字体、按下反馈及局部灰阶刷新；浅睡/深睡/冷启动验证后恢复页面，取消保持锁定。凭据使用加盐摘要，普通配置恢复不覆盖；低内存、触摸读错和多指取消不会绕过验证。
 - 本地测试保持 rc89，尚未发布。
 
-Add a D-layout library collage lock with aspect-preserved real covers, native imported system typography, SD caching, bounded workspaces and safe memory fallback. Retired pocket/spine settings migrate to acrylic. Local builds retain rc89 and are not published.
+Add a D-layout library collage lock with aspect-preserved real covers, native imported system typography, SD caching, bounded workspaces and safe memory fallback. Pale covers gain a fine rounded gray outline. An optional four-digit PIN verifies wake/cold starts, retains the saved page, confirms setup and requires the old PIN for changes. Cached frosted lock art and native system glyphs use local feedback; faults cannot bypass authentication. Salted credentials are excluded from ordinary backups. Retired pocket/spine settings migrate to acrylic. Local builds retain rc89 and are not published.
 
 ## 0.3.3-rc89
 

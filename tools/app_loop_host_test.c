@@ -114,7 +114,7 @@ void display_main_transition_disarm(void) {nav_armed=NULL;}
 void rails_idle_check(int64_t n) {(void)n;}
 bool read_pico_pmu_ready(void) {return lock_due;}
 read_pico_pmu_key_action_t read_pico_pmu_take_key_action(void) {return READ_PICO_PMU_KEY_SHORT;}
-void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,bool reader) {(void)h;(void)t;(void)a;(void)reader;assert(!nav_armed);++idle_locks;lock_due=false;time_offset+=1000000;}
+void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,void*tp,bool reader) {(void)tp;(void)h;(void)t;(void)a;(void)reader;assert(!nav_armed);++idle_locks;lock_due=false;time_offset+=1000000;}
 void app_lock_wait_key_idle(int ms) {(void)ms;}
 void app_enter_host_sleep(app_sleep_mode_t mode) {(void)mode;longjmp(done,1);}
 void app_restart_host(void) {longjmp(done,1);}

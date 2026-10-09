@@ -126,8 +126,17 @@ esp_err_t pico_boot_save_resume(const pico_resume_t *resume) {
     s_record.resume_valid = 1;
     return store();
 }
+void pico_boot_hold_resume(void) {
+    if (s_resume_pending) (void)pico_boot_save_resume(&s_resume);
+}
 bool pico_boot_take_resume(pico_resume_t *resume) {
     if (!resume || !s_resume_pending) return false;
+    // 密码等待可能再次持久化；先消费再允许恢复，写入失败不能重试开书。
+    // Authentication may have re-persisted it; consume before admission and never retry after a write failure.
+    if (s_record.resume_valid) {
+        s_record.resume_valid = 0;
+        if (store() != ESP_OK) { s_resume_pending = false; return false; }
+    }
     *resume = s_resume;
     s_resume_pending = false;
     return true;

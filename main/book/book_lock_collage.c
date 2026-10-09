@@ -45,6 +45,7 @@
 #endif
 #define LOCK_CACHE_DIR BOOK_LOCK_CACHE_PARENT "/locks"
 #define LOCK_CACHE_VERSION 1u
+#define LOCK_RENDER_REVISION 2u
 #define LOCK_CACHE_MAGIC UINT32_C(0x4c434431)
 #define LOCK_COVER_HEIGHT 334.f
 #define LOCK_GAP 18.f
@@ -352,7 +353,27 @@ static uint8_t sample_cover(const uint8_t *gray, const lock_book_t *book, float 
     float b = gray[ny * book->width + x] * (1.f - fx) + gray[ny * book->width + nx] * fx;
     return (uint8_t)(a * (1.f - fy) + b * fy + .5f);
 }
+// 只给边缘整体偏浅的封面加细灰描边；沿旋转后的真实圆角，不画矩形底板。
+// Outline covers with pale overall edges; follow the rotated rounded shape without a rectangular backing.
+static bool pale_cover(const uint8_t *gray, const lock_book_t *book) {
+    unsigned sum = 0;
+    for (unsigned i = 0; i < 32; ++i) {
+        unsigned x = i * (book->width - 1) / 31, y = i * (book->height - 1) / 31;
+        sum += gray[x] + gray[(book->height - 1) * book->width + x] +
+               gray[y * book->width] + gray[y * book->width + book->width - 1];
+    }
+    return sum >= 128u * 200u;
+}
+static bool cover_edge(float x, float y, float width) {
+    const float inset = 1.3f;
+    if (x < inset || y < inset || x >= width - inset || y >= LOCK_COVER_HEIGHT - inset) return true;
+    float radius = fminf(LOCK_RADIUS, width / 2.f);
+    float cx = fmaxf(radius - x, x - (width - radius));
+    float cy = fmaxf(radius - y, y - (LOCK_COVER_HEIGHT - radius));
+    return cx > 0 && cy > 0 && cx * cx + cy * cy >= (radius - inset) * (radius - inset);
+}
 static void cover_draw(uint8_t *fb, const uint8_t *gray, const lock_book_t *book, lock_placement_t p) {
+    bool outline = pale_cover(gray, book);
     float x0 = 342.f + LOCK_COS * p.x - LOCK_SIN * p.y;
     float y0 = 608.f + LOCK_SIN * p.x + LOCK_COS * p.y;
     // 转为整数前先裁到屏幕，极宽封面和损坏的缓存不能使坐标溢出。
@@ -370,6 +391,7 @@ static void cover_draw(uint8_t *fb, const uint8_t *gray, const lock_book_t *book
                                         v * book->height / LOCK_COVER_HEIGHT - .5f);
             // 源缓存为未抖动灰阶，最终屏幕坐标只量化一次；不跟随主页黑白快刷。
             // Source cache is undithered gray; quantize once at screen coordinates, independent of main-page BW modes.
+            if (outline && cover_edge(u, v, p.w)) tone = 112;
             epd_draw_pixel(x, y, ui_image_dither_gray(tone, x, y), fb);
         }
         lock_yield((unsigned)y);
@@ -454,6 +476,8 @@ bool book_lock_collage_draw(uint8_t *fb) {
     key = file_key(key, ttf_font_path());
     int weight = ttf_get_weight(), rotation = epd_get_rotation();
     key = hash_bytes(key, &weight, sizeof(weight)); key = hash_bytes(key, &rotation, sizeof(rotation));
+    const uint32_t render_revision = LOCK_RENDER_REVISION;
+    key = hash_bytes(key, &render_revision, sizeof(render_revision));
     key = hash_bytes(key, &library->count, sizeof(library->count));
     for (unsigned i = 0; i < library->used; ++i) {
         key = hash_bytes(key, &library->books[i].key, sizeof(library->books[i].key));

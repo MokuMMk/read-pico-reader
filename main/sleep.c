@@ -12,6 +12,9 @@
 
 #include "sleep.h"
 #include "boot_state.h"
+#include "lock_pin.h"
+#include "lock_screen.h"
+#include "read_pico_sd.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -347,7 +350,7 @@ void app_restart_host(void) {
 }
 
 void enter_lock_and_sleep(
-    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc,
+    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc, cst836u_handle_t touch,
     bool reader_background
 ) {
     // Refuse to interrupt an active upload. The caller repaints its page when
@@ -364,7 +367,7 @@ void enter_lock_and_sleep(
     epd_hl_set_all_white(hl);
     uint8_t lock_style = app_settings_lock_style();
     bool ticket = lock_style == 0;
-    bool system_lock = ticket || lock_style == 2;
+    bool system_lock = ticket || lock_style == 2 || lock_pin_enabled();
     app_lock_font_t lock_font = {0};
     if (system_lock) app_font_begin_lock(&lock_font);
     // 阅读票根独占锁屏画布：始终先画最近书籍封面，再叠票根；自定义壁纸只属于壁纸模式。
@@ -383,7 +386,9 @@ void enter_lock_and_sleep(
     // Locks light-sleep first, enter deep sleep after ten minutes and wake through the saved page checkpoint.
     ESP_LOGI(TAG, "lock LIGHT");
     epd_poweroff();
-    app_wake_source_t wake = app_light_sleep_wait_timed(acc, APP_LOCK_LIGHT_SLEEP_MS);
+    app_wake_source_t wake = APP_WAKE_KEY;
+    if (lock_pin_enabled()) lock_screen_authenticate(hl, touch, acc, false);
+    else wake = app_light_sleep_wait_timed(acc, APP_LOCK_LIGHT_SLEEP_MS);
     if (wake == APP_WAKE_TIMEOUT) {
         // PMU SOFT_SLEEP drops the ESP rail while keeping its RTC alive. A short
         // power-key press boots the host; the e-paper keeps this lock image.
@@ -404,4 +409,22 @@ void enter_lock_and_sleep(
         *ignore_until_ms = esp_timer_get_time() / 1000 + APP_LOCK_IGNORE_BOOT_MS;
     }
     ESP_LOGI(TAG, "unlocked");
+}
+
+void app_lock_boot_gate(EpdiyHighlevelState *hl, cst836u_handle_t touch, sc7a20h_handle_t acc) {
+    if (!lock_pin_enabled()) return;
+    // 卡挂载有界等待仅为了字体/锁屏图；没有卡仍必须验证。
+    // Bound mount waiting for the face/art only; absent media still requires authentication.
+    read_pico_sd_info_t info;
+    for (unsigned i = 0; i < 150 && read_pico_sd_get_info(&info) == ESP_ERR_NOT_FINISHED; ++i)
+        vTaskDelay(pdMS_TO_TICKS(20));
+    app_lock_font_t saved; app_font_begin_lock(&saved);
+    uint8_t *fb = epd_hl_get_framebuffer(hl);
+    if (!lock_screen_restore(fb)) {
+        bool drawn = app_settings_lock_style() == 0 ? book_ticket_draw(fb, false) :
+            app_settings_lock_style() == 2 ? book_lock_collage_draw(fb) : draw_wallpaper(fb);
+        if (!drawn) { memset(fb, 255, (size_t)epd_width() * epd_height() / 2); ui_draw_full_image(fb, lock_4bpp_bin_start); }
+    }
+    lock_screen_authenticate(hl, touch, acc, true);
+    app_font_end_lock(&saved);
 }

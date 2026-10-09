@@ -135,6 +135,10 @@ int main(int argc,char **argv){
  uint8_t *fb=malloc(LOCK_FRAME_BYTES),*other=malloc(LOCK_FRAME_BYTES);assert(fb&&other);
  lock_library_t *lib=library_load();assert(lib&&lib->count==15&&lib->used==15&&lib->cache_complete);
  for(unsigned i=0;i<15;++i){uint8_t *g=cover_load(&lib->books[i],&lib->cache_complete);assert(g&&lib->books[i].source_h);host_free(g);}
+ uint8_t pale[16];memset(pale,255,sizeof(pale));lock_book_t sample={.width=4,.height=4};
+ assert(pale_cover(pale,&sample));memset(pale,80,sizeof(pale));assert(!pale_cover(pale,&sample));
+ assert(cover_edge(0.5f,30,220)&&cover_edge(219.5f,30,220)&&!cover_edge(110,100,220));
+ assert(cover_edge(4.8f,4.8f,220)&&!inside_cover(0,0,220));
  lock_placement_t p[30];assert(make_placements(lib,p)==30);
  for(unsigned i=0;i<30;++i){const lock_book_t *b=&lib->books[p[i].index];assert(fabsf(p[i].w/334.f-(float)b->source_w/b->source_h)<.00001f);if(i%5)assert(fabsf(p[i].x-p[i-1].x-p[i-1].w-18.f)<.001f);}
  host_free(lib);assert(decoded==15);

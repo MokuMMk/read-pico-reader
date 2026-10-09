@@ -37,6 +37,7 @@
 #include "read_pico_pmu.h"
 #include "read_pico_pmu_protocol.h"
 #include "settings.h"
+#include "sleep.h"
 #include "ttf_font.h"
 #include "usb_storage.h"
 #include "app_font_context.h"
@@ -137,6 +138,7 @@ void app_main(void) {
     // Confirm a new slot only after hardware, display, touch, and required setup succeed.
     pico_ota_confirm_running();
 
+    app_lock_boot_gate(&hl, hw.touch, hw.sensor);
     const app_desc_t *first = app_home_page();
     pico_resume_t resume;
     if (pico_boot_take_resume(&resume)) {

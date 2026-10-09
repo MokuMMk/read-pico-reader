@@ -30,6 +30,8 @@
 #include "app_registry.h"
 #include "app_transfer_mode.h"
 #include "settings.h"
+#include "lock_pin_flow.h"
+#include "ui_pinpad.h"
 #include "book_lock_collage.h"
 #include "boot_state.h"
 #include "ble_page_turner.h"
@@ -68,8 +70,49 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_CONFIG, SETTINGS_UPGRADE, SETTINGS_BOOT,
                SETTINGS_POWER_SLEEP, SETTINGS_AUTO_LOCK, SETTINGS_PROFILE, SETTINGS_AVATAR,
                SETTINGS_BLUETOOTH, SETTINGS_BLE_SCAN,
-               SETTINGS_TEXT_EDIT } settings_page_t;
+               SETTINGS_LOCK_PIN, SETTINGS_PIN_ENTRY, SETTINGS_TEXT_EDIT } settings_page_t;
 static settings_page_t s_page;
+static ui_pinpad_t s_pinpad;
+static lock_pin_flow_t s_pinflow;
+static bool s_pin_pending;
+static unsigned s_pin_failures;
+static int64_t s_pin_retry_at;
+static void pin_setup_close(void) {
+    ui_pinpad_end(&s_pinpad); lock_pin_flow_end(&s_pinflow); s_pin_pending = false;
+}
+static void pin_setup_open(app_ctx_t *ctx, bool disable) {
+    pin_setup_close(); lock_pin_flow_begin(&s_pinflow, disable);
+    ui_pinpad_begin(&s_pinpad, ctx->fb, lock_pin_flow_title(&s_pinflow));
+    s_page = SETTINGS_PIN_ENTRY;
+}
+static app_redraw_t pin_paint(app_ctx_t *ctx, EpdRect area) {
+    ui_pinpad_paint(ctx->fb, &s_pinpad, area);
+    guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, area));
+    return APP_REDRAW_DONE;
+}
+static app_redraw_t pin_setup_tick(app_ctx_t *ctx) {
+    if (s_pinpad.blocked && ctx->now_ms >= s_pin_retry_at) {
+        ui_pinpad_reset(&s_pinpad, NULL, "请重新输入");
+        return pin_paint(ctx, ui_pinpad_entry_area());
+    }
+    if (!s_pin_pending) return APP_REDRAW_NONE;
+    s_pin_pending = false;
+    lock_pin_step_t prior = s_pinflow.step;
+    esp_err_t error = lock_pin_flow_input(&s_pinflow, s_pinpad.digits);
+    if (error == ESP_OK && s_pinflow.step == PIN_FLOW_DONE) {
+        pin_setup_close(); s_page = SETTINGS_LOCK_PIN;
+        snprintf(s_notice, sizeof(s_notice), "%s", lock_pin_enabled() ? "锁屏密码已保存" : "锁屏密码已关闭");
+        return APP_REDRAW_PAGE;
+    }
+    const char *notice = error == ESP_OK ? "" : error == ESP_ERR_INVALID_RESPONSE ? "两次输入不同，请重设" :
+        error == ESP_ERR_INVALID_ARG ? "原密码不正确，请重试" : "保存失败，请重试";
+    ui_pinpad_reset(&s_pinpad, lock_pin_flow_title(&s_pinflow), notice);
+    if (error == ESP_ERR_INVALID_ARG && prior == PIN_FLOW_OLD && ++s_pin_failures >= 3) {
+        s_pin_failures = 0; s_pin_retry_at = ctx->now_ms + 10000;
+        snprintf(s_pinpad.notice, sizeof(s_pinpad.notice), "请等待 10 秒后重试"); s_pinpad.blocked = true;
+    }
+    return pin_paint(ctx, (EpdRect){122, 218, 440, 247});
+}
 static int s_style_scroll, s_main_scroll;
 static bool s_collage_prepare_pending;
 static bool s_scroll_drag_consumed, s_scroll_present_pending;
@@ -244,7 +287,7 @@ static const char *const TAG = "device_settings";
 // Row count of the 阅读与设备 group. The scroll limit is derived from it: the last main-page row
 // must be able to sit fully inside the tappable band above the bottom nav (UI_NAV_TOP), or it
 // can never be revealed or tapped.
-#define SETTINGS_DEVICE_ROWS 4
+#define SETTINGS_DEVICE_ROWS 5
 #define SETTINGS_MAINTENANCE_Y (SETTINGS_DEVICE_Y + SETTINGS_DEVICE_ROWS * SETTINGS_ROW_H + 66)
 // 设置行图标：32 像素盒，在行高 68 里垂直居中；墨色统一，避免一行一个灰度。
 // Setting row icons: a 32 px box centred in the 68 px row with one shared ink level.
@@ -649,12 +692,25 @@ static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
 
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
+    if (s_page == SETTINGS_PIN_ENTRY) { ui_pinpad_paint(fb, &s_pinpad, ui_pinpad_full()); return; }
     ui_clear_page(fb);
 
     if (s_page == SETTINGS_MAIN || s_page == SETTINGS_SHELF_STYLE)
         epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP},
                       app_settings_main_refresh_mode() != APP_MAIN_REFRESH_NORMAL && s_page == SETTINGS_MAIN ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
+    if (s_page == SETTINGS_LOCK_PIN) {
+        back_header(fb, "锁屏密码");
+        row(fb, 266, "四位数字密码", lock_pin_enabled() ? "已开启" : "已关闭");
+        if (!lock_pin_available()) ui_text_vc(fb, 342, 408, 24, "凭据读取失败，请重启后重试", EPD_DRAW_ALIGN_CENTER, false);
+        else if (lock_pin_enabled()) {
+            row(fb, 406, "修改密码", "验证原密码  ›");
+            row(fb, 512, "关闭密码", "验证原密码  ›");
+        } else row(fb, 406, "开启密码", "设置四位密码  ›");
+        if (s_notice[0]) ui_text_vc(fb, 342, 680, 23, s_notice, EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 342, 752, 21, "修改和关闭密码需验证原密码", EPD_DRAW_ALIGN_CENTER, false);
+        ui_nav_draw(fb, 3); return;
+    }
     if (s_page == SETTINGS_PROFILE) {
         back_header(fb, "个人资料");
         ui_text(fb, 42, 214, 21, "自定义名称与头像", EPD_DRAW_ALIGN_LEFT, false);
@@ -1203,11 +1259,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     unsigned idle_minutes = app_settings_auto_lock_minutes();
     if (idle_minutes) snprintf(idle_value, sizeof(idle_value), "%u 分钟  ›", idle_minutes);
     else strcpy(idle_value, "关闭  ›");
-    const char *display_labels[] = {"锁屏样式", "关机睡眠", "日期与时间", "自动休眠锁屏"};
+    const char *display_labels[] = {"锁屏样式", "关机睡眠", "日期与时间", "自动休眠锁屏", "锁屏密码"};
     const char *display_values[] = {app_settings_lock_style() == 2 ? "书架拼贴  ›" : app_settings_lock_style() == 1 ? "壁纸  ›" : "阅读票根  ›",
                                     app_settings_staged_shutdown() ? "先浅后深  ›" : "彻底断电  ›",
-                                    "设置  ›", idle_value};
-    static const int display_icons[] = {5, 9, 6, 14};
+                                    "设置  ›", idle_value, lock_pin_enabled() ? "已开启  ›" : "已关闭  ›"};
+    static const int display_icons[] = {5, 9, 6, 14, 5};
     _Static_assert(sizeof(display_icons) / sizeof(display_icons[0]) == SETTINGS_DEVICE_ROWS,
                    "each device settings row requires an icon");
     setting_group(fb, SETTINGS_DEVICE_Y - 34, "阅读与设备", SETTINGS_DEVICE_Y,
@@ -1226,6 +1282,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
 
 static void on_enter(app_ctx_t *ctx) {
     (void)ctx;
+    pin_setup_close();
     s_notice[0] = 0;
     s_ble_feedback[0] = 0;
     s_page = SETTINGS_MAIN;
@@ -1272,6 +1329,7 @@ static bool ble_receive_feedback(void) {
 
 static app_redraw_t profile_editor_paint(app_ctx_t *ctx, bool field);
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    if (s_page == SETTINGS_PIN_ENTRY) return pin_setup_tick(ctx);
     if (s_collage_prepare_pending && s_page == SETTINGS_LOCK_STYLE) {
         s_collage_prepare_pending = false;
         // 先让选中反馈可见，再生成卡上缓存；render 本身只绘图。
@@ -1468,6 +1526,19 @@ static app_redraw_t scroll_gesture(const ui_gesture_event_t *ev, int *offset, in
 }
 
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (s_page == SETTINGS_PIN_ENTRY) {
+        EpdRect dirty; ui_pin_result_t result = ui_pinpad_handle(&s_pinpad, ev, &dirty);
+        if (result == UI_PIN_CANCEL) { pin_setup_close(); s_page = SETTINGS_LOCK_PIN; return APP_REDRAW_PAGE; }
+        if (result == UI_PIN_COMPLETE) s_pin_pending = true;
+        return result == UI_PIN_NONE ? APP_REDRAW_NONE : pin_paint(ctx, dirty);
+    }
+    if (s_page == SETTINGS_LOCK_PIN && ev->type == UI_GESTURE_TAP && lock_pin_available() &&
+        (ui_rect_hit((EpdRect){36,406,612,70},ev->x0,ev->y0) ||
+         (lock_pin_enabled() && ui_rect_hit((EpdRect){36,512,612,70},ev->x0,ev->y0)))) {
+        if (ctx->now_ms < s_pin_retry_at) { snprintf(s_notice, sizeof(s_notice), "请等待后重试"); return APP_REDRAW_PAGE; }
+        pin_setup_open(ctx, ev->y0 >= 512); return APP_REDRAW_PAGE;
+    }
+
     if (s_page == SETTINGS_BOOT) {
         if (ev->type != UI_GESTURE_TAP || s_boot_pending) return APP_REDRAW_NONE;
         if (ev->y0 < 190 && ev->x0 < 170) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
@@ -1642,6 +1713,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         ble_pt_scan_stop(); s_page = SETTINGS_BLUETOOTH; s_ble_scroll = 0; return APP_REDRAW_PAGE;
     }
     if (s_page != SETTINGS_MAIN && y < 190) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
+    if (s_page == SETTINGS_LOCK_PIN) return APP_REDRAW_NONE;
     if (s_page == SETTINGS_AUTO_LOCK) {
         const uint8_t values[] = {1, 5, 10, 0};
         for (int i = 0; i < 4; ++i) if (ui_rect_hit((EpdRect){36, 272 + i * 112, 612, 92}, ev->x0, y)) {
@@ -1953,6 +2025,9 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     if (y >= SETTINGS_DEVICE_Y + 3 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 4 * SETTINGS_ROW_H) {
         s_page = SETTINGS_AUTO_LOCK; return APP_REDRAW_PAGE;
     }
+    if (y >= SETTINGS_DEVICE_Y + 4 * SETTINGS_ROW_H && y < SETTINGS_DEVICE_Y + 5 * SETTINGS_ROW_H) {
+        s_page = SETTINGS_LOCK_PIN; s_notice[0] = 0; return APP_REDRAW_PAGE;
+    }
     if (y >= SETTINGS_MAINTENANCE_Y && y < SETTINGS_MAINTENANCE_Y + SETTINGS_ROW_H) {
         upgrade_open(); return APP_REDRAW_PAGE;
     }
@@ -1965,6 +2040,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     return APP_REDRAW_NONE;
 }
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
+    if (s_page == SETTINGS_PIN_ENTRY) { pin_setup_close(); s_page = SETTINGS_LOCK_PIN; return APP_REDRAW_PAGE; }
     if (s_page == SETTINGS_UPGRADE) {
         s_upgrade_job = UPGRADE_JOB_NONE;
         if (s_local_pending || s_upgrade_restart) return APP_REDRAW_NONE;
@@ -1990,11 +2066,13 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 static void settings_exit(app_ctx_t *ctx) {
+    pin_setup_close();
     s_collage_prepare_pending = false;
     s_upgrade_job = UPGRADE_JOB_NONE;
     (void)ctx; ui_keyboard_end(); pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
 }
 static void on_before_lock(app_ctx_t *ctx) {
+    if (s_page == SETTINGS_PIN_ENTRY) { pin_setup_close(); s_page = SETTINGS_LOCK_PIN; }
     s_upgrade_job = UPGRADE_JOB_NONE;
     (void)ctx; pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
     (void)ble_pt_stop(2000);
@@ -2002,6 +2080,11 @@ static void on_before_lock(app_ctx_t *ctx) {
 static bool no_menu_handle(app_ctx_t *ctx) { (void)ctx; return false; }
 static bool main_page_visible(app_ctx_t *ctx) { (void)ctx; return s_page == SETTINGS_MAIN; }
 static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
+    if (s_page == SETTINGS_PIN_ENTRY && (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL)) {
+        display_main_transition_cancel(); render(ctx, ctx->fb);
+        guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, ui_pinpad_full()));
+        return true;
+    }
     if (redraw == APP_REDRAW_AREA && s_page == SETTINGS_TEXT_EDIT) {
         if (s_input_settle) {
             guard_draw_result(ctx->hl, update_display_area_full_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, s_input_area));

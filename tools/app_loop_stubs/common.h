@@ -50,7 +50,7 @@ void rails_idle_check(int64_t);
 bool read_pico_pmu_ready(void);
 typedef enum { READ_PICO_PMU_KEY_NONE, READ_PICO_PMU_KEY_SHORT, READ_PICO_PMU_KEY_LONG } read_pico_pmu_key_action_t;
 read_pico_pmu_key_action_t read_pico_pmu_take_key_action(void);
-void enter_lock_and_sleep(EpdiyHighlevelState*, int64_t*, void*, bool);
+void enter_lock_and_sleep(EpdiyHighlevelState*, int64_t*, void*, void*, bool);
 void app_lock_wait_key_idle(int);
 typedef enum { APP_SLEEP_SOFT, APP_SLEEP_OFF } app_sleep_mode_t;
 void app_enter_host_sleep(app_sleep_mode_t);

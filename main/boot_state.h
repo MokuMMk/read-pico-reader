@@ -28,6 +28,8 @@ void pico_boot_book_end(bool success);
 esp_err_t pico_boot_save_resume(const pico_resume_t *resume);
 /// 启动时先在 NVS 消费恢复入口，再交给调用方；一次失败不形成重启循环。/ Consume in NVS before returning a resume target so failures cannot loop.
 bool pico_boot_take_resume(pico_resume_t *resume);
+/// 密码等待期间保留启动恢复；实际开书前仍先消费。/ Hold resume during authentication; still consume before opening.
+void pico_boot_hold_resume(void);
 void pico_boot_clear_resume(void);
 /// 仅导出本次启动发现的中断图书；不把一般异常归因给最后阅读的书。/ Export only a book interrupted on this boot, never blame the last read for a generic reset.
 bool pico_boot_interrupted_book(char *path, size_t capacity);

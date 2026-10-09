@@ -14,6 +14,7 @@
 #include "epd_highlevel.h"
 #include "esp_err.h"
 #include "sc7a20h.h"
+#include "cst836u.h"
 #include "settings.h"
 
 #ifdef __cplusplus
@@ -28,9 +29,12 @@ typedef enum {
 } app_wake_source_t;
 
 void enter_lock_and_sleep(
-    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc,
+    EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc, cst836u_handle_t touch,
     bool reader_background
 );
+
+/// 在消费恢复/开书前进行冷启动与深睡密码验证。/ Gate cold/deep starts before consuming resume or opening books.
+void app_lock_boot_gate(EpdiyHighlevelState *hl, cst836u_handle_t touch, sc7a20h_handle_t acc);
 
 /// 等电源键松开，避免进睡瞬间被同一下按住立刻唤醒。
 /// Wait for the power key to release so the same press does not wake immediately.
