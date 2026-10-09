@@ -5,6 +5,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 未发布 / Unreleased
 
+- 修正存储卡上缺少所选字体时的无限刷新：字体重试的回退分支把“内建字体已在用”报成一次变化，主循环据此每 750ms 整屏重画，并顺带重新加载一次字体。现在内建已在用时不再算作变化；重试本身保留，字体之后出现在卡上仍会生效。
+  Fix an endless refresh when the card lacks the chosen font: the retry's fallback branch reported the already-active built-in face as a change, so the loop repainted the whole screen and reloaded a font every 750 ms. The fallback no longer counts as a change while the built-in is active; the retry itself stays, so a face that appears on the card later still takes effect.
 - 加快主页水波纹：使用与阅读相同的一拍一带调度，将24带83拍改为16带52拍，保留12ms目标节拍、完整37相、原灰阶波形、底栏范围与异常恢复。软件目标由996ms缩至624ms，实际速度与残影需实屏确认；阅读翻页、刷新模式默认值不变。
   Speed up main-screen ripple with reader-style compact launches: 16 bands/52 ticks instead of 24 bands/83 ticks, retaining the 12ms target, all 37 phases, gray waveform, navigation bounds and recovery. The software target drops from 996ms to 624ms; hardware speed and ghosting require device checks. Reader turns and refresh-mode defaults are unchanged.
 
