@@ -74,7 +74,7 @@ static int app_settings_shelf_style(void){return test_style;}
 static bool app_settings_main_fast_refresh(void){return test_fast;}
 static int shelf_rows(void){return test_style==5?4:9;}
 static unsigned test_list_draws,test_prepares;
-static EpdRect paint_list_cover_feedback(app_ctx_t *ctx,int row){(void)ctx;++test_list_draws;return (EpdRect){64,219+row*197,134,182};}
+static EpdRect paint_list_cover_feedback(app_ctx_t *ctx,int row){(void)ctx;++test_list_draws;return (EpdRect){71,228+row*197,120,164};}
 static EpdRect row_rect(int row){return (EpdRect){42+(row%3)*210,220+(row/3)*272,176,240};}
 static const char *s_text;
 static void prepare_inline_image(void){}
@@ -176,7 +176,7 @@ int main(void){
    unsigned before=pushes;assert(present(&ctx,APP_REDRAW_AREA));
    assert(pushes==before+1&&route==DIFF&&pushed_mode==(fast?MODE_DU:MODE_GL16));
    assert(trace_wave[trace_count-1]==(fast?E0470_FOLLOW_WAVEFORM:E0470_WAVEFORM));
-   assert(pushed_area.x==64&&pushed_area.width==134&&pushed_area.height==182&&!s_du_count);
+   assert(pushed_area.x==71&&pushed_area.width==120&&pushed_area.height==164&&!s_du_count);
    if(trace_count>240)trace_count=0;
  }
  assert(test_body_draws==body_before&&test_prepares==prepares_before&&test_list_draws==160);

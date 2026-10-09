@@ -32,6 +32,8 @@
  * 用户修订：书架封面抽出与取消仅驱动变化像素，保持灰阶，不在点按时强制清屏。
  * 用户修订：列表封面上弹8px，松手先回位再开书；只重画两位置的并集，复用缓存，不触碰文字/边框/分隔线。快刷用跟随DU，其他模式保留灰阶差分。
  * User revision: list covers bounce up 8px and settle before opening; repaint only the position union using cached artwork, preserving text, frames and separators. Fast uses FOLLOW DU; other modes retain gray differentials.
+ * 用户确认：列表封面缩至120×156，保留原中心点与右侧文字位置，等比填充并居中裁切。
+ * User approval: list covers use 120×156 boxes, retaining their center and right-side text positions with aspect fill and centered cropping.
  * 用户修订：快刷亚克力采用规则一像素棋盘格，与已缓存封面合并输出，不注册灰区或等待框架先显示；未缓存封面继续有界延后解码。普通及水波纹保留灰阶，切页/锁屏取消旧目标。
  * User revision: fast acrylic uses a regular one-pixel checkerboard in the same output as cached covers, without gray registration or a furniture-first wait; uncached covers retain bounded lazy decoding. Ordinary/water retain grays; page/lock changes cancel stale targets.
  * 用户要求采用PR17的快速水波纹，替换既有阅读水波纹选项，不增加旧速选项；每次显式选14ms，结束恢复先前节拍，避免影响主页动画。全刷、插图及失败恢复保留原优先级。
@@ -459,7 +461,7 @@ static EpdRect shelf_cover_image(int row) {
     if (s_view != SHELF || app_settings_shelf_style() != 5)
         return (EpdRect){card.x + (card.width - 164) / 2, card.y, 164, 214};
     // 列表所有封面统一尺寸；原图按比例铺满并居中裁切。/ Uniform list boxes use aspect fill and center crop.
-    return (EpdRect){64, card.y + (197-174)/2, 134, 174};
+    return (EpdRect){71, card.y + (197-156)/2, 120, 156};
 }
 static void invalidate_covers(void) {
     s_cover_pending_mask = 0;

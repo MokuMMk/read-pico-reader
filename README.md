@@ -105,6 +105,6 @@ Shake-to-turn is off by default and enabled in reader Font Settings. A horizonta
 
 ### Local test: list shelf and lock feedback
 
-Settings → Display → Shelf style adds a four-book list with uniform 134×174px covers (aspect fill, centered cropping), author, progress and favorite badges, and at most two title lines. Existing paging, management and favorite ordering remain available. The choice persists across restart and backup restoration. Normal/ripple retain gray covers; fast mode retains only BW covers.
+Settings → Display → Shelf style adds a four-book list with uniform 120×156px covers (aspect fill, centered cropping), author, progress and favorite badges, and at most two title lines. Existing paging, management and favorite ordering remain available. The choice persists across restart and backup restoration. Normal/ripple retain gray covers; fast mode retains only BW covers.
 
 Dark two-pixel frames and separators remain visible in fast/ripple modes. PIN entry paints the complete screen once, without a second backdrop stage. PIN input updates only the inner circular feedback and password dots with local BW differences, without rerendering artwork or glyphs. Delete removes one digit; Cancel keeps the device locked. Collage covers gain soft shadows and thinner white typography outlines, with cache invalidation. Wallpaper, ticket and collage images use physical 16-level grayscale with ordered dithering of 256-level source brightness, rather than native 256-level hardware.

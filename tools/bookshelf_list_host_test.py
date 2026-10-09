@@ -114,10 +114,10 @@ int main(int argc,char **argv){
  s_shelf=items;app_ctx_t ctx={.fb=fb};
  for(int i=0;i<4;++i){char path[1024];snprintf(path,sizeof(path),"%s/%d.raw",argv[2],i);FILE *f=fopen(path,"rb");assert(f);assert(fread(&s_covers[i].width,4,1,f)==1&&fread(&s_covers[i].height,4,1,f)==1);unsigned bytes=s_covers[i].width*s_covers[i].height;assert(bytes<=176*240);s_covers[i].gray=malloc(bytes);assert(s_covers[i].gray&&fread(s_covers[i].gray,1,bytes,f)==bytes);fclose(f);
  EpdRect r=shelf_cover_image(i);assert(r.x>=64&&r.x+r.width<=198&&r.y>=216+i*197&&r.y+r.height<=216+(i+1)*197);
- assert(r.x==64&&r.width==134&&r.height==174);
+ assert(r.x==71&&r.width==120&&r.height==156);
  book_crop_t crop=book_cover_crop(s_covers[i].width,s_covers[i].height,r.width,r.height);
  assert(crop.width&&crop.height&&crop.x+crop.width<=s_covers[i].width&&crop.y+crop.height<=s_covers[i].height);
- assert(abs((int)crop.width*r.height-(int)crop.height*r.width)<=174);
+ assert(abs((int)crop.width*r.height-(int)crop.height*r.width)<=r.height);
  draw_shelf_cover(fb,row_rect(i),i,items[i].name,items[i].favorite);draw_list_row(fb,i,&items[i]);
  // 真实像素验证上弹/回位只改变封面并集，不影响面板、文字与分隔线。
  // Actual pixels: bounce/settle touch only the cover union, keeping panel, text and separators.
