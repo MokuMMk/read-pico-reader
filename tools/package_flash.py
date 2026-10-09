@@ -35,7 +35,7 @@ def package(build: Path, output: Path):
     release={'schema':1,'version':version,'project':'Read_Pico','board':'RDP-G01-W','layout':'pico-dual-4m-v1',
         'minimum_base_version':'0.3.3-rc72','url':f'https://wegooo-cell.github.io/read-pico-reader/{upgrade_name}',
         'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),
-        'notes':'1. 优化启动稳定性与异常开书保护\n2. 深睡恢复书籍和阅读位置\n3. 中键长按自定义与工具栏入口保护\n4. 翻页自动全屏并收起工具栏\n5. 票根字体与标题显示修复\n6. 灰阶快捷面板与封面内存优化'}
+        'notes':'1. 移除微信读书登录、书架同步与书籍下载\n2. 文件管理独立显示 WiFi、热点、USB 传输\n3. 优化联网升级显示与内存使用，进度条仅追加更新'}
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
     (output/'update.json').write_text(json.dumps(release,ensure_ascii=False,indent=2)+'\n')
     check(output)

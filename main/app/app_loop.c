@@ -41,7 +41,6 @@
 #include "boot_state.h"
 #include "ble_page_turner.h"
 #include "ota_online.h"
-extern const app_desc_t app_weread;
 #include "continuous_du.h"
 #include "display.h"
 #include "e0470_epaper_waveform.h"
@@ -796,7 +795,7 @@ void app_loop_run(const app_loop_config_t* config) {
         read_pico_transfer_status_t transfer;
         read_pico_transfer_get_status(&transfer);
         const bool wifi_busy = transfer.state != READ_PICO_TRANSFER_STOPPED ||
-            current == &app_weread || pico_online_busy();
+            pico_online_busy();
         ble_pt_sync(app_settings_ble_turner() && !wifi_busy);
         ble_pt_poll();
         if (s_quick.open || quick_input_owned) {

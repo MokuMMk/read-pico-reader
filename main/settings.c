@@ -147,19 +147,6 @@ static bool set_media_dir(char *dst, const char *key, const char *path) {
     return true;
 }
 
-static void remove_legacy_weread_session(void) {
-    // 卸载在线阅读功能后，清除旧版保存的登录凭据；用户的本地书籍不受影响。
-    // Clear credentials left by the removed online reader without touching local books.
-    nvs_handle_t h;
-    if (nvs_open("pico_weread", NVS_READONLY, &h) != ESP_OK) return;
-    size_t size = 0;
-    esp_err_t err = nvs_get_str(h, "cookie", NULL, &size);
-    nvs_close(h);
-    if (err != ESP_OK || nvs_open("pico_weread", NVS_READWRITE, &h) != ESP_OK) return;
-    if (nvs_erase_key(h, "cookie") == ESP_OK) (void)nvs_commit(h);
-    nvs_close(h);
-}
-
 static uint8_t valid_book_px(uint8_t px) {
     return px >= 36 && px <= 72 ? px : 48;
 }
@@ -172,8 +159,6 @@ void app_settings_init(void) {
         ESP_LOGW(TAG, "nvs init %s, use deep sleep", esp_err_to_name(err));
         return;
     }
-
-    remove_legacy_weread_session();
 
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;

@@ -102,7 +102,6 @@ static const struct { const char *roman, *text; } phrases[] = {
     {"suoping", "锁屏"},
     {"bizhi", "壁纸"},
     {"weixin", "微信"},
-    {"weixindushu", "微信读书"},
     {"shuming", "书名"},
     {"mulu", "目录"},
     {"mima", "密码"},

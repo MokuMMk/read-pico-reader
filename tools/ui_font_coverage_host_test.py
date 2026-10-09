@@ -89,9 +89,6 @@ labels += re.findall(r'"([^"\n]*)"', settings[first:last])
 # Shared keys must always use system glyphs; backspace is drawn with lines.
 keyboard=(root/'main/ui/ui_keyboard.c').read_text()
 labels += [ast.literal_eval(literal) for literal in re.findall(r'"(?:\\.|[^"\\])*"', keyboard)]
-# 搜索、进度和下载提示也使用系统字体。/ Search/progress/download labels use the system face too.
-weread=(root/'main/apps/app_weread.c').read_text()
-labels += [ast.literal_eval(literal) for literal in re.findall(r'"(?:\\.|[^"\\])*"', weread)]
 missing = {}
 for label in labels:
     absent = "".join(dict.fromkeys(ch for ch in label if ch != "⌫" and ord(ch) >= 32 and not has_glyph(ord(ch))))

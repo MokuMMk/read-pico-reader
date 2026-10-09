@@ -60,17 +60,6 @@ python3 tools/test_lcd_frame_lifecycle.py
 python3 tools/test_sd_media_guard.py
 
 python3 tools/test_transfer_netif.py
-python3 tools/test_weread_port.py
-cc -std=gnu11 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -Itools/weread_ui_stubs -Icomponents/pico_weread/include \
-    tools/weread_ui_host_test.c -o build/book-tests/weread-ui
-build/book-tests/weread-ui
-
-c++ -std=c++20 -Wall -Wextra -Werror -Wno-unused-parameter -fsanitize=address,undefined \
-    -Itools/weread_service_stubs -Icomponents/pico_weread/include \
-    tools/weread_service_host_test.cpp -o build/book-tests/weread-service
-build/book-tests/weread-service
-
 python3 tools/test_pmu_battery.py
 python3 tools/ble_turner_host_test.py
 for test in ota_release ota_online; do

@@ -20,7 +20,7 @@ The firmware checkpoints the book, position and full-screen state before lock, c
 
 ## Keyboard
 
-Rename, profile name, status signature, shelf search and WiFi password fields share one keyboard. T9 inputs Chinese Pinyin only; QWERTY supports Chinese/English and case switching. Digits are entered from the numeric panel only. Continuous Pinyin uses 488 offline common phrases, pageable homophones and continuations; select a candidate before saving. Tap text or caret arrows to insert and delete in the middle. Holding backspace for half a second repeats deletion, removing pending Pinyin before text at the caret; release or move away to stop. Ordinary input/deletion refreshes changed regions only. After six candidate-strip changes, a 700 ms touch-free pause triggers one local grayscale settle; typing, held deletion and layout switches defer or cancel it. Keys darken/inset on press and restore on release. T9 More cycles through readings; homophones remain available across batches. The embedded black face covers all 6,763 GB2312 Han characters without a TF font package. WiFi passwords use ASCII QWERTY, digits and symbols. Both AP and STA web transfer pages can save or clear the persistent status signature (up to 95 UTF-8 bytes). These features are included in the rc86 release.
+Rename, profile name, status signature, shelf search and WiFi password fields share one keyboard. T9 inputs Chinese Pinyin only; QWERTY supports Chinese/English and case switching. Digits are entered from the numeric panel only. Continuous Pinyin uses 487 offline common phrases, pageable homophones and continuations; select a candidate before saving. Tap text or caret arrows to insert and delete in the middle. Holding backspace for half a second repeats deletion, removing pending Pinyin before text at the caret; release or move away to stop. Ordinary input/deletion refreshes changed regions only. After six candidate-strip changes, a 700 ms touch-free pause triggers one local grayscale settle; typing, held deletion and layout switches defer or cancel it. Keys darken/inset on press and restore on release. T9 More cycles through readings; homophones remain available across batches. The embedded black face covers all 6,763 GB2312 Han characters without a TF font package. WiFi passwords use ASCII QWERTY, digits and symbols. Both AP and STA web transfer pages can save or clear the persistent status signature (up to 95 UTF-8 bytes). These features are included in the rc86 release.
 
 ## Online installation
 
@@ -85,12 +85,8 @@ The fork retains the upstream **Apache-2.0** license and notices. The UI icon se
 
 Please report firmware bugs in this repository, not in the MindReset upstream issue tracker. Hardware purchasing and repair remain matters for the [official support channels](https://dot.mindreset.tech/docs/contact).
 
-## Local rc76 transfer build
+## File transfer
 
-File management groups its launchers as WiFi/hotspot, USB and WeRead transfer. WeRead uses saved internet WiFi for QR login, shelf sync and completed EPUB downloads into the SD books directory, with optional inline illustrations. The UI cancels and joins ongoing work before leaving, locking or losing SD media. Cloud progress is never uploaded. CrossMux and FreeInk SDK MIT notices accompany the native port. This is a local validation build; real account login/download and the reported hotspot reset still require device verification.
-
-### 微读书架多选下载
-
-在微信书架点「多选」，可跨页选择书籍或「全选本页」，再点「下载 N 本」进入批量下载页。每次只下载一本；取消、离页或锁屏会停止队列，已完成书籍保留。封面始终下载，正文插图可选；封面获取失败会提示重试。文件名使用微信书架的书名，仅替换文件系统禁用字符；每批最多选择 1024 本。单本详情返回微信书架，微信书架返回文件管理。
+File management shows **WiFi transfer**, **Hotspot transfer** and **USB transfer** directly. WiFi connects to a saved network or opens network setup; hotspot mode starts the device access point; USB exposes the TF card to the computer. AP/STA browser transfer keeps directory browsing, arbitrary-file uploads and status-signature editing.
 
 Shake-to-turn is off by default and enabled in reader Font Settings. A horizontal left/right impulse turns to the previous/next page. Slow tilts, other axes, touch and rebounds are filtered; wait through an 800 ms cooldown and rest before the next gesture. Direction and sensitivity still need device validation. The global refresh test option is removed and ignored in older configurations.

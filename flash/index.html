@@ -379,18 +379,22 @@
       <p>升级到 rc79 后，也可在系统升级页连接 WiFi，检查并安装官网后续更新。在线更新需要官网发布新版清单；升级期间请保持供电。</p>
     </section>
     <section class="release" aria-labelledby="release-title">
-      <div class="eyebrow">最新正式版 0.3.3-rc88 · 稳定性与阅读恢复</div><h2 id="release-title">这次更新了什么</h2>
+      <div class="eyebrow">最新正式版 0.3.3-rc89 · 本地传输与升级显示</div><h2 id="release-title">这次更新了什么</h2>
       <ul>
-        <li>优化启动与封面加载的内存使用，减少栈占用；快刷仅缓存黑白封面，普通与水波纹仅缓存灰阶封面。</li>
-        <li>异常开书保护：打开书籍被断电或异常重启打断后，停止自动重试，显示书名并提供返回首页或确认删除。</li>
-        <li>深睡前保存书籍、阅读位置与页面状态，开机恢复上次阅读；异常恢复只尝试一次。</li>
-        <li>中键长按支持自定义，可设为返回首页等功能；三键短按和中键长按至少保留一个阅读工具栏入口，旧配置与恢复配置自动修正。</li>
-        <li>新开书默认全屏，翻页自动进入全屏并收起工具栏；中间双击仍可切换全屏。</li>
-        <li>下拉快捷面板与四个圆形按钮加深框线，三种主页刷新模式均使用灰阶渲染。</li>
-        <li>修复票根锁屏字体不一致：票根统一跟随系统字体，浅睡解锁恢复此前阅读字体。</li>
-        <li>首页续读书名跟随系统字体，阅读书名与章节标题跟随阅读字体；直接按原字号生成字形，保持大小和清晰度。</li>
+        <li>移除微信读书扫码登录、在线书架、同步与书籍下载功能。</li>
+        <li>文件管理调整为 WiFi 传输、热点传输、USB 传输三个独立入口，直接进入对应页面；加深按钮边框。</li>
+        <li>WiFi 与热点网页保留目录浏览、任意文件上传、书籍/字体/图片导入和状态栏签名设置。</li>
+        <li>优化联网升级的内存使用，屏幕刷新与固件擦写互斥，减少显示错乱风险。</li>
+        <li>升级进度条只补充增长部分，暂停频繁整页清理；保留断网重试、完整校验与双槽回退。</li>
       </ul>
       <p>rc87 已下架。原发布的 rc86、rc85 仍可选择刷入。rc84 及以后固件发现更新时会显示简短日志与“稍后 / 开始更新”。在线刷机、TF 升级和联网 OTA 使用同一固件，保留已有设置、阅读数据和 TF 卡内容。</p>
+      <details><summary>上一版 rc88 的更新</summary>
+      <ul>
+        <li>优化启动与封面内存、异常开书保护，减少重复重启风险。</li>
+        <li>深睡恢复阅读位置，中键长按自定义，保护阅读工具栏入口。</li>
+        <li>新开书与翻页自动全屏；修复票根字体、书籍标题显示和灰阶快捷面板。</li>
+      </ul>
+      </details>
       <details><summary>上一版 rc86 的更新</summary>
       <ul>
         <li>全新输入法：九宫格拼音、全键盘中英文与大小写、独立数字和符号页面。</li>
@@ -459,14 +463,13 @@
         <li>蓝牙翻页器位于设置“无线连接”分组，在 WiFi 下一行；同步调整点击范围与滚动布局。</li>
         <li>新增“升级和恢复”分组，系统升级、保存与恢复及 BOOT 刷机各占一行，修正 BOOT 行的点击范围。</li>
         <li>新增联网 OTA，提供 TF 升级 Bin；发布前核验基础包、分区、版本和校验值。</li>
-        <li>优化微读连接复用、下载等待和断网重试；新蓝牙选项加入配置备份。</li>
+        <li>新蓝牙选项加入配置备份。</li>
         <li>统一采用 PMU 软件油量表与有效位，状态栏和资料卡电量取整保持一致。</li>
       </ul>
       </details>
       <p>rc79 及以后版本可在“设置 → 升级和恢复 → 系统升级”检查联网更新到 rc88。在线刷机、TF 升级 Bin 和联网 OTA 来自同一次编译，保留已有设置与阅读数据。</p>
-      <img src="./weread-preview.png" alt="微读跨页选择与逐本下载界面" style="display:block;width:100%;height:auto;margin-top:24px;border-radius:16px;">
     </section>
-    <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点、USB 或微读传书导入书籍和文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>
+    <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点或 USB 传输导入书籍和文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>
     <section class="faq" aria-labelledby="faq-title"><div class="eyebrow">HELP</div><h2 id="faq-title">遇到问题时</h2><details><summary>点了按钮，却看不到 Pico 的串口？</summary><p>先确认你在电脑端 Chrome 或 Edge 中打开了本站，并退出 Pico 的 USB 读卡模式。换一根确定能传文件的 USB 线，拔插设备后重试；若串口被其他刷机工具占用，先关闭那个工具。已安装新版固件的设备也可从“设置 → 升级和恢复 → BOOT 刷机”进入刷写模式。</p></details><details><summary>为什么需要进入 BOOT 模式？</summary><p>正常连接 USB 串口时，刷机工具会尝试自动切换。若设备处于锁屏休眠或电脑未识别到串口，可先唤醒 Pico，再从设置中的“BOOT 刷机”进入 BOOT 模式，等电脑重新识别后重试。首次刷机时若还没有这个菜单，可先尝试直接连接刷机。</p></details><details><summary>刷完开机，为什么书架是空的？</summary><p>固件不预装书。请插入 TF 卡，在“文件管理”中使用 WiFi、热点或 USB 传书，也可以把 EPUB / TXT 文件放进 TF 卡的 <code>books</code> 文件夹。</p></details><details><summary>阅读时怎样打开设置？</summary><p>阅读正文默认单击中键打开阅读工具栏，长按中键全刷，中间双击切换全屏。可在“阅读设置 → 按键控制”自定义三键或选择两套推荐配置。</p></details></section>
     <footer><p><a href="https://github.com/wegooo-cell/read-pico-reader" target="_blank" rel="noopener">查看项目源码</a> · <a href="./notices.html">第三方许可与致谢</a></p><p>本项目基于 <a href="https://github.com/MindReset/read_pico_firmware" target="_blank" rel="noopener">MindReset Read Pico 示例固件</a>，并非官方发布。界面图标取自 <a href="https://lucide.dev/icons/" target="_blank" rel="noopener">Lucide</a>，保留其 <a href="./licenses/LUCIDE-ISC.txt">ISC 许可</a>。网页刷机使用 <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>。</p></footer>
   </main>
