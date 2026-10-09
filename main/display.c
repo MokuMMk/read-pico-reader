@@ -12,6 +12,8 @@
  * User revision: all main-screen modes retain navigation and move only its marker locally; ordinary retains original grays and body cleanup cadence. Fast checkerboard acrylic and covers share one BW target. Initial entry, unlock and explicit full refresh rebuild complete navigation; never fabricate back.
  * 用户修订：所有推屏及欠载恢复与 OTA 擦写共用递归锁；无升级任务时保持原波形、范围和节奏。
  * User revision: serialize all display output and underrun recovery with OTA flash operations; keep existing waveforms, bounds and cadence outside updates.
+ * 用户要求加快主页水波纹：复用阅读的一拍一带调度，以16带37相共52拍完成；保留主页12ms节拍、原灰阶、底栏边界、OTA锁及失败恢复。
+ * User requests faster main-page ripple: reuse reader-style compact launches for 16 bands/37 phases over 52 ticks; retain main 12ms pacing, original grays, navigation bounds, OTA locking and recovery.
  */
 
 #include "display.h"
@@ -285,8 +287,8 @@ static bool main_begin(EpdiyHighlevelState* hl, enum EpdDrawError* result) {
         // Water outputs the final gray target directly, without a BW prepass or a second whole-page gray update; common recovery handles failure.
         read_pico_epd_use_scan(READ_PICO_EPD_SCAN_FAST);
         epd_lcd_set_prefill_lines(s_bulk_io ? 127 : 64);
-        *result = e0470_page_turn_with_waveform(hl, main_body_area(), E0470_TURN_RTL,
-                                               display_main_water_waveform(), 24);
+        *result = e0470_page_turn_with_waveform_compact(hl, main_body_area(), E0470_TURN_RTL,
+                                                       display_main_water_waveform(), 16);
         if (*result == EPD_DRAW_NO_PHASES_AVAILABLE) {
             use_scan_for(body_wave, MODE_GL16);
             *result = epd_hl_update_area(hl, MODE_GL16, 25, main_body_area());

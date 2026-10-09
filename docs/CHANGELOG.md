@@ -25,6 +25,9 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 Add a D-layout library collage lock with aspect-preserved real covers, native imported system typography, SD caching, bounded workspaces and safe memory fallback. Pale covers gain a fine rounded gray outline. An optional four-digit PIN verifies wake/cold starts, retains the saved page, confirms setup and requires the old PIN for changes. Cached frosted lock art and native system glyphs use local feedback; faults cannot bypass authentication. Salted credentials are excluded from ordinary backups. Retired pocket/spine settings migrate to acrylic. Local builds retain rc89 and are not published.
 
+- 加快主页水波纹：使用与阅读相同的一拍一带调度，将24带83拍改为16带52拍，保留12ms目标节拍、完整37相、原灰阶波形、底栏范围与异常恢复。软件目标由996ms缩至624ms，实际速度与残影需实屏确认；阅读翻页、刷新模式默认值不变。
+  Speed up main-screen ripple with reader-style compact launches: 16 bands/52 ticks instead of 24 bands/83 ticks, retaining the 12ms target, all 37 phases, gray waveform, navigation bounds and recovery. The software target drops from 996ms to 624ms; hardware speed and ghosting require device checks. Reader turns and refresh-mode defaults are unchanged.
+
 ## 0.3.3-rc89
 
 - 移除微信读书登录、在线书架、同步、下载功能与相关源码、测试及网页预览。文件管理直接显示 WiFi 传输、热点传输、USB 传输三个入口，加深传输卡片边框。
