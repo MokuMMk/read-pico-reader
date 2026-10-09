@@ -32,7 +32,7 @@ class LocalLinks(HTMLParser):
 def stage(output: Path) -> None:
     check(FLASH)
     output.mkdir(parents=True, exist_ok=True)
-    for name in ("index.html", "notices.html", "manifest.json", "transfer-preview.png", "toc-preview.png", "firmware.bin",
+    for name in ("index.html", "notices.html", "manifest.json", "toc-preview.png", "firmware.bin",
                  "bootloader.bin", "partitions.bin", "ota_data_initial.bin", "Pico-update.bin", "update.json"):
         shutil.copy2(FLASH / name, output / name)
     version = json.loads((FLASH / "manifest.json").read_text())["version"]
