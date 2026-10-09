@@ -30,6 +30,8 @@
  * 用户修订：为减少翻页文字闪动，仅前后均为纯文字的翻页使用 CrossMux 文字波形与 GL16 差分；插图与混排转换、周期全刷及水波纹保持原规则。
  * 用户修订：目录由独立模块整页绘制与命中；目录标题清理换行并限制为单行，翻页不再沿用书架的局部刷新。
  * 用户修订：书架封面抽出与取消仅驱动变化像素，保持灰阶，不在点按时强制清屏。
+ * 用户修订：列表封面上弹8px，松手先回位再开书；只重画两位置的并集，复用缓存，不触碰文字/边框/分隔线。快刷用跟随DU，其他模式保留灰阶差分。
+ * User revision: list covers bounce up 8px and settle before opening; repaint only the position union using cached artwork, preserving text, frames and separators. Fast uses FOLLOW DU; other modes retain gray differentials.
  * 用户修订：快刷亚克力采用规则一像素棋盘格，与已缓存封面合并输出，不注册灰区或等待框架先显示；未缓存封面继续有界延后解码。普通及水波纹保留灰阶，切页/锁屏取消旧目标。
  * User revision: fast acrylic uses a regular one-pixel checkerboard in the same output as cached covers, without gray registration or a furniture-first wait; uncached covers retain bounded lazy decoding. Ordinary/water retain grays; page/lock changes cancel stale targets.
  * 用户要求采用PR17的快速水波纹，替换既有阅读水波纹选项，不增加旧速选项；每次显式选14ms，结束恢复先前节拍，避免影响主页动画。全刷、插图及失败恢复保留原优先级。
@@ -436,6 +438,7 @@ static EpdRect progress_rect(void) {
 }
 static int shelf_rows(void) { return s_view == SHELF && app_settings_shelf_style() == 5 ? 4 : BOOK_GRID_ROWS; }
 #define SHELF_BOOK_LIFT_PX 16
+#define SHELF_LIST_BOUNCE_PX 8
 #define SHELF_FAST_COVER_WIDTH 164
 #define SHELF_FAST_COVER_HEIGHT 214
 #define SHELF_FAST_COVER_STRIDE ((SHELF_FAST_COVER_WIDTH + 7) / 8)
@@ -668,6 +671,21 @@ static void draw_shelf_cover(uint8_t* fb, EpdRect card, int row, const char* nam
                                          app_settings_shelf_style() == 5 ? s_covers[row].width : BOOK_COVER_W,
                                          app_settings_shelf_style() == 5 ? s_covers[row].height : BOOK_COVER_H));
     }
+}
+static EpdRect paint_list_cover_feedback(app_ctx_t *ctx, int row) {
+    EpdRect image = shelf_cover_image(row);
+    EpdRect area = image;
+    area.y -= SHELF_LIST_BOUNCE_PX;
+    area.height += SHELF_LIST_BOUNCE_PX;
+    // 两位置均位于白色列表卡片内；不清整行，也不绘制额外反馈框。
+    // Both positions stay within the white list card; never clear a whole row or add a feedback frame.
+    epd_fill_rect(area, UI_GRAY_WHITE, ctx->fb);
+    EpdRect card = row_rect(row);
+    if (s_pressed_control == row) card.y -= SHELF_LIST_BOUNCE_PX;
+    int index = ctx->leaf * shelf_rows() + row;
+    if (index >= 0 && index < s_visible_count)
+        draw_shelf_cover(ctx->fb, card, row, s_shelf[index].name, s_shelf[index].favorite);
+    return area;
 }
 static void draw_list_title(uint8_t *fb, const char *name, int top) {
     char lines[2][128] = {{0}};
@@ -2329,7 +2347,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         char name[128]; copy_text(name, sizeof(name), s_shelf[i].name);
         // 封面抽出只改变书本位置，层板及触摸目标保持原位。
         // Lifting changes the book position only; shelf furniture and touch targets stay put.
-        if (s_pressed_control == row) r.y -= SHELF_BOOK_LIFT_PX;
+        if (s_pressed_control == row)
+            r.y -= app_settings_shelf_style() == 5 ? SHELF_LIST_BOUNCE_PX : SHELF_BOOK_LIFT_PX;
         draw_shelf_cover(fb, r, row, name, s_shelf[i].favorite);
         if (app_settings_shelf_style() == 5) draw_list_row(fb, row, &s_shelf[i]);
     }
@@ -2355,7 +2374,9 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     }
     if (redraw == APP_REDRAW_NONE || redraw == APP_REDRAW_DONE) return true;
     if (s_presented_view != (int)s_view && redraw == APP_REDRAW_AREA) redraw = APP_REDRAW_PAGE;
-    if (s_view == SHELF || s_view == MANAGE) prepare_covers(ctx);
+    if ((s_view == SHELF || s_view == MANAGE) &&
+        !(redraw == APP_REDRAW_AREA && s_shelf_feedback_pending &&
+          app_settings_shelf_style() == 5)) prepare_covers(ctx);
     if (s_view == READING && s_text) prepare_inline_image();
     int64_t start = esp_timer_get_time();
     if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) render(ctx, ctx->fb);
@@ -2383,7 +2404,8 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     else if (redraw == APP_REDRAW_AREA && s_view == SHELF && s_shelf_feedback_pending) {
         // 抽出与复位只驱动发生变化的像素，避免整张封面被反复压黑。
         // Lift and restore only changed pixels, avoiding a dark pulse over the whole cover.
-        err = update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, s_area);
+        err = update_display_area_diff_with(ctx->hl,
+            s_mode == MODE_DU ? &E0470_FOLLOW_WAVEFORM : &E0470_WAVEFORM, s_mode, s_area);
     }
     else if (redraw == APP_REDRAW_AREA) {
         // 快档每次显式设置并在推屏后恢复，不能把阅读节拍带入主页水波纹。
@@ -2421,7 +2443,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     int64_t displayed = esp_timer_get_time();
     if (prep) xSemaphoreTake(s_prep_done, portMAX_DELAY);
     if (redraw == APP_REDRAW_AREA && s_mode == MODE_DU &&
-        !s_reader_cleanup && !image_gray_refresh) {
+        !s_reader_cleanup && !image_gray_refresh && !s_shelf_feedback_pending) {
         s_du_area = s_du_count ? ui_rect_union(s_du_area, s_area) : s_area;
         ++s_du_count;
         s_du_ms = esp_timer_get_time() / 1000;
@@ -4566,6 +4588,16 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
     return -1;
 }
 static app_redraw_t paint_control(app_ctx_t* ctx, EpdRect rect) {
+    if (s_view == SHELF && app_settings_shelf_style() == 5) {
+        for (int row = 0; row < shelf_rows(); ++row) {
+            EpdRect target = row_rect(row);
+            if (memcmp(&rect, &target, sizeof(rect))) continue;
+            s_area = paint_list_cover_feedback(ctx, row);
+            s_mode = app_settings_main_fast_refresh() ? MODE_DU : MODE_GL16;
+            s_shelf_feedback_pending = true;
+            return APP_REDRAW_AREA;
+        }
+    }
     // 小按钮反馈只重画按钮，不重新绘制全部封面；其余装饰沿用原绘制路径。
     // Repaint small header buttons alone rather than every cover; other decorations retain their path.
     if (s_view == SHELF && !memcmp(&rect, &(EpdRect){442,94,97,54}, sizeof(rect)))
@@ -4738,6 +4770,10 @@ static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) 
     }
     if (ev->type == UI_GESTURE_TAP && !s_scan_pending) {
         if (start >= 0 && start == end) {
+            // 列表先完成回弹，才释放封面缓存并开书；没有人为等待或整页预刷新。
+            // Settle a list bounce before opening frees artwork, without a delay or whole-page pre-refresh.
+            if (decorated && s_view == SHELF && app_settings_shelf_style() == 5 && start < shelf_rows())
+                (void)present(ctx, paint_control(ctx, start_rect));
             app_redraw_t result = action_at(ctx, ev->x0, ev->y0);
             if (ctx->request_app || ctx->request_menu || ctx->request_return) return result;
             return result != APP_REDRAW_NONE ? result : paint_control(ctx, start_rect);

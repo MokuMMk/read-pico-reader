@@ -5,6 +5,9 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 本地开发中 / Unreleased local development
 
+- 列表封面点击改为小幅上弹后回位，复用现有封面，仅刷新移动范围；快刷黑白、普通/水波纹灰阶，无额外反馈框。
+  List covers bounce and settle using existing artwork and movement-only local differentials; fast retains BW and ordinary/water grays, without an added frame.
+
 - 密码锁屏缓存增加样式与壁纸身份校验，切换后深睡唤醒/冷启动不再误用之前的拼贴图；自动休眠与手动锁屏继续使用当前选择。旧缓存自动重建，密码和配置不受影响。
   PIN artwork caches now check the selected style and wallpaper identity, preventing stale collage reuse on cold/deep wake. Auto/manual lock keep the current choice; old artwork is regenerated without changing credentials or settings.
 

@@ -69,7 +69,12 @@ static int trace_route[256], trace_mode[256], trace_wave[256];
 static EpdRect trace_area[256];
 static unsigned trace_count;
 enum {DIFF=1,AREA,FULL,WHOLE,FAST,WATER,READER,LOCAL_FULL};
-static int shelf_rows(void){return 9;}
+static int test_style;static bool test_fast;
+static int app_settings_shelf_style(void){return test_style;}
+static bool app_settings_main_fast_refresh(void){return test_fast;}
+static int shelf_rows(void){return test_style==5?4:9;}
+static unsigned test_list_draws,test_prepares;
+static EpdRect paint_list_cover_feedback(app_ctx_t *ctx,int row){(void)ctx;++test_list_draws;return (EpdRect){64,219+row*197,134,182};}
 static EpdRect row_rect(int row){return (EpdRect){42+(row%3)*210,220+(row/3)*272,176,240};}
 static const char *s_text;
 static void prepare_inline_image(void){}
@@ -78,7 +83,7 @@ static unsigned test_button_draws,test_body_draws;
 static void draw_shelf_header_button(uint8_t *fb,EpdRect r,bool importing){(void)fb;assert(r.width==97&&r.height==54);assert(r.x==(importing?551:442));++test_button_draws;}
 static unsigned test_prepare_order,test_render_order,test_step;
 static void render(app_ctx_t *ctx,uint8_t *fb){(void)ctx;(void)fb;++test_body_draws;if(test_check_cached){assert(test_prepare_order);test_render_order=++test_step;}}
-static void prepare_covers(app_ctx_t *ctx){(void)ctx;if(test_check_cached)test_prepare_order=++test_step;}
+static void prepare_covers(app_ctx_t *ctx){(void)ctx;++test_prepares;if(test_check_cached)test_prepare_order=++test_step;}
 static bool kick_prep(void){return false;}
 static int64_t esp_timer_get_time(void){return 1000000;}
 static void test_log(const char *tag,const char *format,...){(void)tag;(void)format;}
@@ -160,6 +165,23 @@ int main(void){
    assert(pushes==before+1&&route==DIFF&&pushed_mode==MODE_GL16&&!s_shelf_feedback_pending);
    assert(pushed_area.y==original.y-16&&pushed_area.height==original.height+16);
  }
+ // 列表仅绘制封面；三模式差分局部输出，缓存不重读，不累计整页清理。
+ // List repaint is cover-only; all modes use local differentials without rereading covers or accruing whole-page cleanup.
+ body_before=test_body_draws;unsigned prepares_before=test_prepares;
+ for(int fast=0;fast<2;++fast)for(int repeat=0;repeat<80;++repeat){
+   test_style=5;test_fast=fast;s_pressed_control=repeat%2?repeat%4:-1;
+   s_view=s_presented_view=SHELF;s_reader_fullscreen=true;s_du_count=5;
+   EpdRect original=row_rect(repeat%4);
+   assert(paint_control(&ctx,original)==APP_REDRAW_AREA&&s_shelf_feedback_pending);
+   unsigned before=pushes;assert(present(&ctx,APP_REDRAW_AREA));
+   assert(pushes==before+1&&route==DIFF&&pushed_mode==(fast?MODE_DU:MODE_GL16));
+   assert(trace_wave[trace_count-1]==(fast?E0470_FOLLOW_WAVEFORM:E0470_WAVEFORM));
+   assert(pushed_area.x==64&&pushed_area.width==134&&pushed_area.height==182&&!s_du_count);
+   if(trace_count>240)trace_count=0;
+ }
+ assert(test_body_draws==body_before&&test_prepares==prepares_before&&test_list_draws==160);
+ test_style=0;test_fast=false;
+ puts("PASS: 160 list bounces/settles use cover-only differentials and reuse caches; gray/fast modes retain their waveforms and navigation");
  s_reader_fullscreen=false;assert(paint_control(&ctx,(EpdRect){500,90,90,54})==APP_REDRAW_AREA&&!s_shelf_feedback_pending);
  assert(present(&ctx,APP_REDRAW_AREA)&&route==AREA&&pushed_mode==MODE_DU);
  assert(paint_control(&ctx,row_rect(0))==APP_REDRAW_AREA);s_view=READING;
