@@ -57,7 +57,9 @@ def stage(output: Path, ota_origin: str | None = None) -> None:
         shutil.copy2(upgrade, output / upgrade.name)
     # 按验证后的正式目录发布历史清单与基础包，不递归上传本地测试文件。
     # Publish only verified archived manifests/base parts, excluding local test files.
-    archives = check_archived_releases(FLASH)
+    # 最新基础包来自 Release；兼容性检查使用已经校验过的站点镜像。
+    # The latest base comes from Release; compare archives with the verified staged image.
+    archives = check_archived_releases(FLASH, output / "partitions.bin")
     if (FLASH / "releases.json").is_file():
         shutil.copy2(FLASH / "releases.json", output / "releases.json")
         shutil.copy2(FLASH / "versions.js", output / "versions.js")
