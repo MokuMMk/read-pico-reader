@@ -6,8 +6,8 @@
  * Built on the MindReset Read Pico E0470 waveform and refresh path.
  * 错相揭页引擎。应用只依赖本公开接口，不依赖条带或 LUT 的内部布局。
  * Staggered page-turn engine. Applications depend on this public API, not the internal band or LUT layout.
- * 用户采用PR17快速阅读水波纹：原阅读入口恢复一拍一带，快档14ms；主页的显式序列入口保留错开启动。
- * User adopts PR17 fast reader ripple: the reader entry resumes one band per tick with 14ms fast pacing; the explicit main-page sequence retains spaced launches.
+ * 用户要求阅读和主页共用一拍一带调度；阅读14ms，主页保留12ms，原错开启动接口仍可用。
+ * User requests one-band-per-tick scheduling for reading and main pages; retain 14ms reader/12ms main pacing and the spaced-launch API.
  */
 
 #pragma once
@@ -49,6 +49,12 @@ enum EpdDrawError e0470_page_turn(
 
 /// 显式灰阶序列与2..32条带；普通阅读入口仍固定原GL16/16带。/ Explicit gray sequence and 2..32 bands; the ordinary reader entry retains original GL16/16 bands.
 enum EpdDrawError e0470_page_turn_with_waveform(
+    EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir,
+    const EpdWaveform* waveform, unsigned bands
+);
+
+/// 显式序列的一拍一带入口；保留波形、指定条带数与当前节拍，16带37相共52拍。/ Compact explicit sequence: retain waveform, requested bands and current pacing; 16 bands/37 phases take 52 ticks.
+enum EpdDrawError e0470_page_turn_with_waveform_compact(
     EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir,
     const EpdWaveform* waveform, unsigned bands
 );

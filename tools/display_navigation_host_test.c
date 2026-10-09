@@ -81,9 +81,10 @@ enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* state, EpdRect area, e047
     for(int y=0;y<H;++y){memcpy(panel+y*stride,state->front_fb+y*stride,UI_NAV_REFRESH_END/2);memcpy(state->back_fb+y*stride,state->front_fb+y*stride,UI_NAV_REFRESH_END/2);}
     return EPD_DRAW_SUCCESS;
 }
-enum EpdDrawError e0470_page_turn_with_waveform(EpdiyHighlevelState* state, EpdRect area,
+enum EpdDrawError e0470_page_turn_with_waveform_compact(EpdiyHighlevelState* state, EpdRect area,
     e0470_turn_dir_t dir, const EpdWaveform* waveform, unsigned bands) {
-    assert(waveform==&main_water && bands==24);
+    assert(ota_display_depth);
+    assert(waveform==&main_water && bands==16);
     return e0470_page_turn(state,area,dir);
 }
 

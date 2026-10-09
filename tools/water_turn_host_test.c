@@ -30,6 +30,7 @@ static const int8_t* staged_lines;
 static const int *staged_x0, *staged_x1;
 static const int8_t* staged_bands;
 static int staged_count;
+static EpdRect difference_crop;
 static int scans, fail_at, differences, powerons;
 static int phase_hits[37];
 static int test_bands=16, test_launch_step=1;
@@ -65,6 +66,7 @@ EpdRect epd_difference_image_cropped(const uint8_t* to, const uint8_t* from, Epd
     assert(area.x >= 0 && area.y >= 0 && area.x + area.width <= WIDTH &&
            area.y + area.height <= HEIGHT && area.width > 0 && area.height > 0);
     ++differences;
+    difference_crop = area;
     return area;
 }
 void epd_clear_phase_luts(void) {
@@ -106,6 +108,14 @@ enum EpdDrawError epd_draw_base(EpdRect area, const uint8_t* data, EpdRect crop,
     for(int y=0;y<HEIGHT;++y){hash_byte(lines[y]);if(staged_lines)hash_byte((uint8_t)staged_lines[y]);}
     for(int x=0;x<WIDTH/2;++x)hash_byte(columns[x]);
     if(staged_bands)for(int b=0;b<staged_count;++b)hash_byte((uint8_t)staged_bands[b]);
+    // 活跃行列不得跨过裁剪范围；列掩码允许边界字节内的邻接半字节。
+    // Active masks stay within the crop, allowing the neighboring nibble in a boundary byte.
+    for (int y = 0; y < HEIGHT; ++y)
+        if (y < difference_crop.y || y >= difference_crop.y + difference_crop.height)
+            assert(!lines[y]);
+    for (int x = 0; x < WIDTH / 2; ++x)
+        if (x < difference_crop.x / 2 || x >= (difference_crop.x + difference_crop.width + 1) / 2)
+            assert(!columns[x]);
     int tick = scans++;
     int active = 0;
     bool phase_seen[37] = {0};
@@ -231,26 +241,86 @@ int main(void) {
         assert(scans==failure && !staged_luts);
         for(size_t i=0;i<sizeof(back);++i)assert(back[i]==0xFF);
     }
-    // 主页24窄带仍覆盖37相且只回写正文；横条、图标与裁剪外邻接半字节保留旧基准。
-    // Main-page 24 narrow bands cover all 37 phases and commit only the body; markers, icons and neighboring nibbles retain the old baseline.
-    test_bands=24; test_launch_step=2;
+    // 对比主页原24带、紧凑24带和紧凑16带；37相完整且只回写正文，保留底栏与邻接半字节。
+    // Compare original 24, compact 24 and compact 16 main bands; keep all 37 phases and commit only the body, preserving navigation and adjacent nibbles.
     e0470_page_turn_set_tick_us(E0470_TURN_DEFAULT_TICK_US);
-    for(int rot=0;rot<4;++rot)for(int dir=0;dir<4;++dir) {
+    const int expected_ticks[]={83,60,52};
+    const int expected_us[]={996000,720000,624000};
+    for(int profile=0;profile<3;++profile)for(int rot=0;rot<4;++rot)for(int dir=0;dir<4;++dir) {
+        const bool compact=profile!=0;
+        test_bands=profile==2?16:24;
+        test_launch_step=compact?1:2;
         rotation=(enum EpdRotation)rot; direction=(e0470_turn_dir_t)dir;
         EpdRect logical=(rot&1)?(EpdRect){0,0,HEIGHT,WIDTH}:(EpdRect){0,0,WIDTH,HEIGHT};
         EpdRect body={0,0,logical.width,logical.height-128};
+        // 整屏验证首带方向，再以裁剪区验证固定底栏边界。
+        // Check first-band direction on full screen, then preserve the fixed navigation boundary in a crop.
+        memset(front,0x24,sizeof(front)); memset(back,0xFF,sizeof(back));
+        scans=differences=powerons=fail_at=0; now_us=0; check_direction=true;
+        assert((compact?e0470_page_turn_with_waveform_compact:e0470_page_turn_with_waveform)
+               (&hl,logical,direction,&soft_wave,(unsigned)test_bands)==EPD_DRAW_SUCCESS);
+        assert(scans==expected_ticks[profile] && now_us==expected_us[profile]);
+        assert(!memcmp(front,back,sizeof(back)));
         memset(front,0x24,sizeof(front)); memset(back,0xFF,sizeof(back));
         scans=differences=powerons=fail_at=0; now_us=0;
         memset(phase_hits,0,sizeof(phase_hits)); check_direction=false;
-        assert(e0470_page_turn_with_waveform(&hl,body,direction,&soft_wave,24)==EPD_DRAW_SUCCESS);
-        assert(scans==83 && differences==1 && powerons==1 && now_us==996000);
-        for(int p=0;p<37;++p)assert(phase_hits[p]==24);
+        assert((compact?e0470_page_turn_with_waveform_compact:e0470_page_turn_with_waveform)
+               (&hl,body,direction,&soft_wave,(unsigned)test_bands)==EPD_DRAW_SUCCESS);
+        assert(scans==expected_ticks[profile] && differences==1 && powerons==1 && now_us==expected_us[profile]);
+        assert(e0470_page_turn_tick_us()==E0470_TURN_DEFAULT_TICK_US);
+        for(int p=0;p<37;++p)assert(phase_hits[p]==test_bands);
         check_crop_baseline(body);
+        // 奇数边界的未覆盖半字节也必须保留原参考帧。
+        // Odd crop boundaries must preserve each neighboring baseline nibble.
+        EpdRect inset={3,17,logical.width-8,logical.height-150};
+        memset(back,0xFF,sizeof(back)); scans=differences=0;
+        assert((compact?e0470_page_turn_with_waveform_compact:e0470_page_turn_with_waveform)
+               (&hl,inset,direction,&soft_wave,(unsigned)test_bands)==EPD_DRAW_SUCCESS);
+        assert(scans==expected_ticks[profile] && differences==1);
+        check_crop_baseline(inset);
         memset(back,0xFF,sizeof(back)); scans=differences=0; fail_at=13;
-        assert(e0470_page_turn_with_waveform(&hl,body,direction,&soft_wave,24)==EPD_DRAW_OTHER_ERROR);
+        assert((compact?e0470_page_turn_with_waveform_compact:e0470_page_turn_with_waveform)
+               (&hl,body,direction,&soft_wave,(unsigned)test_bands)==EPD_DRAW_OTHER_ERROR);
         assert(scans==13 && differences==1);
         for(size_t i=0;i<sizeof(back);++i)assert(back[i]==0xFF);
     }
+    // 两档主页提速均保留慢扫描和每拍失败的安全恢复基准。/ Both compact main profiles retain slow scans and safe history at every failure tick.
+    rotation=EPD_ROT_INVERTED_PORTRAIT;direction=E0470_TURN_RTL;test_launch_step=1;
+    EpdRect main_body={0,0,HEIGHT,1088};
+    for(int profile=1;profile<3;++profile){
+        test_bands=profile==2?16:24;
+        scan_time_us=18000;scans=differences=fail_at=0;now_us=0;
+        memset(back,0xFF,sizeof(back));memset(phase_hits,0,sizeof(phase_hits));
+        assert(e0470_page_turn_with_waveform_compact(&hl,main_body,direction,&soft_wave,(unsigned)test_bands)==EPD_DRAW_SUCCESS);
+        assert(scans==expected_ticks[profile] && now_us==(profile==2?936000:1080000));check_crop_baseline(main_body);
+        for(int p=0;p<37;++p)assert(phase_hits[p]==test_bands);
+        scan_time_us=7000;
+        for(int failure=1;failure<=expected_ticks[profile];++failure){
+            scans=differences=0;fail_at=failure;memset(back,0xFF,sizeof(back));
+            assert(e0470_page_turn_with_waveform_compact(&hl,main_body,direction,&soft_wave,(unsigned)test_bands)==EPD_DRAW_OTHER_ERROR);
+            assert(scans==failure && differences==1 && !staged_luts);
+            for(size_t i=0;i<sizeof(back);++i)assert(back[i]==0xFF);
+        }
+    }
+    // 交错调用主页两个入口与阅读入口，缓存不能串用条带调度或修改调用方节拍。
+    // Alternate both main APIs with reading: cached LUTs cannot leak band scheduling or alter caller pacing.
+    const int mixed_profiles[]={2,0,2,1,0,1};
+    for(unsigned i=0;i<sizeof(mixed_profiles)/sizeof(mixed_profiles[0]);++i) {
+        int profile=mixed_profiles[i];
+        bool reader=profile==1;
+        test_bands=profile==0?24:16; test_launch_step=profile==0?2:1;
+        int tick_us=reader?E0470_TURN_FAST_TICK_US:E0470_TURN_DEFAULT_TICK_US;
+        e0470_page_turn_set_tick_us(tick_us);
+        scans=differences=fail_at=0;now_us=0;memset(back,0xFF,sizeof(back));
+        enum EpdDrawError result=reader?e0470_page_turn(&hl,main_body,direction):
+            (profile==2?e0470_page_turn_with_waveform_compact:e0470_page_turn_with_waveform)
+            (&hl,main_body,direction,&soft_wave,(unsigned)test_bands);
+        assert(result==EPD_DRAW_SUCCESS && scans==(profile==0?83:52));
+        assert(now_us==(int64_t)scans*tick_us && e0470_page_turn_tick_us()==tick_us);
+        check_crop_baseline(main_body);
+    }
+    test_bands=16;test_launch_step=1;scans=differences=fail_at=0;
+    assert(e0470_page_turn_with_waveform_compact(&hl,main_body,direction,&soft_wave,16)==EPD_DRAW_SUCCESS);
     // 不同序列切换必须重建LUT，非法条带/缺波形在输出前拒绝。
     // Rebuild LUTs when changing sequences; reject invalid bands or missing waveforms before output.
     int before_luts=lut_builds;
@@ -275,5 +345,10 @@ int main(void) {
            EPD_DRAW_NO_PHASES_AVAILABLE);
     assert(scans == 0 && differences == 0);
     for (size_t i = 0; i < sizeof(back); ++i) assert(back[i] == 0xFF);
-    puts("water turn: 4 rotations × 4 directions; PR17 reader 16 bands / 52 ticks, 14ms vs 21ms identical phase/region traces; slow scans retain all 37 phases; all 52 failures retain history and clear LUTs; main 24 bands / 83 ticks / 12ms, crop bounds, profile cache, invalid inputs and OOM passed");
+    assert(e0470_page_turn_with_waveform_compact(&hl,main_body,direction,&soft_wave,16)==EPD_DRAW_NO_PHASES_AVAILABLE);
+    assert(scans==0 && differences==0);
+    for(unsigned i=0;i<sizeof(invalid_bands)/sizeof(invalid_bands[0]);++i)
+        assert(e0470_page_turn_with_waveform_compact(&hl,main_body,direction,&soft_wave,invalid_bands[i])==EPD_DRAW_INVALID_CROP);
+    assert(e0470_page_turn_with_waveform_compact(&hl,main_body,direction,NULL,16)==EPD_DRAW_NO_PHASES_AVAILABLE);
+    puts("water turn: 4 rotations x 4 directions; reader unchanged at 52 ticks; main original 24/compact 24/compact 16 bands: 83/60/52 ticks, simulated 996/720/624ms; slow scans complete all 37 phases; every failure tick preserves history and clears LUTs; crop bounds, invalid inputs and OOM passed");
 }

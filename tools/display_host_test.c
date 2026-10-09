@@ -53,7 +53,7 @@ enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_t
     assert(last_scan == READ_PICO_EPD_SCAN_FAST);
     return water_result;
 }
-enum EpdDrawError e0470_page_turn_with_waveform(EpdiyHighlevelState* hl, EpdRect area,
+enum EpdDrawError e0470_page_turn_with_waveform_compact(EpdiyHighlevelState* hl, EpdRect area,
     e0470_turn_dir_t dir, const EpdWaveform* waveform, unsigned bands) {
     (void)hl; (void)area; (void)dir; (void)waveform; (void)bands;
     assert(false); return EPD_DRAW_OTHER_ERROR;
