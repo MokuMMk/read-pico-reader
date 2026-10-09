@@ -1,478 +1,77 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#e9e8e2">
-  <meta name="description" content="Pico 阅读固件图文刷机指南：连接设备、选择串口、等待安装完成。">
-  <title>Pico 阅读固件 · 图文刷机指南</title>
-  <script>
-    // attachShadow 不在父树上留下 mutation 记录，父树的观察器因此看不到后挂上的影子根。
-    // 安装器的对话框正是这样长出来的：元素先插入，观察器触发一次时还没有影子根，根随后才
-    // 挂上，于是整个对话框都翻不到，包括 "Erase device" 这个标题和它旁边的勾选框标签。
-    // 这里挂个钩子，新的影子根一出现就登记下来，交给下面的翻译层处理。
-    // attachShadow leaves no mutation record on the parent tree, so a parent observer cannot see a
-    // shadow root attached after the element was inserted. That is exactly how the installer's
-    // dialog grows: the element goes in, the observer fires once and finds no shadow root, and the
-    // root is attached afterwards -- so the whole dialog stayed untranslated, "Erase device" as its
-    // heading and as the checkbox label beside it included. Hook it here and register every new
-    // root for the translation layer below.
-    window.__flasherShadowRoots = [];
-    (() => {
-      const attachShadow = Element.prototype.attachShadow;
-      Element.prototype.attachShadow = function (init) {
-        const root = attachShadow.call(this, init);
-        try { window.__flasherShadowRoots.push(root); } catch (e) { /* 忽略 / ignore */ }
-        return root;
-      };
-    })();
-    // 打包好的安装器直接调 navigator.serial.requestPort()，不带任何过滤，于是浏览器能看到的
-    // 串口都会列出来，包括刷不了机的蓝牙虚拟串口。这里在它之前补一层 Espressif 厂商过滤：
-    // Pico 的 USB Serial/JTAG（VID 303A）会列出来，蓝牙那些不会。放在独立脚本里是因为它必须
-    // 早于下面那个 deferred 模块执行，而页面末尾那段脚本在本地 file:// 预览时会提前返回。
-    // The bundled installer calls navigator.serial.requestPort() with no filters, so every port the
-    // browser can see is offered, Bluetooth virtual COM ports included, and those cannot flash
-    // anything. Add an Espressif vendor filter ahead of it: Pico's USB Serial/JTAG (VID 303A) is
-    // listed and the Bluetooth entries are not. This lives in its own script because it must run
-    // before the deferred module below, and the script at the end of the page returns early when
-    // previewing over file://.
-    if (navigator.serial && navigator.serial.requestPort) {
-      const requestPort = navigator.serial.requestPort.bind(navigator.serial);
-      navigator.serial.requestPort = options => {
-        const next = Object.assign({}, options);
-        if (!next.filters) next.filters = [{ usbVendorId: 0x303a }];
-        return requestPort(next);
-      };
-    }
-  </script>
-  <script>
-    // 安装器只带英文，打包产物里没有任何本地化钩子（localize / lang / translations 都是 0 处），
-    // 所以由页面补一层翻译。lit 的插值会把整句拆成若干个文本节点，因此下面按片段映射，
-    // 片段之间拼起来仍然是通顺的中文。作用范围只限安装器元素自己的树，翻过的节点会打标记，
-    // 重渲染后重新翻，但不会重复翻。
-    // The installer ships English only and its build carries no localisation hook at all (no
-    // localize, lang or translations), so the page translates it. lit interpolates a sentence into
-    // several text nodes, so the map below is built from fragments that still concatenate into
-    // readable Chinese. It is scoped to the installer element's own tree, and translated nodes are
-    // marked so a re-render re-translates without applying anything twice.
-    (() => {
-      const FRAGMENTS = [
-        // 整句的两个半边，顺序拼接后成立。
-        // The two halves of a sentence; concatenating them in order reads correctly.
-        ["Do you want to erase the device before installing ", "安装 "],
-        ["? All data on the device will be lost.", " 前是否擦除设备？设备上的所有数据都会丢失。"],
-        ["Your device is running ", "设备当前运行 "],
-        ["Do you want to ", "是否"],
-        ["All data on the device will be erased.", "设备上的所有数据都会被擦除。"],
-        // 对话框标题与按钮。
-        // Dialog headings and buttons.
-        ["Erase device", "擦除设备"],
-        ["Confirm Installation", "确认安装"],
-        ["Installation complete!", "安装完成！"],
-        ["Installation failed", "安装失败"],
-        ["Failed to initialize. Try resetting your device or holding the BOOT button while clicking INSTALL.", "未连接到刷写模式，尚未开始写入。请关闭此窗口，在 Pico 上打开「设置 → 升级和恢复 → BOOT 刷机」，点击「进入 BOOT 模式」，再重新连接安装。"],
-        ["Preparing installation", "正在准备安装"],
-        ["Erasing device...", "正在擦除设备…"],
-        ["Device erased", "设备已擦除"],
-        ["Erasing", "正在擦除"],
-        ["Installing", "正在安装"],
-        ["Trying to connect", "正在连接"],
-        ["Writing progress:", "写入进度："],
-        ["Back", "返回"],
-        ["Next", "下一步"],
-        ["Install", "安装"],
-        ["update to", "更新到"],
-        ["install", "安装"],
-        ["Close", "关闭"],
-        ["Connect", "连接"],
-        ["Skip", "跳过"],
-        ["Erase User Data", "擦除用户数据"],
-        ["Visit Device", "访问设备"],
-        ["Logs & Console", "日志与控制台"],
-        ["Fund Development", "支持开发"],
-        ["Add to Home Assistant", "添加到 Home Assistant"],
-        ["Keep this page visible to prevent slow down", "请保持本页可见，以免变慢"],
-        ["a minute", "一分钟"],
-        ["2 minutes", "两分钟"],
-      ];
-      // 精确匹配优先，短的英文词不做子串替换，免得把固件名或日志翻坏。
-      // Exact matches win; short English words are never replaced as substrings, so a firmware
-      // name or a log line cannot be damaged.
-      const EXACT = new Map(FRAGMENTS);
-      // 前后缀只用于已知的整句，且要求原文以它开头或结尾。
-      // Prefixes and suffixes apply only to the known sentences and must anchor the whole text.
-      const PREFIX = [
-        ["Install ", "安装 "],
-        ["Update ", "更新 "],
-      ];
-
-      function translateText(node) {
-        const raw = node.nodeValue;
-        if (!raw) return;
-        // 先保留片段尾部的拼接空格；未匹配时再忽略模板尾部的缩进，兼容按钮和错误提示。
-        // Preserve fragment join spaces first, then ignore trailing template indentation for
-        // buttons and error messages when the first exact match fails.
-        const key = raw.replace(/^\s+/, "");
-        if (!key.trim()) return;
-        let next = raw;
-        let matched = key;
-        let exact = EXACT.get(matched);
-        if (exact === undefined) {
-          matched = key.trimEnd();
-          exact = EXACT.get(matched);
-        }
-        if (exact !== undefined) next = raw.replace(matched, exact);
-        else {
-          let done = false;
-          for (const [from, to] of PREFIX) {
-            if (key.startsWith(from)) { next = raw.replace(from, to); done = true; break; }
-          }
-          if (!done) for (const [from, to] of FRAGMENTS) {
-            if (from.length > 6 && key.endsWith(from)) { next = raw.replace(from, to); break; }
-          }
-        }
-        // 句末的问号与句号按中文全角走；只碰整句就是标点的那种文本节点。
-        // A sentence-final question mark or full stop becomes full width; only a node that is
-        // nothing but that punctuation is touched.
-        next = next.replace(/\?(?=\s*$)/, "？");
-        if (/^\.\s*$/.test(next)) next = next.replace(".", "。");
-        if (next !== raw) node.nodeValue = next;
-      }
-
-      function translateAttrs(root) {
-        for (const el of root.querySelectorAll("*")) {
-          for (const name of ["label", "heading"]) {
-            const value = el.getAttribute && el.getAttribute(name);
-            if (value === null || value === undefined) continue;
-            const hit = EXACT.get(value.trim());
-            if (hit !== undefined) el.setAttribute(name, hit);
-            else for (const [from, to] of PREFIX) {
-              if (value.trim().startsWith(from)) { el.setAttribute(name, value.replace(from, to)); break; }
-            }
-          }
-        }
-      }
-
-      // 影子树是分开的文档树，观察器不会跨过去，所以每发现一个新的影子根都要挂一次。
-      // A shadow tree is a separate tree, so an observer does not cross into it; every newly seen
-      // shadow root gets its own observer.
-      const watched = new WeakSet();
-
-      function walk(root) {
-        if (!root) return;
-        const nodes = root.ownerDocument
-          ? root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-          : document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        for (let n = nodes.nextNode(); n; n = nodes.nextNode()) translateText(n);
-        translateAttrs(root);
-        const elements = root.querySelectorAll ? root.querySelectorAll("*") : [];
-        for (const el of elements) if (el.shadowRoot) walk(el.shadowRoot);
-        if (root.host && root.host.shadowRoot !== root) walk(root.host.shadowRoot);
-      }
-
-      function watch(root) {
-        if (!root || watched.has(root)) return;
-        watched.add(root);
-        new MutationObserver(() => {
-          walk(root);
-          for (const el of root.querySelectorAll("*")) if (el.shadowRoot) watch(el.shadowRoot);
-        }).observe(root, {childList: true, subtree: true, characterData: true});
-        for (const el of root.querySelectorAll("*")) if (el.shadowRoot) watch(el.shadowRoot);
-      }
-
-      // 处理钩子登记到的每个影子根，并递归进它内部的影子根。
-      // Handle every root the hook registered, recursing into the roots inside it.
-      function drain() {
-        const roots = window.__flasherShadowRoots;
-        if (!roots) return;
-        for (let i = 0; i < roots.length; i++) {
-          const root = roots[i];
-          if (watched.has(root)) continue;
-          walk(root);
-          watch(root);
-        }
-      }
-      const installer = () => document.getElementById("flash-installer");
-      function start() {
-        const el = installer();
-        if (!el || !el.shadowRoot) return false;
-        walk(el.shadowRoot);
-        watch(el.shadowRoot);
-        return true;
-      }
-      start();
-      drain();
-      // 钩子负责及时性，慢扫描负责兜底：还有别的路径能长出影子根（自定义元素自行 upgrade
-      // 等），漏掉一个就是整块对话框没翻。树很小，扫一遍没有成本。
-      // The hook handles promptness and the slow sweep is the safety net: other paths can create a
-      // shadow root too (a custom element upgrading on its own), and missing one means a whole
-      // dialog stays in English. The tree is tiny, so a sweep costs nothing.
-      setInterval(() => { start(); drain(); }, 400);
-    })();
-  </script>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="kiikoread：为墨水屏打造的阅读固件。预览阅读界面、了解功能，在线刷机或下载 TF 卡升级 Bin。">
+  <title>kiikoread · 把阅读留给自己</title>
+  <link rel="stylesheet" href="./site.css">
+  <script src="./installer-bridge.js"></script>
+  <script src="./site.js" defer></script>
   <script type="module" src="./vendor/web/install-button.js"></script>
-  <style>
-    :root { color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans SC", sans-serif; }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body { margin: 0; background: #e9e8e2; color: #292b27; }
-    a { color: #344c3a; text-underline-offset: 3px; }
-    a:focus-visible, summary:focus-visible, button:focus-visible { outline: 3px solid #536f57; outline-offset: 4px; }
-    .shell { width: min(1060px, calc(100% - 40px)); margin: auto; }
-    .topbar { border-bottom: 1px solid #c6c9bf; }
-    .topbar-inner { min-height: 70px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-    .brand { font-size: 18px; font-weight: 800; }
-    .brand span { font-size: 13px; font-weight: 500; color: #60675e; margin-left: 8px; }
-    .jump { font-size: 15px; font-weight: 700; white-space: nowrap; }
-    main { padding-bottom: 70px; }
-    .eyebrow { color: #586258; font-size: 13px; font-weight: 800; letter-spacing: .18em; }
-    h1 { font-family: "Songti SC", "Noto Serif SC", serif; font-size: clamp(40px, 5.5vw, 68px); line-height: 1.15; margin: 16px 0 22px; }
-    h2 { font-size: clamp(27px, 3vw, 36px); line-height: 1.25; margin: 8px 0 22px; }
-    h3 { font-size: 22px; margin: 8px 0; }
-    .hero { display: grid; grid-template-columns: 1.15fr .85fr; align-items: center; gap: 38px; padding: 62px 0 52px; }
-    .lead { font-size: 20px; color: #4e554c; line-height: 1.75; margin: 0 0 28px; }
-    .tags { display: flex; flex-wrap: wrap; gap: 9px; }
-    .tags span { border: 1px solid #aeb4a8; border-radius: 99px; background: #f6f6f2; padding: 8px 12px; font-size: 14px; font-weight: 650; }
-    .hero-art { min-height: 305px; border-radius: 25px; border: 1px solid #bfc5ba; background: #dde0d8; display: grid; place-items: center; position: relative; overflow: hidden; }
-    .hero-art::before { content: ""; width: 340px; height: 340px; border: 1px solid #c2c7bd; border-radius: 50%; position: absolute; }
-    .pico-screen { width: 210px; height: 269px; border: 9px solid #303630; border-radius: 16px; background: #f0f0ec; padding: 12px; transform: rotate(-5deg); box-shadow: 0 13px 0 #b2b7ac, 0 20px 26px #34403424; position: relative; }
-    .screen-status { font-size: 10px; font-weight: 700; display: flex; justify-content: space-between; border-bottom: 1px solid #c8cbc3; padding-bottom: 7px; }
-    .screen-title { font-size: 27px; font-weight: 800; margin: 12px 0; }
-    .screen-subtitle { font-size: 12px; font-weight: 750; padding: 8px 0 7px; border-top: 1px solid #c8cbc3; }
-    .screen-book { display: flex; align-items: center; gap: 11px; }
-    .cover { width: 56px; height: 72px; background: #414640; border: 4px double #ededeb; flex: none; }
-    .book-lines { flex: 1; }
-    .book-lines strong { font-size: 13px; display: block; margin-bottom: 10px; }
-    .book-lines i { display: block; width: 90%; height: 6px; border-radius: 8px; background: #b9bfb5; margin-bottom: 6px; }
-    .book-lines i:last-child { width: 58%; background: #555e55; }
-    .bars { height: 37px; display: flex; gap: 7px; align-items: end; }
-    .bars i { flex: 1; height: 60%; border-radius: 7px 7px 0 0; background: #515b51; }
-    .bars i:nth-child(2), .bars i:nth-child(5) { height: 88%; }
-    .bars i:nth-child(3) { height: 42%; }
-    .bars i:nth-child(6) { height: 100%; }
-    .screen-nav { font-size: 9px; display: flex; justify-content: space-between; border-top: 1px solid #c8cbc3; padding-top: 7px; position: absolute; left: 12px; right: 12px; bottom: 10px; }
-    .art-caption { position: absolute; right: 15px; bottom: 12px; font-size: 12px; color: #59645a; }
-    .precheck, .steps, .after, .faq { margin-top: 42px; }
-    .release { margin-top: 62px; padding: 25px 29px; border: 1px solid #c5c9c0; border-radius: 19px; background: #f8f8f4; }
-    .release h2 { margin-bottom: 12px; }
-    .release h3 { margin: 22px 0 8px; font-size: 18px; }
-    .release ul { margin: 0; padding-left: 22px; line-height: 1.75; color: #465046; font-size: 16px; }
-    .release p { margin: 12px 0 0; font-size: 15px; }
-    .precheck-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-    .check { background: #f8f8f4; border: 1px solid #c8cbc3; border-radius: 17px; padding: 20px 21px; }
-    .check span { display: inline-grid; place-items: center; width: 28px; height: 28px; background: #343b34; color: white; border-radius: 50%; font-weight: 800; font-size: 14px; }
-    .check strong { display: block; margin: 12px 0 5px; font-size: 18px; }
-    .check p { color: #555d53; line-height: 1.55; margin: 0; font-size: 15px; }
-    .steps { margin-top: 70px; }
-    .steps ol { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; padding: 0; margin: 0; }
-    .step { overflow: hidden; background: #f8f8f4; border: 1px solid #c5c9c0; border-radius: 19px; }
-    .step-visual { height: 184px; background: #e1e4dc; border-bottom: 1px solid #d1d5cd; display: grid; place-items: center; }
-    .step-body { padding: 23px 23px 28px; }
-    .step-number { font-size: 13px; color: #516451; font-weight: 800; letter-spacing: .08em; }
-    .step p { color: #525b51; line-height: 1.65; font-size: 16px; margin: 0; }
-    .cable-figure { display: flex; align-items: center; }
-    .laptop { width: 112px; height: 81px; border: 7px solid #3d453e; border-bottom-width: 11px; border-radius: 9px 9px 5px 5px; background: #f6f7f3; display: grid; place-items: center; font-size: 11px; font-weight: 750; }
-    .cord { width: 45px; height: 25px; border-bottom: 4px solid #586558; border-radius: 0 0 18px 18px; margin-top: 20px; }
-    .mini-device { width: 61px; height: 96px; border: 5px solid #3d453e; border-radius: 9px; background: #f3f4ee; display: grid; place-items: center; font-weight: 800; font-size: 11px; }
-    .mock-dialog { width: 232px; border: 1px solid #aab0a6; border-radius: 11px; background: #fafaf8; box-shadow: 0 9px 20px #3a443a20; overflow: hidden; }
-    .dialog-top { height: 23px; background: #d5dad1; padding: 9px; display: flex; gap: 4px; }
-    .dialog-top i { width: 6px; height: 6px; background: #868e83; border-radius: 50%; }
-    .dialog-body { padding: 13px 16px 15px; font-size: 13px; }
-    .dialog-body strong { display: block; margin-bottom: 11px; }
-    .port { border: 2px solid #4b5b4c; border-radius: 7px; padding: 7px 8px; font-size: 12px; display: flex; align-items: center; gap: 8px; background: #edf0e9; }
-    .port::before { content: ""; width: 10px; height: 10px; border: 3px solid #4b5b4c; border-radius: 50%; }
-    .dialog-button { display: block; margin: 10px 0 0 auto; width: fit-content; background: #303a32; color: white; border-radius: 6px; padding: 5px 12px; font-size: 11px; }
-    .progress { height: 10px; background: #d3d8cf; border-radius: 20px; overflow: hidden; margin: 20px 0 5px; }
-    .progress i { display: block; width: 72%; height: 100%; background: #445645; border-radius: inherit; }
-    .percent { display: block; text-align: right; font-weight: 750; }
-    .flash-panel { margin-top: 24px; border-radius: 20px; background: #343d35; color: white; padding: 27px 31px; display: flex; align-items: center; justify-content: space-between; gap: 22px; }
-    .flash-copy { flex: 1; min-width: 0; }
-    .version-picker { display: grid; gap: 8px; margin: 17px 0 12px; max-width: 390px; }
-    .version-picker label { font-size: 15px; font-weight: 750; }
-    .version-picker select { width: 100%; padding: 11px 13px; border: 1px solid #bfc9ba; border-radius: 9px; background: #f8f8f4; color: #29342a; font: inherit; font-size: 16px; cursor: pointer; }
-    .version-picker select:focus-visible { outline: 3px solid #c4d1b9; outline-offset: 3px; }
-    .version-picker select:disabled { cursor: default; opacity: .7; }
-    .flash-panel .version-hint { margin-top: 11px; font-size: 13px; }
-    .flash-panel h2 { font-size: 25px; margin: 5px 0 8px; }
-    .flash-panel p { font-size: 15px; line-height: 1.5; color: #e1e5de; margin: 0; }
-    esp-web-install-button { --esp-tools-button-color: white; --esp-tools-button-text-color: #29342a; --esp-tools-button-border-radius: 11px; }
-    #flash-installer[hidden], #flash-help[hidden] { display: none !important; }
-    .flash-help { max-width: 330px; font-size: 14px; line-height: 1.55; }
-    .flash-help strong { display: block; margin-bottom: 7px; font-size: 16px; }
-    .flash-help a { color: #fff; overflow-wrap: anywhere; }
-    button[slot=activate] { border: 0; border-radius: 11px; background: white; color: #29342a; padding: 16px 24px; font: inherit; font-size: 17px; font-weight: 800; cursor: pointer; white-space: nowrap; }
-    .safety { border-left: 3px solid #757f73; padding-left: 17px; color: #4c564c; line-height: 1.65; font-size: 15px; margin: 16px 0 0; }
-    .after { margin-top: 76px; }
-    .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-    .tab { background: #f8f8f4; border: 1px solid #c7cbc2; border-radius: 16px; padding: 19px; }
-    .tab b { color: #5c6a5c; font-size: 13px; }
-    .tab strong { display: block; font-size: 20px; margin: 8px 0 5px; }
-    .tab p { margin: 0; font-size: 15px; color: #555f54; line-height: 1.55; }
-    .file-note { margin: 18px 0 0; line-height: 1.75; font-size: 16px; }
-    code { font-size: .95em; background: #f8f8f4; border: 1px solid #c9cdc3; padding: 2px 6px; border-radius: 5px; color: #314d36; }
-    .faq { margin-top: 70px; }
-    details { border-top: 1px solid #bec4b9; padding: 17px 0; }
-    details:last-child { border-bottom: 1px solid #bec4b9; }
-    summary { font-size: 18px; font-weight: 700; cursor: pointer; }
-    details p { color: #50594f; line-height: 1.7; margin: 11px 0 0; max-width: 800px; }
-    footer { border-top: 1px solid #bdc3b8; margin-top: 70px; padding-top: 23px; color: #5b655a; font-size: 13px; line-height: 1.75; }
-    footer p { margin: 0 0 10px; }
-    @media (max-width: 850px) {
-      .hero { grid-template-columns: 1fr; padding-top: 38px; gap: 24px; }
-      .hero-art { min-height: 255px; }
-      .pico-screen { transform: scale(.8) rotate(-5deg); }
-      .steps ol { grid-template-columns: 1fr; }
-      .step { display: grid; grid-template-columns: 42% 58%; }
-      .step-visual { height: 100%; min-height: 190px; border-right: 1px solid #d1d5cd; border-bottom: 0; }
-      .tabs { grid-template-columns: repeat(2, 1fr); }
-    }
-    @media (max-width: 580px) {
-      .shell { width: calc(100% - 32px); }
-      .topbar-inner { min-height: 58px; }
-      .brand { font-size: 16px; }
-      .brand span { display: none; }
-      .hero { padding: 35px 0 28px; }
-      h1 { font-size: 40px; }
-      .lead { font-size: 17px; }
-      .hero-art { min-height: 220px; }
-      .pico-screen { transform: scale(.68) rotate(-5deg); }
-      .precheck-grid { grid-template-columns: 1fr; gap: 9px; }
-      .check { padding: 15px 17px; }
-      .check strong { display: inline; margin-left: 10px; font-size: 17px; }
-      .check p { margin: 6px 0 0 40px; font-size: 14px; }
-      .steps, .after, .faq { margin-top: 54px; }
-      .step { display: block; }
-      .step-visual { height: 178px; min-height: 0; border-right: 0; border-bottom: 1px solid #d1d5cd; }
-      .step-body { padding: 19px 20px 23px; }
-      .flash-panel { display: block; padding: 24px 22px; }
-      .flash-panel esp-web-install-button { display: block; margin-top: 19px; }
-      button[slot=activate] { width: 100%; }
-      .tabs { grid-template-columns: 1fr; }
-    }
-    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
-  </style>
+  <script src="./versions.js" defer></script>
 </head>
 <body>
-  <header class="topbar"><div class="shell topbar-inner"><div class="brand">Pico <span>阅读固件 · 图文刷机指南</span></div><a class="jump" href="#flash-action">直接去刷机 ↓</a></div></header>
-  <main class="shell">
-    <section class="hero" aria-labelledby="title">
-      <div><div class="eyebrow">PICO / GET STARTED</div><h1 id="title">第一次刷机，<br>跟着做就好。</h1><p class="lead">准备好设备、电脑和一根 USB 数据线。看完下面的 3 步，就能在这个网页给 Pico 安装阅读固件。</p><div class="tags"><span>仅适用 RDP-G01-W</span><span>电脑 Chrome / Edge</span><span>USB-C 数据线</span></div></div>
-      <div class="hero-art" aria-hidden="true"><div class="pico-screen"><div class="screen-status"><span>9:41</span><span>78% ▰</span></div><div class="screen-title">首页</div><div class="screen-subtitle">继续阅读</div><div class="screen-book"><div class="cover"></div><div class="book-lines"><strong>我的书</strong><i></i><i></i></div></div><div class="screen-subtitle">近 7 天阅读</div><div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="screen-nav"><b>首页</b><span>书架</span><span>文件</span><span>设置</span></div></div><span class="art-caption">设备界面示意</span></div>
-    </section>
-    <section class="precheck" aria-labelledby="need-title"><div class="eyebrow">BEFORE YOU START</div><h2 id="need-title">先准备这 3 样</h2><div class="precheck-grid"><div class="check"><span>1</span><strong>确认设备型号</strong><p>这份固件只给 MindReset Read Pico RDP-G01-W 使用。</p></div><div class="check"><span>2</span><strong>打开电脑浏览器</strong><p>在电脑上使用 Chrome 或 Edge 打开本页。</p></div><div class="check"><span>3</span><strong>准备数据线</strong><p>使用能传文件的 USB-C 线；仅能充电的线无法刷机。</p></div></div></section>
-    <section class="steps" aria-labelledby="steps-title"><div class="eyebrow">STEP BY STEP</div><h2 id="steps-title">按顺序完成 3 步</h2><ol>
-      <li class="step"><div class="step-visual" aria-hidden="true"><div class="cable-figure"><div class="laptop">Chrome / Edge</div><div class="cord"></div><div class="mini-device">Pico</div></div></div><div class="step-body"><div class="step-number">第 1 步 · 连接</div><h3>把 Pico 接到电脑</h3><p>插稳 USB 数据线，让设备接通电源。刷机期间保持连接。</p></div></li>
-      <li class="step"><div class="step-visual" aria-hidden="true"><div class="mock-dialog"><div class="dialog-top"><i></i><i></i><i></i></div><div class="dialog-body"><strong>选择串口</strong><div class="port">Pico 对应的串口</div><span class="dialog-button">连接</span></div></div></div><div class="step-body"><div class="step-number">第 2 步 · 选择</div><h3>选 Pico 的串口</h3><p>点击下方刷机按钮，选择 Pico 对应的串口，再点“连接”。如果连接失败，可在 Pico 上点“设置 → 升级和恢复 → BOOT 刷机”，等电脑重新识别后重试。</p></div></li>
-      <li class="step"><div class="step-visual" aria-hidden="true"><div class="mock-dialog"><div class="dialog-top"><i></i><i></i><i></i></div><div class="dialog-body"><strong>正在安装阅读固件</strong><small>请保持 USB 连接</small><div class="progress"><i></i></div><span class="percent">72%</span></div></div></div><div class="step-body"><div class="step-number">第 3 步 · 等待</div><h3>确认安装，等它完成</h3><p>按弹窗提示开始安装。看到“完成”之前，不要拔线或关闭网页。</p></div></li>
-    </ol>
-    <div class="flash-panel" id="flash-action">
-      <div class="flash-copy"><div class="eyebrow" style="color:#dbe3d8">READY TO FLASH</div><h2>准备好了？从这里开始</h2><div class="version-picker"><label for="firmware-choice">选择刷入版本</label><select id="firmware-choice" aria-describedby="firmware-choice-hint" disabled><option value="./manifest.json">最新正式版</option></select></div><p>所选版本 <strong id="firmware-version" aria-live="polite">读取中…</strong></p><p>发布时间：<time id="firmware-updated">读取中…</time>（北京时间）</p><p class="version-hint" id="firmware-choice-hint">默认选择最新正式版，也可选择 rc86 或 rc85。仅适用 RDP-G01-W。</p></div>
-      <div class="flash-help" id="flash-help" role="status"><strong id="flash-help-title">正在检查浏览器…</strong><span>请在电脑 Chrome 或 Edge 中打开公开刷机页：<br><a href="https://wegooo-cell.github.io/read-pico-reader/">https://wegooo-cell.github.io/read-pico-reader/</a></span></div>
-      <esp-web-install-button id="flash-installer" hidden manifest="./manifest.json"><button slot="activate" type="button">连接 Pico，开始刷机</button></esp-web-install-button>
+<a class="skip" href="#main">跳到正文</a>
+<header class="site-header"><div class="header-inner">
+  <a class="wordmark" href="./index.html" aria-label="kiikoread 首页">kiikoread<span>.</span></a>
+  <nav aria-label="主导航"><a href="#preview">界面预览</a><a href="#features">特色功能</a><a href="./manual.html">使用说明</a></nav>
+  <a class="button small primary" href="#flash-action">刷机与下载 <span aria-hidden="true">↗</span></a>
+</div></header>
+<main id="main">
+<section class="hero wrap" id="preview">
+  <div class="hero-copy"><p class="eyebrow">BY KIIKO / 为墨水屏而设计</p>
+    <h1>把阅读，<br>留给自己<span class="period">。</span></h1>
+    <p class="hero-description">一本书，一个安静的界面。<br>从书架到最后读到的那一页，让每次打开都更顺手。</p>
+    <div class="hero-actions"><a class="button primary" href="#flash-action">开始使用 kiikoread <span aria-hidden="true">↗</span></a><a class="text-link" href="./manual.html">先看看使用说明 <span aria-hidden="true">→</span></a></div>
+    <div class="hero-spec"><span>EPUB / TXT</span><span>自定义字体</span><span>开源固件</span></div>
+    <p class="hardware">适用墨水屏型号：RDP-G01-W</p>
+  </div>
+  <div class="screen-gallery" aria-label="墨水屏界面展示">
+    <div class="gallery-heading"><span class="eyebrow">SCREEN PREVIEW</span><span id="screen-counter">01 / 05</span></div>
+    <button class="screen-open" id="screen-open" type="button" aria-label="放大首页界面"><img id="screen-image" src="./assets/screens/home.png" alt="kiikoread 首页界面预览" width="684" height="1216"><span class="zoom-label">点击放大 <span aria-hidden="true">↗</span></span></button>
+    <div class="screen-tabs" role="tablist" aria-label="选择预览界面">
+      <button type="button" role="tab" id="tab-home" aria-selected="true" aria-controls="screen-caption" data-screen="home">首页</button>
+      <button type="button" role="tab" id="tab-shelf" aria-selected="false" aria-controls="screen-caption" tabindex="-1" data-screen="shelf">书架</button>
+      <button type="button" role="tab" id="tab-reader" aria-selected="false" aria-controls="screen-caption" tabindex="-1" data-screen="reader">阅读</button>
+      <button type="button" role="tab" id="tab-wifi" aria-selected="false" aria-controls="screen-caption" tabindex="-1" data-screen="wifi">连接</button>
+      <button type="button" role="tab" id="tab-lock" aria-selected="false" aria-controls="screen-caption" tabindex="-1" data-screen="lock">锁屏</button>
     </div>
-    <p class="safety">正常刷机不会清空设备设置，也不会改动 TF 卡里的书。重要文件仍建议先备份；若弹窗出现“清除数据”选项，请勿选择。</p></section>
-    <section class="release" aria-labelledby="upgrade-title">
-      <div class="eyebrow">TF CARD / ONLINE UPDATE</div><h2 id="upgrade-title">已有固件，只升级版本</h2>
-      <p>下载 <strong>Pico-update.bin</strong>，放进 TF 卡根目录（不要放进 books 文件夹）。在 Pico 打开<strong>设置 → 升级和恢复 → 系统升级 → TF 卡升级</strong>，确认后等待重启。</p>
-      <p><a class="jump" id="bin-download" hidden download="Pico-update.bin">下载 TF 卡升级 Bin ↓</a></p>
-      <p>rc72 及以后版本的双槽基础包可使用 TF 卡升级。更早版本、其他固件或首次安装，请先在本页通过 USB 完整刷机。</p>
-      <p>升级到 rc79 后，也可在系统升级页连接 WiFi，检查并安装官网后续更新。在线更新需要官网发布新版清单；升级期间请保持供电。</p>
-    </section>
-    <section class="release" aria-labelledby="release-title">
-      <div class="eyebrow">最新正式版 0.3.3-rc89 · 本地传输与升级显示</div><h2 id="release-title">这次更新了什么</h2>
-      <ul>
-        <li>移除微信读书扫码登录、在线书架、同步与书籍下载功能。</li>
-        <li>文件管理调整为 WiFi 传输、热点传输、USB 传输三个独立入口，直接进入对应页面；加深按钮边框。</li>
-        <li>WiFi 与热点网页保留目录浏览、任意文件上传、书籍/字体/图片导入和状态栏签名设置。</li>
-        <li>优化联网升级的内存使用，屏幕刷新与固件擦写互斥，减少显示错乱风险。</li>
-        <li>升级进度条只补充增长部分，暂停频繁整页清理；保留断网重试、完整校验与双槽回退。</li>
-      </ul>
-      <p>rc87 已下架。原发布的 rc86、rc85 仍可选择刷入。rc84 及以后固件发现更新时会显示简短日志与“稍后 / 开始更新”。在线刷机、TF 升级和联网 OTA 使用同一固件，保留已有设置、阅读数据和 TF 卡内容。</p>
-      <details><summary>上一版 rc88 的更新</summary>
-      <ul>
-        <li>优化启动与封面内存、异常开书保护，减少重复重启风险。</li>
-        <li>深睡恢复阅读位置，中键长按自定义，保护阅读工具栏入口。</li>
-        <li>新开书与翻页自动全屏；修复票根字体、书籍标题显示和灰阶快捷面板。</li>
-      </ul>
-      </details>
-      <details><summary>上一版 rc86 的更新</summary>
-      <ul>
-        <li>全新输入法：九宫格拼音、全键盘中英文与大小写、独立数字和符号页面。</li>
-        <li>连续拼音与联想：488 个离线常用词组，同音字持续翻页，九宫格可切换读音。</li>
-        <li>输入光标：支持点选位置、中途插入与删除，长文字自动跟随光标滚动。</li>
-        <li>按键反馈与长按删除：按下加深、松手恢复；长按删除连续退格，移开即停止。</li>
-        <li>打字更流畅：保持局部快刷，暂停后仅整理联想词栏，减轻连续换词残影。</li>
-        <li>内建黑体补齐常用汉字；WiFi 与热点传书网页可设置状态栏签名。</li>
-        <li>修复部分 EPUB 兼容性，优化图片缩放和图文混排；完善网页刷机中文提示。</li>
-      </ul>
-      </details>
-      <details><summary>上一版 rc85 的更新</summary>
-      <ul>
-        <li>优化普通与全屏阅读的文字翻页，减少重复擦白和等待。</li>
-        <li>修复部分 EPUB 插图兼容，保留水波纹、周期及手动全刷。</li>
-        <li>蓝牙扫描隐藏无名设备，增加翻页器适配。</li>
-      </ul>
-      </details>
-      <details><summary>上一版 rc84 的更新</summary>
-
-      <ul>
-        <li>图文混排：小图与正文同页显示，图片按比例缩放，多图和后续文字连续排版。</li>
-        <li>滑动翻页：默认支持左右滑动，兼容上下翻页模式。</li>
-        <li>自动休眠：可选 1 分钟、5 分钟、10 分钟或关闭，传输和升级期间暂停自动锁屏。</li>
-        <li>蓝牙翻页器优化：学习映射显示实际识别到的按键，方便确认设置。</li>
-        <li>图标 UI 优化：升级、BOOT 刷机和阅读设置使用独立图标，统一布局与可读性。</li>
-        <li>文件管理排版优化：操作和分页按钮统一对齐，增强文字与线框可读性。</li>
-      </ul>
-      <p>rc84 开始，发现新版本时会在设备上显示简短更新日志，并提供“稍后 / 开始更新”。使用旧版固件更新到 rc84 前，请在本页查看本次日志。</p>
-      </details>
-      <details><summary>上一版 rc83 的更新</summary>
-      <ul>
-        <li>书架封面抽出与取消仅刷新变化的像素，保留灰阶，减少点击时的黑闪。</li>
-        <li>设置滑动更早响应，每次至少移动三行；只刷新内容区，取消按次数强制黑白清屏，到边界不重复刷新。</li>
-        <li>放大状态栏时间、个性签名与电量百分比，统一文字和图标的视觉中心；长签名自动避开两侧信息。</li>
-        <li>修复蓝牙翻页器及扫描页面叠出设置资料卡。</li>
-        <li>修复文件管理首次打开图片时重启；支持根目录及其他目录图片、浏览同目录图片，保留灰阶层次。</li>
-        <li>WiFi 与热点传书网页新增“添加文件到当前目录”：任意格式、任意名称及空文件均可上传到当前 TF 卡目录；同名覆盖需确认。</li>
-        <li>系统字号可选 100%–200%，重启及配置恢复后保留；合并屏幕 PMIC 的 VCOM 门控与稳定时间更新。</li>
-        <li>在线刷机、TF 升级 Bin 和联网 OTA 同步更新；保留双槽回退与已有设置、阅读数据。</li>
-      </ul>
-      </details>
-      <details><summary>rc82 的更新</summary>
-      <ul>
-        <li>发现新版本后直接显示“稍后 / 开始更新”，修复检查结束后按钮仍停留在“取消联网更新”的问题。</li>
-        <li>下载进度至少间隔 5 秒、且变化达到 5% 才更新，仅刷新百分比和进度条；页面标题、卡片和底栏保持稳定。</li>
-        <li>更新时关闭 WiFi 省电，完成或取消后恢复；延长连接等待，短暂断网自动重连并从已下载位置继续，最多重试三次。</li>
-        <li>续传核对文件范围和大小，下载结束验证完整 SHA256 与固件镜像；验证失败保留当前版本。</li>
-        <li>阅读页左上返回键、书名和收藏图标按同一视觉中心线对齐；内建字体根据实际字形边界居中。</li>
-        <li>完整刷机包、TF 升级 Bin 与 OTA 清单同步更新，保留双槽回退、个性化配置和阅读记录。</li>
-      </ul>
-      </details>
-      <details><summary>rc81 的更新</summary>
-      <ul>
-        <li>修复 WiFi/热点选择页点击无响应：按下反馈只刷新单行，松手后正常跳转；已配网时直接启动 WiFi 传书。</li>
-        <li>重做 WiFi 连接页面：加大文字、加深卡片与分隔线；已连接时显示“断开”，断开后保留连接信息，传输中避免误断开。</li>
-        <li>阅读设置新增“翻页模式”：左右翻页或上下翻页。上下模式为上三分之一上一页、中三分之一切换全屏、下三分之一下页；选择随配置保存和恢复。</li>
-        <li>所有圆形返回键外圈加深；状态栏 WiFi、蓝牙图标与电池同为黑色，缩小并靠近电量百分比。</li>
-        <li>书架点击封面增加向上抽出反馈；页码两侧新增翻页箭头，位置与文字对齐，首末页箭头置灰。</li>
-        <li>蓝牙翻页器支持书架上下键翻页：上/左键上一页，下/右键下一页；已学习按键同样生效，避免一次按键翻两页。</li>
-        <li>合并 PR #3：支持渐进式 JPEG 封面，封面按比例缩放和居中裁剪。</li>
-        <li>合并 PR #4：加入 BLE 蓝牙翻页器，设置界面与系统设计统一。</li>
-        <li>状态栏增加 Lucide 蓝牙图标，可与 WiFi 同时显示；按键学习自动显示“识别成功”，网络启动前回收蓝牙资源。</li>
-        <li>阅读工具栏“刷新设置”改为“阅读设置”：全屏沉浸、电源键翻页、关闭书内图片、长按圆圈键全刷集中在此；开关加入配置备份。</li>
-        <li>普通阅读增加圆形返回键，校正首行缩进及段首引号、括号对齐。</li>
-        <li>蓝牙翻页器位于设置“无线连接”分组，在 WiFi 下一行；同步调整点击范围与滚动布局。</li>
-        <li>新增“升级和恢复”分组，系统升级、保存与恢复及 BOOT 刷机各占一行，修正 BOOT 行的点击范围。</li>
-        <li>新增联网 OTA，提供 TF 升级 Bin；发布前核验基础包、分区、版本和校验值。</li>
-        <li>新蓝牙选项加入配置备份。</li>
-        <li>统一采用 PMU 软件油量表与有效位，状态栏和资料卡电量取整保持一致。</li>
-      </ul>
-      </details>
-      <p>rc79 及以后版本可在“设置 → 升级和恢复 → 系统升级”检查联网更新到 rc88。在线刷机、TF 升级 Bin 和联网 OTA 来自同一次编译，保留已有设置与阅读数据。</p>
-    </section>
-    <section class="after" aria-labelledby="after-title"><div class="eyebrow">AFTER INSTALLING</div><h2 id="after-title">刷好后，从哪里开始？</h2><div class="tabs"><div class="tab"><b>01 / HOME</b><strong>首页</strong><p>继续读上次打开的书，查看近 7 天阅读时长。</p></div><div class="tab"><b>02 / LIBRARY</b><strong>书架</strong><p>找到已导入的书，点封面开始阅读。</p></div><div class="tab"><b>03 / FILES</b><strong>文件管理</strong><p>通过 WiFi、热点或 USB 传输导入书籍和文件。</p></div><div class="tab"><b>04 / SETTINGS</b><strong>设置</strong><p>调整系统字体、书架样式和锁屏等选项。</p></div></div><p class="file-note">第一次插入 TF 卡后，系统会建立 <code>books</code>、<code>fonts</code>、<code>pictures</code> 文件夹。EPUB / TXT 书籍放进 <code>books</code>；TTF 字体放进 <code>fonts</code>；图片放进 <code>pictures</code>。固件只内建思源黑体 Medium 子集，不附带其他字体包。</p></section>
-    <section class="faq" aria-labelledby="faq-title"><div class="eyebrow">HELP</div><h2 id="faq-title">遇到问题时</h2><details><summary>点了按钮，却看不到 Pico 的串口？</summary><p>先确认你在电脑端 Chrome 或 Edge 中打开了本站，并退出 Pico 的 USB 读卡模式。换一根确定能传文件的 USB 线，拔插设备后重试；若串口被其他刷机工具占用，先关闭那个工具。已安装新版固件的设备也可从“设置 → 升级和恢复 → BOOT 刷机”进入刷写模式。</p></details><details><summary>为什么需要进入 BOOT 模式？</summary><p>正常连接 USB 串口时，刷机工具会尝试自动切换。若设备处于锁屏休眠或电脑未识别到串口，可先唤醒 Pico，再从设置中的“BOOT 刷机”进入 BOOT 模式，等电脑重新识别后重试。首次刷机时若还没有这个菜单，可先尝试直接连接刷机。</p></details><details><summary>刷完开机，为什么书架是空的？</summary><p>固件不预装书。请插入 TF 卡，在“文件管理”中使用 WiFi、热点或 USB 传书，也可以把 EPUB / TXT 文件放进 TF 卡的 <code>books</code> 文件夹。</p></details><details><summary>阅读时怎样打开设置？</summary><p>阅读正文默认单击中键打开阅读工具栏，长按中键全刷，中间双击切换全屏。可在“阅读设置 → 按键控制”自定义三键或选择两套推荐配置。</p></details></section>
-    <footer><p><a href="https://github.com/wegooo-cell/read-pico-reader" target="_blank" rel="noopener">查看项目源码</a> · <a href="./notices.html">第三方许可与致谢</a></p><p>本项目基于 <a href="https://github.com/MindReset/read_pico_firmware" target="_blank" rel="noopener">MindReset Read Pico 示例固件</a>，并非官方发布。界面图标取自 <a href="https://lucide.dev/icons/" target="_blank" rel="noopener">Lucide</a>，保留其 <a href="./licenses/LUCIDE-ISC.txt">ISC 许可</a>。网页刷机使用 <a href="https://esphome.github.io/esp-web-tools/" target="_blank" rel="noopener">ESP Web Tools</a>。</p></footer>
-  </main>
-  <script src="./versions.js"></script>
-</body>
-</html>
+    <div id="screen-styles" class="screen-styles" role="group" hidden></div>
+    <p id="screen-caption" class="screen-caption" role="tabpanel" aria-labelledby="tab-home">继续阅读、阅读记录和常用操作，打开就能找到。</p>
+    <p class="preview-note">界面与书籍为展示示意，刷新效果以实机为准。</p>
+  </div>
+</section>
+<div class="section-divider wrap"><span>少一点打扰，多一点阅读。</span><span>DESIGNED FOR READING</span></div>
+<section class="features wrap" id="features">
+  <div class="section-intro"><p class="eyebrow">THE LITTLE DETAILS</p><h2>把常用的，<br>做得舒服一点。</h2><p>熟悉的操作，清楚的线条。<br>把选择留给你，把细节交给 kiikoread。</p></div>
+  <div class="feature-grid">
+    <article><img src="./assets/icons/type.svg" alt="" width="28" height="28"><h3>字，按你的习惯来</h3><p>导入自己的字体，调整字号、行距、页边距与首行缩进。系统与阅读字体分别设置。</p></article>
+    <article><img src="./assets/icons/library-big.svg" alt="" width="28" height="28"><h3>一本本，好好放着</h3><p>封面书架、收藏优先、最近阅读排序。进度与书签跟着书走，下次继续读。</p></article>
+    <article><img src="./assets/icons/refresh-cw.svg" alt="" width="28" height="28"><h3>刷新，也有选择</h3><p>普通、快刷与水波纹三种主页模式。阅读时可设置全刷间隔，或手动清理残影。</p></article>
+    <article><img src="./assets/icons/wifi.svg" alt="" width="28" height="28"><h3>传书，用方便的方式</h3><p>WiFi、热点与 USB 三个独立入口。手机和电脑都能传文件，书籍保存在 TF 卡。</p></article>
+    <article><img src="./assets/icons/bluetooth.svg" alt="" width="28" height="28"><h3>翻页，不止一种操作</h3><p>轻点、滑动、蓝牙翻页器。自定义三个按键和中键长按，选择顺手的阅读方式。</p></article>
+    <article><img src="./assets/icons/timer.svg" alt="" width="28" height="28"><h3>记住你的阅读日常</h3><p>阅读进度、时长、个性签名与资料卡。自动休眠、配置备份，让使用更省心。</p></article>
+  </div>
+</section>
+<section class="flash-section" id="flash-action"><div class="wrap">
+  <div class="flash-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h2>开始使用 kiikoread。</h2><p>第一次安装用网页刷机，日常升级也可以用 TF 卡。</p></div><span class="outlined-tag">正式发布</span></div>
+  <div class="release-picker"><div class="select-wrap"><label for="firmware-choice">选择固件版本</label><select id="firmware-choice" disabled><option value="./manifest.json">最新正式版 · 读取中</option></select></div><dl class="release-meta"><div><dt>版本</dt><dd id="firmware-version">读取中…</dd></div><div><dt>更新时间 · 北京时间</dt><dd><time id="firmware-updated">读取中…</time></dd></div></dl></div>
+  <p class="picker-hint" id="firmware-choice-hint">刷机、Bin 下载和更新日志均对应当前选择的版本。</p>
+  <div class="install-grid">
+    <article class="install-card"><span class="card-number">01 / USB</span><h3>连接电脑，网页刷机</h3><p>适合第一次安装、修复系统或切换历史版本。<br>用数据线连接墨水屏，按提示选择设备。</p><div class="install-action"><esp-web-install-button id="flash-installer" hidden manifest="./manifest.json"><button slot="activate" class="button primary" type="button">连接墨水屏，开始刷机</button></esp-web-install-button><div id="flash-help" class="browser-help"><strong id="flash-help-title">正在加载刷机按钮…</strong><p>请在电脑上使用 Chrome 或 Edge，通过 HTTPS 或本地预览地址打开此页。</p></div></div><p class="card-footnote">安装时保留数据：不要勾选「擦除设备」。<br>无法连接时，先在「设置 → 升级和恢复」进入 BOOT 模式。</p><a href="./manual.html#install" class="text-link">查看完整刷机步骤 <span aria-hidden="true">→</span></a></article>
+    <article class="install-card"><span class="card-number">02 / TF CARD</span><h3>下载 Bin，用 TF 卡升级</h3><p>已安装兼容基础包？把升级文件放进 TF 卡根目录，<br>在墨水屏的「升级和恢复」中开始升级。</p><div class="install-action"><a class="button secondary" id="bin-download" hidden download="Pico-update.bin">下载 TF 卡升级 Bin</a></div><a class="text-link archive-bin" id="rc88-bin-download" href="./Pico-update-0.3.3-rc88.bin" download="Pico-update.bin">下载 rc88 正式版 Bin <img src="./assets/icons/download.svg" width="18" height="18" alt=""></a><p class="card-footnote">文件名保持 <code>Pico-update.bin</code>，以兼容已有固件。<br>这是应用升级包，不能作为完整包刷到地址 0。</p><a href="./manual.html#update" class="text-link">查看升级与兼容说明 <span aria-hidden="true">→</span></a></article>
+  </div>
+  <div class="release-notes" aria-live="polite"><h3 id="release-notes-title">更新日志</h3><ul id="release-notes-list"><li>正在读取所选版本的更新说明…</li></ul></div>
+</div></section>
+<section class="manual-banner wrap"><div><p class="eyebrow">A LITTLE HELP</p><h2>从第一本书，<br>到每一次升级。</h2><p>传书、字体、按键、备份与常见问题，<br>都整理在这份使用说明里。</p></div><div class="manual-actions"><a class="button primary" href="./manual.html">在线阅读使用说明 <span aria-hidden="true">→</span></a><a class="text-link" href="./manual/kiikoread-manual.pdf" download>下载 PDF，留一份在电脑 <img src="./assets/icons/download.svg" width="18" height="18" alt=""></a><span>适用于当前正式版 · 中文</span></div></section>
+<section class="faq wrap"><div><p class="eyebrow">BEFORE YOU START</p><h2>你可能想知道。</h2></div><div class="faq-items">
+  <details><summary>网页刷机和 Bin 升级，该选哪一个？</summary><p>第一次安装，或设备还没有兼容的双分区基础包时，使用网页刷机。已安装 rc72 及以上兼容基础包，可以通过 TF 卡升级应用；联网 OTA 还需要支持 OTA 的基础版本。具体以使用说明及当前固件提示为准。</p></details>
+  <details><summary>连接后找不到墨水屏，怎么办？</summary><p>确认使用可传数据的 USB 线，在电脑的 Chrome 或 Edge 打开页面。关闭占用串口的其他程序；在墨水屏「设置 → 升级和恢复 → BOOT 刷机」进入 BOOT 模式，再连接安装。更多步骤见使用说明。</p></details>
+  <details><summary>刷完之后，书籍和字体从哪里来？</summary><p>固件不附带书籍与额外字体。将有权使用的 EPUB、TXT 和字体文件放入 TF 卡，或通过 WiFi、热点、USB 传输。推荐书籍放 books 文件夹，字体放 fonts 文件夹。</p></details>
+  <details><summary>保存配置，会一起保存书籍文件吗？</summary><p>配置备份保存设置和阅读数据，包括进度、阅读时长、书签、收藏、资料卡、签名与网络设置。书籍、字体、头像和壁纸等文件仍需单独保留在 TF 卡上。</p></details>
+</div></section>
+</main>
+<footer class="site-footer"><div class="wrap footer-top"><a class="wordmark" href="./index.html">kiikoread<span>.</span></a><p>一个为墨水屏做的阅读界面。<br>BY KIIKO / KEEP READING.</p><div><a href="https://github.com/wegooo-cell/read-pico-reader" target="_blank" rel="noopener">GitHub ↗</a><a href="https://github.com/wegooo-cell/read-pico-reader/releases" target="_blank" rel="noopener">正式版 Releases ↗</a><a href="./notices.html">开源许可</a></div></div><div class="wrap footer-bottom"><span>适用型号 RDP-G01-W · 基于 MindReset 开源固件，非官方发布</span><span>© 2026 kiikoread</span></div></footer>
+<dialog id="screen-dialog" class="screen-dialog" aria-labelledby="dialog-title"><div class="dialog-head"><strong id="dialog-title">界面预览</strong><button type="button" id="dialog-close" aria-label="关闭放大预览">关闭 ×</button></div><img id="dialog-image" alt="放大的界面预览"><p>展示示意，刷新效果以实机为准。</p></dialog>
+</body></html>

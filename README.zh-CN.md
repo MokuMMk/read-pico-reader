@@ -1,4 +1,6 @@
-# Pico 阅读固件
+# kiikoread
+
+项目对外名称统一为 **kiikoread**，网页对设备使用「墨水屏」。保留原 GitHub 仓库网址、升级地址与备份文件名；本次仅调整官网，固件内名称暂不改变。纯白官网包含界面预览、功能介绍、版本选择、网页刷机、Bin 下载和[在线使用说明](flash/manual.html)。运行 `python3 tools/stage_public_flash.py _site` 生成公开网站，GitHub Pages 或 Cloudflare Pages 均可使用 `_site` 作为发布目录。说明书从 `docs/user-manual.zh-CN.json` 同源生成，运行 `tools/build_user_manual.py --font /path/to/a/static-CJK.ttf` 可更新 HTML 与 PDF（需要 Python ReportLab）。
 
 [English](README.md) · [日本語](README.ja-JP.md) · [第三方许可](THIRD_PARTY_NOTICES.md)
 
@@ -6,7 +8,7 @@
 
 界面包括首页、书架、文件管理和设置；可阅读 TF 卡中的 EPUB、TXT，保存阅读进度，并通过 WiFi、设备热点或 USB 传输文件。
 
-## 当前正式版：rc88
+## 当前正式版：rc89
 
 本次优化启动恢复与封面缓存内存，修复深睡续读，增加中键长按自定义并保护阅读工具栏入口。票根统一使用系统字体；首页与阅读标题复用各自当前字体，按原生字号清晰显示。在线刷机、TF 升级与联网 OTA 同源发布，设备显示简短日志。rc87 已下架，原发布的 rc85、rc86 仍可选择。详见[更新日志](docs/CHANGELOG.md)。
 

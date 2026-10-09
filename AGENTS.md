@@ -164,7 +164,7 @@ Defined in [`main/app/app.h`](main/app/app.h). The loop presents via `app_presen
 
 ## 硬约束 / Hard rules
 
-- 对外产品文案统一用“Pico”；这是用户 2026-09-30 确认的设备名称。Read/0 和 read_pico 仅作硬件、源码标识。/ Public product copy uses “Pico”, per the user's 2026-09-30 naming decision. Read/0 and read_pico remain hardware and source identifiers.
+- 用户 2026-10-09 确认项目品牌为小写 `kiikoread`，网页设备称「墨水屏」，页面底色采用明亮纯白。保留 `wegooo-cell/read-pico-reader` 仓库网址与已发布下载/OTA地址、备份文件名和内部协议标识。用户最新要求固件内名称暂不修改；先完成官网。/ Per the user’s 2026-10-09 decision, use lowercase `kiikoread` for the project and “墨水屏” for devices on the bright-white website. Preserve repository/download/OTA URLs, backup filenames and protocol identifiers. The latest instruction postpones in-device rebranding; complete the website first.
 
 `冻结 / Frozen:` 段落是产品决策，不是建议。改行为前必须先改这段，并说明为什么决策变了。
 

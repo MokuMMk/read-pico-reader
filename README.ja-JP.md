@@ -1,4 +1,6 @@
-# Pico Reader
+# kiikoread
+
+公開プロジェクト名は **kiikoread** です。Web サイトでは機器を「墨水屏」と表記し、GitHub URL・更新 URL・既存のバックアップ名は維持します。この Web 改修では機器内の名称を変更しません。白い公式サイトに画面プレビュー、機能紹介、版選択、Web USB 書き込み、Bin ダウンロードと[使用説明](flash/manual.html)を用意しました。`python3 tools/stage_public_flash.py _site` で公開ファイルを生成し、GitHub Pages / Cloudflare Pages の出力先を `_site` に設定できます。HTML と PDF は `docs/user-manual.zh-CN.json` から `tools/build_user_manual.py --font /path/to/a/static-CJK.ttf` で生成します（Python ReportLab が必要です）。
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
@@ -24,7 +26,7 @@ EPUB の本文の各章は新しいページから始まり、収まる場合は
 
 振ってページ送りは標準では無効です。読書の字体設定で有効にすると、左方向の動作で前ページ、右方向で次ページへ進みます。ゆっくりした傾き、上下方向、タッチ中と反動は除外し、動作後は 800 ミリ秒の待ち時間と静止が必要です。実機で方向と感度を確認してください。全体の高速更新テスト項目は削除し、古い設定からも有効化しません。
 
-## 現行リリース：rc88
+## 現行リリース：rc89
 
 起動復旧と表紙キャッシュのメモリ使用を改善し、深いスリープ後に読書を復元します。中キー長押しを設定でき、ツール入口を保護します。読書票はシステム字体、ホーム・読書タイトルは各画面の字体を本来のサイズで描画します。USB・TF・OTA は同じビルドを使い、本体にも短い更新履歴を表示します。rc87 は公開を取り下げ、元の rc85/rc86 は引き続き選択できます。
 

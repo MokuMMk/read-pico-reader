@@ -32,9 +32,15 @@ class LocalLinks(HTMLParser):
 def stage(output: Path) -> None:
     check(FLASH)
     output.mkdir(parents=True, exist_ok=True)
-    for name in ("index.html", "notices.html", "manifest.json", "toc-preview.png", "firmware.bin",
+    for name in ("index.html", "notices.html", "manual.html", "site.css", "site.js", "installer-bridge.js",
+                 "manifest.json", "toc-preview.png", "firmware.bin",
                  "bootloader.bin", "partitions.bin", "ota_data_initial.bin", "Pico-update.bin", "update.json"):
         shutil.copy2(FLASH / name, output / name)
+    # 官网仅发布展示资源与用户说明；内部构建及调试记录不进入网站。
+    # Publish website assets and the user manual, excluding private build and debug files.
+    shutil.copytree(FLASH / "assets", output / "assets", dirs_exist_ok=True)
+    (output / "manual").mkdir(exist_ok=True)
+    shutil.copy2(FLASH / "manual/kiikoread-manual.pdf", output / "manual/kiikoread-manual.pdf")
     version = json.loads((FLASH / "manifest.json").read_text())["version"]
     shutil.copy2(FLASH / f"Pico-update-{version}.bin", output / f"Pico-update-{version}.bin")
     # 保留已发布版本的固定下载地址，避免旧清单缓存或正在进行的更新突然遇到 404。
@@ -77,7 +83,7 @@ def stage(output: Path) -> None:
     shutil.copy2(ROOT / "LICENSE", output / "LICENSE")
     (output / ".nojekyll").touch()
 
-    for page in ("index.html", "notices.html"):
+    for page in ("index.html", "notices.html", "manual.html"):
         links = LocalLinks()
         links.feed((output / page).read_text(encoding="utf-8"))
         for link in links.links:

@@ -5,6 +5,9 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 本地开发中 / Unreleased local development
 
+- 官网品牌改为 kiikoread，采用纯白界面；增加可切换放大的界面展示、功能介绍、统一版本的刷机/下载/日期/日志，以及同源在线和 PDF 使用说明。保留原发布包、历史版本与升级网址；固件名称暂不修改。
+  Rebrand the bright-white website as kiikoread, with selectable enlarged screen previews, features, consistent release flashing/download/date/notes and shared HTML/PDF documentation. Preserve published binaries, archives and upgrade URLs; defer device rebranding.
+
 - 应用确认的较小列表封面120×156，保持原中心点、右侧书名/作者/进度及局部弹动，等比例填充并居中裁切。
   Apply the approved 120×156 list covers, preserving their center, text/progress positions and local bounce with aspect fill and centered cropping.
 

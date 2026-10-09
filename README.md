@@ -1,4 +1,6 @@
-# Pico Reader
+# kiikoread
+
+The public project name is **kiikoread**. The website calls the device an ink-screen reader; the GitHub URL and legacy update/backup filenames remain compatible. Device firmware branding is unchanged in this website-only task. The bright-white website includes screen previews, features, version selection, web USB flashing, Bin downloads and an [online user manual](flash/manual.html). Stage it with `python3 tools/stage_public_flash.py _site`; both GitHub Pages and Cloudflare Pages can serve `_site`. The PDF can be regenerated from `docs/user-manual.zh-CN.json` with `tools/build_user_manual.py --font /path/to/a/static-CJK.ttf` (Python ReportLab required).
 
 [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
@@ -6,7 +8,7 @@ An independent, open-source reading firmware for the **MindReset Read Pico (RDP-
 
 The current interface has Home, Bookshelf, Files, and Settings. It reads EPUB and TXT books from a TF card, remembers reading progress, and supports Wi-Fi, hotspot, or USB file transfer. The online flasher installs the same firmware image as the local `flash/` bundle.
 
-## Current release: rc88
+## Current release: rc89
 
 This release improves startup recovery and cover-cache memory use, restores reading after deep sleep, adds custom middle-hold actions and protects the Tools entry. Tickets use the system font; home and reader titles reuse their respective active fonts at native sizes. USB, TF and OTA share one build and short device notes. rc87 is withdrawn; original rc85/rc86 releases remain selectable. See the [changelog](docs/CHANGELOG.md).
 

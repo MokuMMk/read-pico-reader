@@ -6,6 +6,12 @@ on:
     paths:
       - flash/index.html
       - flash/notices.html
+      - flash/manual.html
+      - flash/manual/**
+      - flash/assets/**
+      - flash/site.css
+      - flash/site.js
+      - flash/installer-bridge.js
       - flash/manifest.json
       - flash/releases.json
       - flash/releases/**

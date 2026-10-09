@@ -31,6 +31,7 @@
     download.hidden = true;
     download.removeAttribute("href");
     version.textContent = "读取中…";
+    document.dispatchEvent(new CustomEvent("kiikoread:release-loading"));
     updated.textContent = "读取中…";
     updated.removeAttribute("datetime");
     if (serialReady) title.textContent = "正在读取所选版本…";
@@ -59,7 +60,7 @@
       next.manifest = manifestURL;
       next.setAttribute("manifest", manifestURL);
       const shortVersion = manifest.version.split("-").pop();
-      next.querySelector("button").textContent = `连接 Pico，刷入 ${shortVersion}`;
+      next.querySelector("button").textContent = `连接墨水屏，刷入 ${shortVersion}`;
       installer.replaceWith(next);
       installer = next;
       download.href = new URL(choice.bin, document.baseURI).href;
@@ -67,9 +68,11 @@
       download.hidden = false;
       manifestReady = true;
       showInstaller();
+      document.dispatchEvent(new CustomEvent("kiikoread:release", {detail: {manifest, latest: choice === latest}}));
     } catch (error) {
       if (current !== request) return;
       version.textContent = "读取失败，请重选版本或刷新页面";
+      document.dispatchEvent(new CustomEvent("kiikoread:release-unavailable"));
       updated.textContent = "暂不可用";
       if (serialReady) title.textContent = "所选版本暂不可用，请重选版本或刷新页面。";
       showInstaller();
