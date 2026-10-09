@@ -488,6 +488,80 @@ bool book_cover_load_gray(const char *path, const char *title, const char *autho
     return good;
 }
 
+// 与网格缓存分离，不能把已经裁剪的封面当作完整原图。
+// Separate from grid thumbnails: a cropped cache cannot represent the complete source.
+bool book_cover_load_list_gray(const char *path, const char *title, const char *author,
+                               uint8_t out[BOOK_COVER_W * BOOK_COVER_H], bool allow_decode,
+                               bool *pending, unsigned *width, unsigned *height) {
+    if (pending) *pending = false;
+    if (!path || !out || !width || !height) return false;
+    *width = BOOK_COVER_W; *height = BOOK_COVER_H;
+    char canonical[256], cache_path[120];
+    if (book_title_from_path(path, canonical, sizeof(canonical))) title = canonical;
+    if (!title || !*title) return false;
+    cover_cache_header_t key;
+    if (!cover_cache_key(path, title, author, cache_path, sizeof(cache_path), &key)) return false;
+    char *suffix = strrchr(cache_path, '.');
+    if (!suffix || (size_t)(suffix-cache_path)+10 >= sizeof(cache_path)) return false;
+    strcpy(suffix, "-list.bin");
+    FILE *file = fopen(cache_path, "rb");
+    if (file) {
+        cover_cache_header_t found;
+        bool good = fread(&found, 1, sizeof(found), file) == sizeof(found) &&
+            found.magic == key.magic && found.schema == key.schema &&
+            found.template_version == key.template_version && found.file_size == key.file_size &&
+            found.modified == key.modified && found.path_hash == key.path_hash && found.text_hash == key.text_hash &&
+            found.width && found.height && found.width <= BOOK_COVER_W && found.height <= BOOK_COVER_H;
+        size_t bytes = good ? (size_t)found.width * found.height : 0;
+        if (good) good = fread(out, 1, bytes, file) == bytes && fgetc(file) == EOF;
+        fclose(file);
+        if (good) { *width = found.width; *height = found.height; return true; }
+    }
+    if (!allow_decode) { if (pending) *pending = true; return false; }
+    bool good = false, cacheable = true;
+    const char *ext = strrchr(path, '.');
+    if (ext && !strcasecmp(ext, ".epub")) {
+        uint8_t *data = NULL; size_t size = 0; bool png = false;
+        size_t available = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        size_t budget = available > 1536u*1024u ? available - 1536u*1024u : 0;
+        if (budget > 4u*1024u*1024u) budget = 4u*1024u*1024u;
+        esp_err_t error = budget ? book_epub_cover_bounded(path, &data, &size, &png, budget) : ESP_ERR_NO_MEM;
+        unsigned sw = 0, sh = 0;
+        if (error == ESP_OK && book_image_dimensions(data, size, png, &sw, &sh) && sw && sh) {
+            if ((uint64_t)sw*BOOK_COVER_H > (uint64_t)sh*BOOK_COVER_W) {
+                *width = BOOK_COVER_W; *height = ((uint64_t)sh*BOOK_COVER_W + sw/2)/sw;
+            } else { *height = BOOK_COVER_H; *width = ((uint64_t)sw*BOOK_COVER_H + sh/2)/sh; }
+            if (!*width) *width = 1;
+            if (!*height) *height = 1;
+            good = book_image_grayscale(data, size, png, *width, *height, out);
+        }
+        free(data);
+        if ((error != ESP_OK && error != ESP_ERR_NOT_FOUND) || (error == ESP_OK && !good)) cacheable = false;
+    }
+    if (!good) {
+        *width = BOOK_COVER_W; *height = BOOK_COVER_H;
+        good = book_auto_cover_render(path, title, author, *width, *height, out);
+    }
+    if (good && cacheable) {
+        // 有效尺寸和像素一起原子落盘；最多一张小图，无整页解码工作区。
+        // Persist dimensions and pixels atomically; one small image, never a whole-page decode workspace.
+        key.width = *width; key.height = *height;
+        char temp[128];
+        if ((!mkdir("/sdcard/.readpico",0777) || errno==EEXIST) &&
+            (!mkdir("/sdcard/.readpico/covers",0777) || errno==EEXIST) &&
+            snprintf(temp,sizeof(temp),"%s.tmp",cache_path)<(int)sizeof(temp)) {
+            file = fopen(temp,"wb");
+            if (file) {
+                size_t bytes = (size_t)*width * *height;
+                bool saved = fwrite(&key,1,sizeof(key),file)==sizeof(key) && fwrite(out,1,bytes,file)==bytes;
+                if (fclose(file)) saved = false;
+                if (!saved || rename(temp,cache_path)) (void)remove(temp);
+            }
+        }
+    }
+    return good;
+}
+
 static bool file_frame(FILE *file, bool png, uint8_t *sof, unsigned *width, unsigned *height) {
     if (fseek(file, 0, SEEK_SET)) return false;
     if (png) {

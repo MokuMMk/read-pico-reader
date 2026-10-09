@@ -35,6 +35,7 @@ with tempfile.TemporaryDirectory() as folder:
 #define ESP_OK 0
 #define EPD_DRAW_SUCCESS 0
 #define MODE_GL16 1
+#define MODE_DU 2
 #define APP_SLEEP_DEEP 0
 #define APP_WAKE_KEY 1
 #define APP_WAKE_PICKUP 2
@@ -45,7 +46,7 @@ typedef void *cst836u_handle_t;typedef void *sc7a20h_handle_t;typedef int esp_er
 typedef struct {int unused;} EpdiyHighlevelState;
 typedef int ble_pt_event_t;typedef int ble_pt_raw_t;
 typedef struct {uint32_t magic,rotation,checksum;} art_header_t;
-static const int xs[3]={158,342,526},ys[4]={544,703,862,1021},E0470_WAVEFORM=0;
+static const int xs[3]={158,342,526},ys[4]={544,703,862,1021},E0470_WAVEFORM=0,E0470_FOLLOW_WAVEFORM=1;
 const uint8_t lock_4bpp_bin_start[1]={0};
 static uint8_t framebuffer[FRAME_BYTES];
 static unsigned stage,idx,waits,verified,ready,held,pushes,fulls,wiped,stops;
@@ -82,17 +83,18 @@ static void pico_boot_hold_resume(void){++held;}
 static int cst836u_read(void *tp,cst836u_touch_t *t){(void)tp;if(idx>=sample_count){*t=(cst836u_touch_t){0};return 0;}typeof(samples[0]) s=samples[idx++];*t=(cst836u_touch_t){.touched=s.count!=0,.count=s.count,.x=s.x,.y=s.y};if(s.error<-1){power_pending=-s.error;return ESP_OK;}return s.error;}
 static void vTaskDelay(int ms){now+=ms;assert(now<35000||timeout_scenario||!valid_storage);}
 static void ui_pinpad_begin(ui_pinpad_t *p,const uint8_t *fb,const char *title){(void)fb;ui_pinpad_end(p);ui_pinpad_reset(p,title,"");}
+static void ui_pinpad_paint_input(uint8_t *f,const ui_pinpad_t *p){(void)p;f[0]=0xaa;}
 static void ui_pinpad_paint(uint8_t *fb,const ui_pinpad_t *p,EpdRect area){(void)p;(void)area;fb[0]=0xaa;}
 enum EpdDrawError {EPD_GOOD=0,EPD_BAD=1};
-static enum EpdDrawError update_display_area_diff_with(void *h,const int *w,int m,EpdRect a){(void)h;(void)w;(void)a;assert(m==MODE_GL16);++pushes;return display_failure?EPD_BAD:EPD_GOOD;}
+static enum EpdDrawError update_display_area_diff_with(void *h,const int *w,int m,EpdRect a){(void)h;(void)w;(void)a;assert(m==MODE_GL16||m==MODE_DU);++pushes;return display_failure?EPD_BAD:EPD_GOOD;}
 static enum EpdDrawError update_display_full(void *h){(void)h;++fulls;return EPD_GOOD;}
 static void guard_draw_result(void *h,enum EpdDrawError result){(void)h;(void)result;}
 '''.replace('FOLDER',str(p))
  # Declarations precede the backdrop stub; state/hit logic comes from the production pad.
- unit=unit.replace('static void ui_pinpad_begin(', 'void ui_pinpad_begin(').replace('static void ui_pinpad_paint(', 'void ui_pinpad_paint(')
+ unit=unit.replace('static void ui_pinpad_paint_input(', 'void ui_pinpad_paint_input(').replace('static void ui_pinpad_begin(', 'void ui_pinpad_begin(').replace('static void ui_pinpad_paint(', 'void ui_pinpad_paint(')
  for n in ('ui_pinpad_full','ui_pinpad_entry_area','ui_pinpad_end','ui_pinpad_reset','key_rect','joined','hit_test','ui_pinpad_handle'):
   unit+=function(n,ROOT/'main/ui/ui_pinpad.c')+'\n'
- for n in ('checksum','lock_screen_restore','save_art','restore_art','present','lock_screen_authenticate'):
+ for n in ('checksum','lock_screen_restore','save_art','restore_art','present','present_input','lock_screen_authenticate'):
   unit+=function(n,ROOT/'main/lock_screen.c')+'\n'
  unit+=r'''
 static void start(void){idx=sample_count=waits=verified=ready=held=pushes=fulls=0;now=0;power_pending=0;memset(framebuffer,0x37,sizeof(framebuffer));add(0,0,0,0);}

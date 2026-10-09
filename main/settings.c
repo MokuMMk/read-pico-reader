@@ -264,8 +264,8 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_BOOK_MARGIN, &margin) == ESP_OK && margin >= 24 && margin <= 60)
         s_book_margin = margin;
     uint8_t shelf_style = 2;
-    if (nvs_get_u8(h, NVS_KEY_SHELF_STYLE, &shelf_style) == ESP_OK && shelf_style >= 1 && shelf_style <= 4)
-        s_shelf_style = shelf_style <= 2 ? shelf_style : 2;
+    if (nvs_get_u8(h, NVS_KEY_SHELF_STYLE, &shelf_style) == ESP_OK && shelf_style >= 1 && shelf_style <= 5)
+        s_shelf_style = shelf_style == 3 || shelf_style == 4 ? 2 : shelf_style;
     uint8_t shelf_v22 = 0;
     bool migrate_shelf = nvs_get_u8(h, NVS_KEY_SHELF_V22, &shelf_v22) != ESP_OK || shelf_v22 != 1;
     bool retired_shelf = shelf_style == 3 || shelf_style == 4;
@@ -641,8 +641,8 @@ void app_settings_set_book_paragraph_spacing(uint8_t percent) {
 }
 uint8_t app_settings_shelf_style(void) { return s_shelf_style; }
 void app_settings_set_shelf_style(uint8_t style) {
-    if (style < 1 || style > 4) return;
-    if (style > 2) style = 2;
+    if (style < 1 || style > 5) return;
+    if (style == 3 || style == 4) style = 2;
     if (s_shelf_style == style) return;
     s_shelf_style = style;
     nvs_put_u8(NVS_KEY_SHELF_STYLE, style);
@@ -912,7 +912,7 @@ static bool backup_valid(const settings_backup_v1_t *backup) {
         f[BK_LINE_SPACING] < 110 || f[BK_LINE_SPACING] > 150 ||
         f[BK_MARGIN] < 24 || f[BK_MARGIN] > 60 ||
         f[BK_PARAGRAPH] > 75 || f[BK_PARAGRAPH] % 25 ||
-        f[BK_SHELF] < 1 || f[BK_SHELF] > 4) return false;
+        f[BK_SHELF] < 1 || f[BK_SHELF] > 5) return false;
     if (strnlen(backup->books_dir, sizeof(backup->books_dir)) == sizeof(backup->books_dir) ||
         strnlen(backup->fonts_dir, sizeof(backup->fonts_dir)) == sizeof(backup->fonts_dir)) return false;
     return backup_path_valid(backup->font, sizeof(backup->font)) &&
@@ -1018,7 +1018,7 @@ esp_err_t app_settings_backup_restore(void) {
     if (!backup.wallpaper[0] && backup.flags[BK_LOCK] == 1) backup.flags[BK_LOCK] = 0;
     // 已移除的书架样式保留旧编号的读取兼容，恢复时改为默认亚克力。
     // Accept retired IDs from old backups and restore the default acrylic style.
-    if (backup.flags[BK_SHELF] > 2) backup.flags[BK_SHELF] = 2;
+    if (backup.flags[BK_SHELF] == 3 || backup.flags[BK_SHELF] == 4) backup.flags[BK_SHELF] = 2;
     if (profile.avatar[0] && !backup_file_exists(profile.avatar, false)) profile.avatar[0] = 0;
     if (!backup_file_exists(backup.books_dir, true)) strlcpy(backup.books_dir, "/sdcard/books", sizeof(backup.books_dir));
     if (!backup_file_exists(backup.fonts_dir, true)) strlcpy(backup.fonts_dir, "/sdcard/fonts", sizeof(backup.fonts_dir));

@@ -5,10 +5,16 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 本地开发中 / Unreleased local development
 
+- 修复 TF 卡检测通信失败被误判为拔卡的问题；高速初始化失败先等待重试，再降至 20/10 MHz，`ESP_ERR_INVALID_STATE` 不再直接终止重试。初始化错误不自动建议格式化；保留真实拔卡失效、显式重挂及 USB 独占保护。
+  TF detection I/O failures no longer masquerade as removal. Failed high-speed initialization settles and retries before 20/10 MHz fallback, including `ESP_ERR_INVALID_STATE`. Init failures do not suggest formatting; true removal, explicit remount and USB ownership guards remain.
+
 - 新增 D 版书架拼贴锁屏：原比例真实封面、15° 倾斜、圆角与16级灰阶；资料卡名字及大小分明的书籍数量使用导入系统字体原生绘制，TF缓存、有界工作内存与低内存回退。
 - 移除半透明书袋和书脊样式，旧设置及备份回退亚克力；保留票根、壁纸、两种原书架样式及原睡眠恢复逻辑。
 - 浅色拼贴封面增加沿真实圆角边缘的细灰描边，缓存自动重建；深色封面保持原样。
-- 新增可选四位数字锁屏密码：开启确认、验证原密码后修改/关闭，真实锁屏模糊背景、导入系统字体、按下反馈及局部灰阶刷新；浅睡/深睡/冷启动验证后恢复页面，取消保持锁定。凭据使用加盐摘要，普通配置恢复不覆盖；低内存、触摸读错和多指取消不会绕过验证。
+- 新增可选四位数字锁屏密码：开启确认、验证原密码后修改/关闭，真实锁屏模糊背景、导入系统字体、圆内按下反馈及局部黑白快刷；浅睡/深睡/冷启动验证后恢复页面，取消保持锁定。凭据使用加盐摘要，普通配置恢复不覆盖；低内存、触摸读错和多指取消不会绕过验证。
+- 密码键盘输入仅局部更新圆内反馈及密码圆点，不处理背景或字形，优化数字、删除与取消的响应速度。
+- 新增每页四本的列表书架：完整比例封面、作者、阅读进度、收藏标记及双行长标题，支持翻页、重启和配置恢复。
+- 拼贴封面新增柔和投影，白色文字描边减细；锁屏图像使用16级灰阶抖动表现256级输入亮度，保持有界工作内存。
 - 本地测试保持 rc89，尚未发布。
 
 Add a D-layout library collage lock with aspect-preserved real covers, native imported system typography, SD caching, bounded workspaces and safe memory fallback. Pale covers gain a fine rounded gray outline. An optional four-digit PIN verifies wake/cold starts, retains the saved page, confirms setup and requires the old PIN for changes. Cached frosted lock art and native system glyphs use local feedback; faults cannot bypass authentication. Salted credentials are excluded from ordinary backups. Retired pocket/spine settings migrate to acrylic. Local builds retain rc89 and are not published.

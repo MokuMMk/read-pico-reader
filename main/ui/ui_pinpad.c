@@ -38,7 +38,7 @@ void ui_pinpad_end(ui_pinpad_t *pad){
     free(pad->background);lock_pin_wipe(pad,sizeof(*pad));pad->pressed=-1;
 }
 void ui_pinpad_reset(ui_pinpad_t *pad,const char *title,const char *notice){
-    lock_pin_wipe(pad->digits,sizeof(pad->digits));pad->count=0;pad->pressed=-1;pad->blocked=false;
+    lock_pin_wipe(pad->digits,sizeof(pad->digits));pad->count=0;pad->pressed=-1;pad->dirty_key=-1;pad->blocked=false;
     if(title)snprintf(pad->title,sizeof(pad->title),"%s",title);
     snprintf(pad->notice,sizeof(pad->notice),"%s",notice?notice:"");
 }
@@ -112,19 +112,33 @@ void ui_pinpad_paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area){
     }
     if(intersects(area,ui_pinpad_entry_area())){
         unsigned count=pad->count+(pad->pressed>=0&&pad->pressed<10&&pad->count<4);
-        for(int i=0;i<4;++i){int x=241+i*67;epd_draw_circle(x,401,14,0,fb);epd_draw_circle(x,401,13,0,fb);if((unsigned)i<count)epd_fill_circle(x,401,12,0x30,fb);}
+        for(int i=0;i<4;++i){int x=241+i*67;epd_draw_circle(x,401,14,0,fb);epd_draw_circle(x,401,13,0,fb);epd_fill_circle(x,401,12,(unsigned)i<count?0:255,fb);}
         if(pad->notice[0])text(fb,342,445,20,pad->notice,0,pad,-1);
     }
     for(int hit=0;hit<12;++hit){EpdRect box=key_rect(hit);if(!intersects(area,box))continue;bool pressed=pad->pressed==hit;
         if(hit<10){int cx=box.x+RADIUS+3,cy=box.y+RADIUS+3;
-            for(int y=-RADIUS;y<=RADIUS;++y)for(int x=-RADIUS;x<=RADIUS;++x)if(x*x+y*y<=RADIUS*RADIUS){
-                unsigned bg=pad->background?pixel(pad->background,cx+x,cy+y):224;
-                epd_draw_pixel(cx+x,cy+y,pressed?0x40:(bg*7+255*3)/10,fb);
-            }
+            // 圆键白底只在进入时铺好；输入只改内环，不对灰阶背景施加DU。
+            // Establish white circular keys on entry; DU input changes only the inner ring, never gray artwork.
+            epd_fill_circle(cx,cy,RADIUS,255,fb);
             for(int r=RADIUS;r>=RADIUS-2;--r)epd_draw_circle(cx,cy,r,0,fb);
-            char numeral[2]={(char)('0'+hit),0};text(fb,cx,cy,74,numeral,pressed?255:0,pad,hit);
-        }else text(fb,box.x+box.width/2,1132,27,hit==10?"取消":"删除",pressed?0x60:0,pad,hit);
+            for(int r=67;r>=63;--r)epd_draw_circle(cx,cy,r,pressed?0:255,fb);
+            char numeral[2]={(char)('0'+hit),0};text(fb,cx,cy,74,numeral,0,pad,hit);
+        }else text(fb,box.x+box.width/2,1132,27,hit==10?"取消":"删除",0,pad,hit);
     }
+}
+void ui_pinpad_paint_input(uint8_t *fb,const ui_pinpad_t *pad){
+    // 不生成TTF蒙版、不分配内存，只改黑白反馈；矩形内其余像素保持原样。
+    // No glyph masks or allocations: change binary feedback only, retaining every surrounding pixel.
+    int hit=pad->dirty_key;
+    if(hit>=0&&hit<10){
+        EpdRect box=key_rect(hit);int cx=box.x+RADIUS+3,cy=box.y+RADIUS+3;
+        for(int r=67;r>=63;--r)epd_draw_circle(cx,cy,r,pad->pressed==hit?0:255,fb);
+    }else if(hit>=10){
+        EpdRect box=key_rect(hit);
+        epd_fill_rect((EpdRect){box.x+32,box.y+54,76,2},pad->pressed==hit?0:255,fb);
+    }
+    unsigned count=pad->count+(pad->pressed>=0&&pad->pressed<10&&pad->count<4);
+    for(int i=0;i<4;++i)epd_fill_circle(241+i*67,401,12,(unsigned)i<count?0:255,fb);
 }
 static int hit_test(int x,int y){
     if(x<0||x>=PAD_W||y<0||y>=PAD_H)return -1;
@@ -132,14 +146,14 @@ static int hit_test(int x,int y){
     return -1;
 }
 ui_pin_result_t ui_pinpad_handle(ui_pinpad_t *pad,const ui_gesture_event_t *ev,EpdRect *dirty){
-    *dirty=ui_pinpad_entry_area();int prior=pad->pressed;
+    *dirty=ui_pinpad_entry_area();pad->dirty_key=-1;int prior=pad->pressed;
     if(ev->type==UI_GESTURE_PRESS){
         int hit=hit_test(ev->x0,ev->y0);if(hit<0||((pad->blocked||pad->count==4)&&hit<10))return UI_PIN_NONE;
-        pad->pressed=hit;*dirty=joined(*dirty,key_rect(hit));return UI_PIN_CHANGED;
+        pad->pressed=hit;pad->dirty_key=hit;*dirty=joined(*dirty,key_rect(hit));return UI_PIN_CHANGED;
     }
     if(prior<0)return UI_PIN_NONE;
     if(ev->type==UI_GESTURE_MOVE&&hit_test(ev->x,ev->y)==prior)return UI_PIN_NONE;
-    pad->pressed=-1;*dirty=joined(*dirty,key_rect(prior));
+    pad->pressed=-1;pad->dirty_key=prior;*dirty=joined(*dirty,key_rect(prior));
     if(ev->type!=UI_GESTURE_TAP||hit_test(ev->x,ev->y)!=prior||hit_test(ev->x0,ev->y0)!=prior)return UI_PIN_CHANGED;
     if(prior==10)return UI_PIN_CANCEL;
     if(prior==11){if(pad->count)pad->digits[--pad->count]=0;return UI_PIN_CHANGED;}

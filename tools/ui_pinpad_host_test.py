@@ -78,10 +78,11 @@ int main(int argc,char **argv){
  ui_pinpad_paint(fb,&pad,ui_pinpad_full());save(argv[3],fb);
  uint8_t *back=malloc(684*1216/2);memcpy(back,pad.background,684*1216/2);size_t resident=live;
  EpdRect dirty;memcpy(old,fb,684*1216/2);assert(event(&pad,UI_GESTURE_PRESS,342,703,&dirty)==UI_PIN_CHANGED&&pad.pressed==5&&pad.count==0);
- ui_pinpad_paint(fb,&pad,dirty);save(argv[4],fb);assert(live==resident&&!memcmp(back,pad.background,684*1216/2));
+ ui_pinpad_paint_input(fb,&pad);save(argv[4],fb);assert(live==resident&&!memcmp(back,pad.background,684*1216/2));
  for(int y=0;y<1216;++y)for(int x=0;x<684;++x)if(x<dirty.x||x>=dirty.x+dirty.width||y<dirty.y||y>=dirty.y+dirty.height)assert(pixel(old,x,y)==pixel(fb,x,y));
- assert(pixel(fb,342,645)==0x40&&pixel(fb,342,631)==0);assert(pixel(fb,241,401)<64);
- assert(event(&pad,UI_GESTURE_TAP,342,703,&dirty)==UI_PIN_CHANGED&&pad.count==1&&!strcmp(pad.digits,"5"));ui_pinpad_paint(fb,&pad,dirty);
+ assert(pixel(fb,342,637)==0&&pixel(fb,342,631)==0);assert(pixel(fb,241,401)==0);
+ for(int y=dirty.y;y<dirty.y+dirty.height;++y)for(int x=dirty.x;x<dirty.x+dirty.width;++x)if(pixel(old,x,y)!=pixel(fb,x,y)){int dx=x-342,dy=y-703;assert((dx*dx+dy*dy<=68*68)|| (y>=389&&y<=413&&x>=229&&x<=253));assert(pixel(fb,x,y)==0||pixel(fb,x,y)==240);}
+ assert(event(&pad,UI_GESTURE_TAP,342,703,&dirty)==UI_PIN_CHANGED&&pad.count==1&&!strcmp(pad.digits,"5"));ui_pinpad_paint_input(fb,&pad);
  assert(event(&pad,UI_GESTURE_PRESS,158,544,&dirty)==UI_PIN_CHANGED);assert(event(&pad,UI_GESTURE_CANCEL,158,544,&dirty)==UI_PIN_CHANGED&&pad.count==1&&pad.pressed==-1);
  assert(event(&pad,UI_GESTURE_TAP,158,544,&dirty)==UI_PIN_NONE);
  assert(event(&pad,UI_GESTURE_PRESS,158,544,&dirty)==UI_PIN_CHANGED);assert(event(&pad,UI_GESTURE_MOVE,0,0,&dirty)==UI_PIN_CHANGED);assert(event(&pad,UI_GESTURE_TAP,158,544,&dirty)==UI_PIN_NONE&&pad.count==1);

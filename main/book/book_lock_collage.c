@@ -45,7 +45,7 @@
 #endif
 #define LOCK_CACHE_DIR BOOK_LOCK_CACHE_PARENT "/locks"
 #define LOCK_CACHE_VERSION 1u
-#define LOCK_RENDER_REVISION 2u
+#define LOCK_RENDER_REVISION 3u
 #define LOCK_CACHE_MAGIC UINT32_C(0x4c434431)
 #define LOCK_COVER_HEIGHT 334.f
 #define LOCK_GAP 18.f
@@ -372,6 +372,35 @@ static bool cover_edge(float x, float y, float width) {
     float cy = fmaxf(radius - y, y - (LOCK_COVER_HEIGHT - radius));
     return cx > 0 && cy > 0 && cx * cx + cy * cy >= (radius - inset) * (radius - inset);
 }
+// 固定的小投影沿真实圆角旋转；不用第二张全屏或逐像素工作区。
+// A small shadow follows the rotated rounded cover, without a second frame or pixel workspace.
+static void cover_shadow_draw(uint8_t *fb, lock_placement_t p) {
+    const float offset_x = 3.f, offset_y = 6.f, spread = 11.f;
+    float x0 = 342.f + LOCK_COS * p.x - LOCK_SIN * p.y + offset_x;
+    float y0 = 608.f + LOCK_SIN * p.x + LOCK_COS * p.y + offset_y;
+    int left = (int)fminf(684.f, fmaxf(0.f, floorf(x0 - LOCK_SIN * LOCK_COVER_HEIGHT - spread)));
+    int right = (int)fminf(684.f, fmaxf(0.f, ceilf(x0 + LOCK_COS * p.w + spread)));
+    int top = (int)fminf(1216.f, fmaxf(0.f, floorf(y0 - spread)));
+    int bottom = (int)fminf(1216.f, fmaxf(0.f, ceilf(y0 + LOCK_SIN * p.w + LOCK_COS * LOCK_COVER_HEIGHT + spread)));
+    float radius = fminf(LOCK_RADIUS, p.w / 2.f);
+    for (int y = top; y < bottom; ++y) {
+        for (int x = left; x < right; ++x) {
+            float dx = x + .5f - x0, dy = y + .5f - y0;
+            float u = LOCK_COS * dx + LOCK_SIN * dy, v = -LOCK_SIN * dx + LOCK_COS * dy;
+            float qx = fabsf(u - p.w / 2.f) - (p.w / 2.f - radius);
+            float qy = fabsf(v - LOCK_COVER_HEIGHT / 2.f) - (LOCK_COVER_HEIGHT / 2.f - radius);
+            float ax = fmaxf(qx, 0.f), ay = fmaxf(qy, 0.f);
+            float distance = sqrtf(ax * ax + ay * ay) + fminf(fmaxf(qx, qy), 0.f) - radius;
+            if (distance >= spread) continue;
+            float fade = distance <= 0.f ? 1.f : (spread - distance) / spread;
+            // 二次衰减让边缘轻柔，16物理灰阶抖动保留细小亮度差。
+            // Quadratic falloff softens the edge; 16-level dithering retains fine luminance differences.
+            uint8_t tone = (uint8_t)(255.f - 46.f * fade * fade);
+            epd_draw_pixel(x, y, ui_image_dither_gray(tone, x, y), fb);
+        }
+        lock_yield((unsigned)y);
+    }
+}
 static void cover_draw(uint8_t *fb, const uint8_t *gray, const lock_book_t *book, lock_placement_t p) {
     bool outline = pale_cover(gray, book);
     float x0 = 342.f + LOCK_COS * p.x - LOCK_SIN * p.y;
@@ -406,7 +435,7 @@ static void truncate_name(char *text) {
 }
 static bool sticker_draw(uint8_t *fb, const char *text, int px, const char *unit,
                           int unit_px, int x, int y, bool right_bottom) {
-    const int edge = 15, padding = 17;
+    const int edge = 10, padding = 12;
     int above = 0, below = 0, ua = 0, ub = 0;
     ttf_measure_line_px(px, text, &above, &below);
     int w = ttf_text_width_px(px, text), uw = 0;
@@ -449,7 +478,7 @@ static bool sticker_draw(uint8_t *fb, const char *text, int px, const char *unit
         }
     }
     for (unsigned yy = 0; yy < height; ++yy) for (unsigned xx = 0; xx < width; ++xx)
-        if (mask[yy * width + xx]) epd_draw_pixel(origin_x + xx, origin_y + yy, 255 - mask[yy * width + xx], fb);
+        if (mask[yy * width + xx]) epd_draw_pixel(origin_x + xx, origin_y + yy, ui_image_dither_gray(255 - mask[yy * width + xx], origin_x + xx, origin_y + yy), fb);
     free(mask); free(dilated);
     return true;
 }
@@ -503,6 +532,7 @@ bool book_lock_collage_draw(uint8_t *fb) {
     }
     lock_placement_t placements[30];
     unsigned n = make_placements(library, placements);
+    for (unsigned p = 0; p < n; ++p) cover_shadow_draw(fb, placements[p]);
     for (unsigned i = 0; i < library->used; ++i) {
         const unsigned sw = library->books[i].source_w, sh = library->books[i].source_h;
         uint8_t *gray = cover_load(&library->books[i], &library->cache_complete);

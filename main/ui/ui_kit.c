@@ -283,6 +283,20 @@ void ui_text_fixed_context_vc(
     }
 }
 
+void ui_text_fixed_ink_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
+                          enum EpdFontFlags align, uint8_t gray) {
+    if (!fb || !text || !*text || px <= 0) return;
+    int above = 0, below = 0;
+    uint8_t ink = ui_contrast_gray(gray) >> 4;
+    if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(text)) {
+        ui_font_measure_line_px(px, text, &above, &below);
+        ui_font_draw_text_px(fb, x, center_y + (above-below)/2, px, text, align, ink, UI_INK_WHITE, false);
+    } else {
+        ttf_measure_line_px(px, text, &above, &below);
+        ttf_draw_text_px(fb, x, center_y + (above-below)/2, px, text, align, ink, UI_INK_WHITE);
+    }
+}
+
 static bool title_uses_active_font(const char *sample) {
     // 用户字体始终跟随当前页，不因界面的系统字体标志改回内建黑体。
     // User fonts always follow the active page, independently of the UI's system-face flag.

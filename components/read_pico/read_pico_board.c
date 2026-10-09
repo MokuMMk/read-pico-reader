@@ -673,13 +673,21 @@ bool read_pico_rails_on(void) {
     return rails_on;
 }
 
-bool read_pico_sd_present(void) {
-    // 卡座 CD 信号低有效，连接到 FCA9555 P0.6。
-    // 读失败时不要把低有效 CD 判成“有卡”。
-    // / Slot CD is active-low on FCA9555 P0.6. A failed read must not look like "card present".
+esp_err_t read_pico_sd_detect(bool* present) {
+    if (present == NULL) return ESP_ERR_INVALID_ARG;
+    if (s_ioe == NULL) return ESP_ERR_INVALID_STATE;
+    // CD 低有效；I2C 错误是未知状态，不能触发已挂载卡的失效锁存。
+    // Active-low CD; an I2C error is unknown and must not invalidate a mounted card.
     uint8_t in0 = 0xFF;
-    if (s_ioe == NULL || fca9555_read_reg(s_ioe, 0, &in0) != ESP_OK) return false;
-    return (in0 & IOE_SD_CD) == 0;
+    esp_err_t err = fca9555_read_reg(s_ioe, 0, &in0);
+    if (err != ESP_OK) return err;
+    *present = (in0 & IOE_SD_CD) == 0;
+    return ESP_OK;
+}
+
+bool read_pico_sd_present(void) {
+    bool present = false;
+    return read_pico_sd_detect(&present) == ESP_OK && present;
 }
 
 void read_pico_clear_ioe_int(void) {

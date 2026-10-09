@@ -670,6 +670,18 @@ static void setting_toggle(uint8_t *fb, int y, const char *title, const char *de
 
 static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
     if (top < 242 || top + 170 >= UI_NAV_TOP) return;
+    if (style == 5) {
+        ui_fill_round_rect(fb, (EpdRect){68,top,548,170}, 12, UI_GRAY_WHITE);
+        for (int i=0;i<3;++i) {
+            int y=top+9+i*52;
+            epd_fill_rect((EpdRect){86,y,31,43},i==1?0x80:0x40,fb);
+            epd_fill_rect((EpdRect){137,y+6,218,3},0,fb);
+            epd_fill_rect((EpdRect){137,y+19,84,2},0x70,fb);
+            epd_fill_rect((EpdRect){137,y+34,435,4},0xd0,fb);
+            epd_fill_rect((EpdRect){137,y+34,120+i*75,4},0x40,fb);
+        }
+        return;
+    }
     const int left = 99;
     for (int i = 0; i < 3; ++i) {
         int x = left + 20 + i * 155;
@@ -752,20 +764,20 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_page == SETTINGS_SHELF_STYLE) {
         ui_nav_back(fb, 36, 79);
         ui_text_vc(fb, 342, 107, 34, "书架样式", EPD_DRAW_ALIGN_CENTER, false);
-        ui_text(fb, 36, 207, 23, "每页 9 本 · 选择书架外观", EPD_DRAW_ALIGN_LEFT, false);
-        static const char *const styles[] = {"深色书轨", "亚克力书架"};
-        static const char *const descriptions[] = {"封面落在书轨上", "透明亚克力挡板"};
-        for (int i = 0; i < 2; ++i) {
+        ui_text(fb, 36, 207, 23, "选择书架外观与排列方式", EPD_DRAW_ALIGN_LEFT, false);
+        static const char *const styles[] = {"深色书轨", "亚克力书架", "列表书架"};
+        static const char *const descriptions[] = {"每页 9 本", "每页 9 本", "作者与进度 · 每页 4 本"};
+        for (int i = 0; i < 3; ++i) {
             int y = 263 + i * 253 - s_style_scroll;
             if (y + 230 < 242 || y > 1095) continue;
             EpdRect card = {36, y, 612, 230};
-            int style = i + 1;
+            int style = i == 2 ? 5 : i + 1;
             bool active = app_settings_shelf_style() == style;
             settings_card(fb, card, 24, active ? 0xd0 : UI_GRAY_WHITE,
                           active ? 0x58 : 0x70);
             draw_style_thumbnail(fb, style, y + 11);
             if (y + 190 < 1096) ui_text(fb, 68, y + 188, 23, styles[i], EPD_DRAW_ALIGN_LEFT, false);
-            if (y + 195 < 1096) ui_text(fb, 440, y + 192, 17, descriptions[i], EPD_DRAW_ALIGN_LEFT, false);
+            if (y + 195 < 1096) ui_text(fb, 310, y + 192, 17, descriptions[i], EPD_DRAW_ALIGN_LEFT, false);
             if (y + 220 < 1096) {
                 epd_draw_circle(609, y + 207, 13, UI_GRAY_BLACK, fb);
                 if (active) epd_fill_circle(609, y + 207, 6, UI_GRAY_BLACK, fb);
@@ -1248,7 +1260,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     snprintf(signature_value, sizeof(signature_value), "%s  ›",
              app_settings_status_signature()[0] ? app_settings_status_signature() : "未设置");
     fit_value(signature_value, 235);
-    const char *reading_values[] = {font, size, contrast, styles[app_settings_shelf_style() <= 2 ? app_settings_shelf_style() : 0],
+    const char *reading_values[] = {font, size, contrast, app_settings_shelf_style() == 5 ? "列表书架  ›" : styles[app_settings_shelf_style() <= 2 ? app_settings_shelf_style() : 0],
                                     signature_value, app_settings_home_full_refresh() ? "开启  ›" : "关闭  ›",
                                     app_settings_main_refresh_mode() == APP_MAIN_REFRESH_FAST ? "快刷  ›" :
                                     app_settings_main_refresh_mode() == APP_MAIN_REFRESH_WATER ? "水波纹  ›" : "普通  ›"};
@@ -1530,7 +1542,10 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         EpdRect dirty; ui_pin_result_t result = ui_pinpad_handle(&s_pinpad, ev, &dirty);
         if (result == UI_PIN_CANCEL) { pin_setup_close(); s_page = SETTINGS_LOCK_PIN; return APP_REDRAW_PAGE; }
         if (result == UI_PIN_COMPLETE) s_pin_pending = true;
-        return result == UI_PIN_NONE ? APP_REDRAW_NONE : pin_paint(ctx, dirty);
+        if (result == UI_PIN_NONE) return APP_REDRAW_NONE;
+        ui_pinpad_paint_input(ctx->fb, &s_pinpad);
+        guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, dirty));
+        return APP_REDRAW_DONE;
     }
     if (s_page == SETTINGS_LOCK_PIN && ev->type == UI_GESTURE_TAP && lock_pin_available() &&
         (ui_rect_hit((EpdRect){36,406,612,70},ev->x0,ev->y0) ||
@@ -1700,9 +1715,9 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
     if (s_page == SETTINGS_SHELF_STYLE) {
         if (y < 190) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
-        for (int i = 0; i < 2; ++i) {
+        for (int i = 0; i < 3; ++i) {
             if (y >= 263 + i * 253 - s_style_scroll && y < 493 + i * 253 - s_style_scroll && y < 1096) {
-                app_settings_set_shelf_style((uint8_t)(i + 1));
+                app_settings_set_shelf_style((uint8_t)(i == 2 ? 5 : i + 1));
                 s_page = SETTINGS_MAIN;
                 return APP_REDRAW_PAGE;
             }

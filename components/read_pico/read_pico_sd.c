@@ -53,23 +53,29 @@ static void observe_media_locked(bool present) {
 }
 
 static void publish_info(const read_pico_sd_info_t* info) {
-    bool present = read_pico_sd_present();
+    bool present = false;
+    esp_err_t detect_err = read_pico_sd_detect(&present);
     portENTER_CRITICAL(&state_lock);
     cached_info = *info;
-    observe_media_locked(present);
+    // 已经确认的拔卡失效不会被后续通信错误或探测成功覆盖。
+    // A confirmed removal latch survives later detection faults and probe success.
+    if (detect_err == ESP_OK || media_invalidated)
+        observe_media_locked(detect_err == ESP_OK ? present : cached_info.present);
     probe_state = 2;
     portEXIT_CRITICAL(&state_lock);
 }
 
 static void fill_info(read_pico_sd_info_t* info, esp_err_t mount_err) {
     memset(info, 0, sizeof(*info));
-    info->present = read_pico_sd_present();
+    bool present = false;
+    esp_err_t detect_err = read_pico_sd_detect(&present);
+    // 成功挂载是有卡的证据；检测通信失败不覆盖挂载结果。
+    // A successful mount proves presence; failed detection must not override it.
+    info->present = detect_err == ESP_OK ? present : mount_err != ESP_ERR_NOT_FOUND;
     info->error = mount_err;
-    info->needs_format = info->present && !info->mounted
-        && mount_err != ESP_OK
-        && mount_err != ESP_ERR_TIMEOUT
-        && mount_err != ESP_ERR_NOT_FOUND
-        && mount_err != ESP_ERR_NOT_FINISHED;
+    // 挂载错误不能证明缺少文件系统，尤其是协商、内存与 I/O 故障；只允许显式格式化。
+    // A mount error does not prove a missing filesystem (negotiation/OOM/I/O); formatting stays explicit.
+    info->needs_format = false;
     if (mount_err != ESP_OK || card == NULL) return;
 
     info->mounted = true;
@@ -127,20 +133,26 @@ static esp_err_t mount_card(bool format_if_failed) {
         .allocation_unit_size = 16 * 1024,
     };
 
-    // 高容量卡对高速协商及信号裕量更敏感；失败后降速重试，绝不在探测时格式化。
-    // Retry high-capacity cards at slower bus clocks; probing never formats media.
-    const int clocks[] = {SDMMC_FREQ_HIGHSPEED, 20000, 10000};
+    // 冷启动先等待并重试高速，再降速；CMD6 忙也可能返回 INVALID_STATE，不得直接放弃。
+    // Settle/retry high speed before lowering clocks; CMD6 busy may return INVALID_STATE and must retry.
+    const int clocks[] = {SDMMC_FREQ_HIGHSPEED, SDMMC_FREQ_HIGHSPEED, 20000, 10000};
     esp_err_t err = ESP_FAIL;
     for (size_t attempt = 0; attempt < sizeof(clocks) / sizeof(clocks[0]); ++attempt) {
-        if (!read_pico_sd_present()) return ESP_ERR_NOT_FOUND;
+        bool present = false;
+        esp_err_t detect_err = read_pico_sd_detect(&present);
+        if (detect_err == ESP_OK && !present) return ESP_ERR_NOT_FOUND;
+        if (detect_err != ESP_OK) ESP_LOGW(TAG, "SD detect unavailable: %s; try card I/O", esp_err_to_name(detect_err));
         host.max_freq_khz = clocks[attempt];
         card = NULL;
         err = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT, &host, &slot, &mount_config, &card);
         if (err == ESP_OK) break;
-        if (err == ESP_ERR_NO_MEM || err == ESP_ERR_INVALID_ARG || err == ESP_ERR_INVALID_STATE) break;
-        ESP_LOGW(TAG, "SD probe at %d kHz failed: %s; retry slower", clocks[attempt], esp_err_to_name(err));
+        if (err == ESP_ERR_NO_MEM || err == ESP_ERR_INVALID_ARG) break;
+        ESP_LOGW(TAG, "SD probe %u at %d kHz failed: %s", (unsigned)attempt + 1,
+                 clocks[attempt], esp_err_to_name(err));
         card = NULL;
-        vTaskDelay(pdMS_TO_TICKS(250));
+        // VFS mount 在失败时只清理自己建立的 host；不额外 deinit 别的存储会话。
+        // Failed VFS mount cleans up its own host; never forcibly deinit another storage session.
+        if (attempt + 1 < sizeof(clocks) / sizeof(clocks[0])) vTaskDelay(pdMS_TO_TICKS(250));
     }
     if (err != ESP_OK) {
         card = NULL;
@@ -164,8 +176,8 @@ static esp_err_t close_card(void) {
 static void probe_task(void* arg) {
     (void)arg;
     read_pico_sd_info_t info = { 0 };
-    info.present = read_pico_sd_present();
-    if (!info.present) {
+    esp_err_t detect_err = read_pico_sd_detect(&info.present);
+    if (detect_err == ESP_OK && !info.present) {
         info.error = ESP_ERR_NOT_FOUND;
         publish_info(&info);
         ESP_LOGI(TAG, "SD_CD absent, skip mount");
@@ -185,16 +197,14 @@ static void probe_task(void* arg) {
         );
     }
     publish_info(&info);
-    if (info.needs_format) {
-        ESP_LOGW(TAG, "SD present but no FAT, ask user to format");
-    }
     vTaskDelete(NULL);
 }
 
 esp_err_t read_pico_sd_start_probe(void) {
-    bool present = read_pico_sd_present();
+    bool present = true;
+    esp_err_t detect_err = read_pico_sd_detect(&present);
     portENTER_CRITICAL(&state_lock);
-    observe_media_locked(present);
+    if (detect_err == ESP_OK) observe_media_locked(present);
     esp_err_t err = ESP_OK;
     if (probe_state == 1) err = ESP_ERR_NOT_FINISHED;
     else if (media_invalidated) err = cached_info.error;
@@ -227,11 +237,13 @@ esp_err_t read_pico_sd_start_probe(void) {
 
 esp_err_t read_pico_sd_get_info(read_pico_sd_info_t* info) {
     if (info == NULL) return ESP_ERR_INVALID_ARG;
-    bool present = read_pico_sd_present();
+    bool present = false;
+    esp_err_t detect_err = read_pico_sd_detect(&present);
     portENTER_CRITICAL(&state_lock);
-    observe_media_locked(present);
+    if (detect_err == ESP_OK) observe_media_locked(present);
     *info = cached_info;
-    esp_err_t err = !present || media_invalidated ? info->error :
+    esp_err_t err = probe_state == 0 && detect_err != ESP_OK ? detect_err :
+        !info->present || media_invalidated ? info->error :
         probe_state == 0 ? ESP_ERR_INVALID_STATE :
         probe_state == 1 ? ESP_ERR_NOT_FINISHED : info->error;
     portEXIT_CRITICAL(&state_lock);
@@ -251,7 +263,8 @@ esp_err_t read_pico_sd_remount(void) {
     if (!begin_operation()) return ESP_ERR_NOT_FINISHED;
     esp_err_t err = close_card();
     if (err != ESP_OK) {
-        read_pico_sd_info_t info = { .present = read_pico_sd_present(), .error = err };
+        read_pico_sd_info_t info = { .present = true, .error = err };
+        (void)read_pico_sd_detect(&info.present);
         publish_info(&info);
         return err;
     }
@@ -267,7 +280,8 @@ esp_err_t read_pico_sd_sync(void) {
     if (!begin_operation()) return ESP_ERR_NOT_FINISHED;
     esp_err_t err = close_card();
     if (err != ESP_OK) {
-        read_pico_sd_info_t info = { .present = read_pico_sd_present(), .mounted = true, .error = err };
+        read_pico_sd_info_t info = { .present = true, .mounted = true, .error = err };
+        (void)read_pico_sd_detect(&info.present);
         publish_info(&info);
         return err;
     }
@@ -286,7 +300,8 @@ esp_err_t read_pico_sd_format(void) {
     portEXIT_CRITICAL(&state_lock);
     if (invalid) return current.present ? ESP_ERR_INVALID_STATE : ESP_ERR_NOT_FOUND;
     if (busy) return ESP_ERR_NOT_FINISHED;
-    if (!read_pico_sd_present()) {
+    bool present = false;
+    if (read_pico_sd_detect(&present) == ESP_OK && !present) {
         read_pico_sd_info_t info = { .error = ESP_ERR_NOT_FOUND };
         publish_info(&info);
         return ESP_ERR_NOT_FOUND;

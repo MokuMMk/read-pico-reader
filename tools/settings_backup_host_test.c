@@ -446,14 +446,14 @@ int main(void) {
 
     // 已删除的3/4样式在旧NVS与旧备份都回退到亚克力，1/2保持原选择。
     // Retired styles 3/4 fall back from old NVS and backups; preserve retained choices 1/2.
-    for (int style=1;style<=4;++style) {
+    for (int style=1;style<=5;++style) {
         loaded_shelf=style;loaded_shelf_v22=true;s_shelf_style=1;
-        app_settings_init();assert(app_settings_shelf_style()==(style<=2?style:2));
-        assert(loaded_shelf==(style<=2?style:2));
+        app_settings_init();assert(app_settings_shelf_style()==((style==3||style==4)?2:style));
+        assert(loaded_shelf==((style==3||style==4)?2:style));
         s_shelf_style=(uint8_t)style;
         assert(app_settings_backup_save()==ESP_OK);
         s_shelf_style=1;assert(app_settings_backup_restore()==ESP_OK);
-        assert(app_settings_shelf_style()==(style<=2?style:2));
+        assert(app_settings_shelf_style()==((style==3||style==4)?2:style));
     }
     for (unsigned style=0;style<3;++style) {
         app_settings_set_lock_style((uint8_t)style);

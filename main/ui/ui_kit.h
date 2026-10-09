@@ -138,6 +138,9 @@ void ui_text_fixed_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 );
+/// 固定字号文字使用指定灰阶墨色，复用活动字体。/ Fixed-size text with a chosen gray ink, reusing the active face.
+void ui_text_fixed_ink_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
+                          enum EpdFontFlags align, uint8_t gray);
 /// 标题复用当前活动字体并按固定字号截短：首页系统字体、阅读页阅读字体；不加载第二份字体。
 /// Fit titles in the active face at a fixed size: Home's system face or the reader face, without loading a second font.
 int ui_text_title_fit(char *text, int preferred_px, int width, const char *font_sample);

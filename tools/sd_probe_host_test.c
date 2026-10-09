@@ -13,7 +13,10 @@
 #include "freertos/task.h"
 
 static bool test_present;
+static bool detect_failure;
 static int mount_calls, unmount_calls, test_fail_above_khz;
+static esp_err_t test_mount_error = ESP_ERR_TIMEOUT;
+static int clock_history[64], delays;
 static sdmmc_card_t test_card = {
     .cid.name = "TEST64G", .csd.capacity = 1024, .csd.sector_size = 512,
 };
@@ -23,6 +26,11 @@ static sdmmc_card_t test_card = {
 #undef mkdir
 
 bool read_pico_sd_present(void) { return test_present; }
+esp_err_t read_pico_sd_detect(bool* present) {
+    if (detect_failure) return ESP_ERR_TIMEOUT;
+    *present = test_present;
+    return ESP_OK;
+}
 const char* esp_err_to_name(esp_err_t err) { (void)err; return "test"; }
 BaseType_t xTaskCreate(void (*fn)(void*), const char* name, int stack,
                        void* arg, int priority, void* handle) {
@@ -30,17 +38,18 @@ BaseType_t xTaskCreate(void (*fn)(void*), const char* name, int stack,
     fn(arg);
     return pdPASS;
 }
-void vTaskDelay(int ticks) { (void)ticks; }
+void vTaskDelay(int ticks) { assert(ticks == 250); ++delays; }
 void vTaskDelete(void* handle) { (void)handle; }
 esp_err_t esp_vfs_fat_sdmmc_mount(const char* path, const sdmmc_host_t* host,
                                   const sdmmc_slot_config_t* slot,
                                   const esp_vfs_fat_sdmmc_mount_config_t* config,
                                   sdmmc_card_t** out) {
     (void)path; (void)host; (void)slot; (void)config;
-    ++mount_calls;
+    assert(mount_calls < 64);
+    clock_history[mount_calls++] = host->max_freq_khz;
     assert(test_present);
     assert(!config->format_if_mount_failed);
-    if(test_fail_above_khz && host->max_freq_khz > test_fail_above_khz){*out=NULL;return ESP_ERR_TIMEOUT;}
+    if(test_fail_above_khz && host->max_freq_khz > test_fail_above_khz){*out=NULL;return test_mount_error;}
     *out = &test_card;
     return ESP_OK;
 }
@@ -74,6 +83,11 @@ int main(void) {
     assert(read_pico_sd_get_info(&info) == ESP_OK);
     assert(info.present && info.mounted && mount_calls == 1);
 
+    detect_failure = true;
+    assert(read_pico_sd_get_info(&info) == ESP_OK && info.mounted && info.capacity_bytes);
+    assert(read_pico_sd_start_probe() == ESP_OK && mount_calls == 1);
+    detect_failure = false;
+
     test_present = false;
     assert(read_pico_sd_get_info(&info) == ESP_ERR_NOT_FOUND);
     test_present = true;
@@ -86,7 +100,39 @@ int main(void) {
     assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
     assert(read_pico_sd_get_info(&info)==ESP_OK&&info.mounted);
     assert(info.capacity_bytes==256ull*1024*1024*1024);
-    assert(mount_calls==5);
-    puts("sd_probe: empty boot, insertion, removal and explicit remount passed");
+    assert(mount_calls==6 && delays==3);
+    assert(clock_history[2]==40000 && clock_history[3]==40000 && clock_history[4]==20000 && clock_history[5]==10000);
+
+    // CMD6 忙不能终止降速；默认频率跳过高速切换。/ CMD6 busy must fall back; default speed skips HS negotiation.
+    test_mount_error=ESP_ERR_INVALID_STATE;
+    test_fail_above_khz=20000;
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    assert(read_pico_sd_get_info(&info)==ESP_OK && info.mounted && mount_calls==9);
+    assert(clock_history[6]==40000 && clock_history[7]==40000 && clock_history[8]==20000);
+
+    // 资源错误立即失败，初始化失败不建议格式化。/ Resource errors fail immediately; init failures never suggest format.
+    test_mount_error=ESP_ERR_NO_MEM;
+    test_fail_above_khz=1;
+    int before=mount_calls, previous_delays=delays;
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    assert(read_pico_sd_get_info(&info)==ESP_ERR_NO_MEM && !info.mounted && !info.needs_format);
+    assert(mount_calls==before+1 && delays==previous_delays);
+    test_mount_error=ESP_ERR_INVALID_STATE;
+    before=mount_calls;
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    assert(read_pico_sd_get_info(&info)==ESP_ERR_INVALID_STATE && !info.needs_format);
+    assert(mount_calls==before+4 && delays==previous_delays+3);
+    test_mount_error=ESP_FAIL;
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    assert(read_pico_sd_get_info(&info)==ESP_FAIL && !info.needs_format);
+
+    // CD 通信未知时仍尝试实际挂载，不能假设拔卡。/ Unknown CD still permits an actual mount, not assumed removal.
+    detect_failure=true;
+    test_fail_above_khz=0;
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    assert(read_pico_sd_get_info(&info)==ESP_OK && info.mounted && info.present);
+    detect_failure=false;
+    assert(read_pico_sd_get_info(&info)==ESP_OK && info.mounted);
+    puts("sd_probe: empty boot/insertion, checked CD, bounded settle/fallback, CMD6 busy, OOM, no format suggestion, 256 GiB passed");
     return 0;
 }

@@ -57,6 +57,8 @@ The board-specific flash and PSRAM timing is in `sdkconfig.defaults`. `sdkconfig
 
 ## Books and fonts
 
+TF storage currently supports FAT16/FAT32; exFAT is not enabled. Capacity alone does not establish compatibility. The local development build retries 40 MHz after a 250 ms settle, then falls back to 20/10 MHz, including busy high-speed negotiation. Failed card-detect communication preserves the last snapshot instead of pretending the card was removed; an unreadable detect signal permits a bounded actual mount attempt. Initialization failures never automatically suggest or perform formatting. Real removal still invalidates open-file state; recovery requires closing consumers and explicit remounting or restarting the device.
+
 On first mount, the firmware creates `books`, `fonts`, and `pictures` folders on the TF card if absent. No books are preloaded. The firmware embeds a subset of **Noto Sans SC Medium** for the system UI and distributes no additional font package. Users may place their own compatible fonts in `fonts` for reading. The embedded subset remains under the [SIL Open Font License](main/assets/OFL-Noto.txt).
 
 Shelf styles retain “Dark rail” and “Acrylic shelf”, with nine books per page. Saved or restored pocket/spine choices fall back to acrylic.
@@ -94,3 +96,9 @@ Please report firmware bugs in this repository, not in the MindReset upstream is
 File management shows **WiFi transfer**, **Hotspot transfer** and **USB transfer** directly. WiFi connects to a saved network or opens network setup; hotspot mode starts the device access point; USB exposes the TF card to the computer. AP/STA browser transfer keeps directory browsing, arbitrary-file uploads and status-signature editing.
 
 Shake-to-turn is off by default and enabled in reader Font Settings. A horizontal left/right impulse turns to the previous/next page. Slow tilts, other axes, touch and rebounds are filtered; wait through an 800 ms cooldown and rest before the next gesture. Direction and sensitivity still need device validation. The global refresh test option is removed and ignored in older configurations.
+
+### Local test: list shelf and lock feedback
+
+Settings → Display → Shelf style adds a four-book list with uncropped covers, author, progress and favorite badges, and at most two title lines. Existing paging, management and favorite ordering remain available. The choice persists across restart and backup restoration. Normal/ripple retain gray covers; fast mode retains only BW covers.
+
+PIN input updates only the inner circular feedback and password dots with local BW differences, without rerendering artwork or glyphs. Delete removes one digit; Cancel keeps the device locked. Collage covers gain soft shadows and thinner white typography outlines, with cache invalidation. Wallpaper, ticket and collage images use physical 16-level grayscale with ordered dithering of 256-level source brightness, rather than native 256-level hardware.

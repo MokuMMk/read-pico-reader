@@ -57,6 +57,11 @@ static void present(EpdiyHighlevelState *hl,EpdRect area){
     // On a display failure rebuild this same protected screen, never an unauthenticated page.
     if(result!=EPD_DRAW_SUCCESS)guard_draw_result(hl,update_display_full(hl));
 }
+static void present_input(EpdiyHighlevelState *hl,EpdRect area){
+    enum EpdDrawError result=update_display_area_diff_with(hl,&E0470_FOLLOW_WAVEFORM,MODE_DU,area);
+    guard_draw_result(hl,result);
+    if(result!=EPD_DRAW_SUCCESS)present(hl,ui_pinpad_full());
+}
 void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7a20h_handle_t acc,bool boot){
     uint8_t *fb=epd_hl_get_framebuffer(hl);
     (void)ble_pt_stop(2000);
@@ -102,7 +107,7 @@ void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7
             if(ui_gesture_feed(&gesture,&ctx,&event)){
                 active_at=now;EpdRect dirty;ui_pin_result_t r=ui_pinpad_handle(&pad,&event,&dirty);
                 if(r==UI_PIN_CANCEL){cancel=true;break;}
-                if(r!=UI_PIN_NONE){ui_pinpad_paint(fb,&pad,dirty);present(hl,dirty);}
+                if(r!=UI_PIN_NONE){ui_pinpad_paint_input(fb,&pad);present_input(hl,dirty);}
                 if(r==UI_PIN_COMPLETE){
                     bool verified=lock_pin_verify(pad.digits);
                     if(verified){ui_pinpad_end(&pad);free(original);read_pico_pmu_drain_events();ble_pt_event_t e;while(ble_pt_pop_key(&e)){}ble_pt_raw_t raw;while(ble_pt_pop_raw(&raw)){}return;}

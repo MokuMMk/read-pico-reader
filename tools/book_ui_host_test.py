@@ -402,6 +402,9 @@ int main(void) {
     assert(shelf_turn_page(&remote_ctx,1)==APP_REDRAW_NONE);
     EpdRect left=shelf_page_arrow_rect(-1),right=shelf_page_arrow_rect(1);
     assert(left.y==right.y&&left.y+left.height<=UI_BAR_TOP);
+    test_shelf_style=5;s_view=SHELF;s_visible_count=15;assert(shelf_rows()==4&&leaves()==4);
+    for(int i=0;i<4;++i){EpdRect r=row_rect(i);assert(r.y==216+i*197&&r.y+r.height<=1004);}
+    s_view=MANAGE;assert(shelf_rows()==9);s_view=SHELF;
     s_visible_count=0;s_view=SHELF;test_shelf_style=0;
     for (int gray=0; gray<=255; ++gray)
         assert(inline_ink_gray((uint8_t)gray)==gray);

@@ -47,11 +47,12 @@ unit = r'''
 typedef struct {int x,y,width,height;} EpdRect;
 typedef struct {unsigned x,y,width,height;} book_crop_t;
 enum {SHELF,MANAGE};
-static int s_view=SHELF,rows=9,contrast=100,phase_shift;
+static int s_view=SHELF,rows=9,contrast=100,phase_shift,style=2;
 static bool fast=true,alloc_fail;
 static size_t free_psram=4*1024*1024,allocated_bytes;
 static unsigned allocations,s_cover_pending_mask;
-static struct {int index;uint8_t *gray,*fast_bits;uint8_t fast_contrast,fast_phase;bool fast_white_edge;} s_covers[BOOK_ROWS];
+static struct {int index;uint8_t *gray,*fast_bits;unsigned width,height;uint8_t fast_contrast,fast_phase;bool fast_white_edge;} s_covers[BOOK_ROWS];
+static int app_settings_shelf_style(void){return style;}
 static int shelf_rows(void){return rows;}
 static bool app_settings_main_fast_refresh(void){return fast;}
 static uint8_t app_settings_system_contrast(void){return contrast;}
@@ -72,7 +73,7 @@ static EpdRect row_rect(int row){return (EpdRect){36+(row%3)*210+phase_shift,224
 unit += function('ui_contrast_gray', ROOT / 'main/ui/ui_kit.c') + '\n'
 unit += function('book_cover_crop', ROOT / 'main/book/book_cover.c') + '\n'
 unit += function('cover_favorite_needs_white_edge', book) + '\n'
-for name in ('invalidate_covers', 'release_fast_covers', 'fast_cover_matches', 'prepare_fast_covers', 'app_book_cover_mode_changed'):
+for name in ('shelf_cover_image', 'invalidate_covers', 'release_fast_covers', 'fast_cover_matches', 'prepare_fast_covers', 'app_book_cover_mode_changed'):
     unit += function(name, book) + '\n'
 unit += r'''
 typedef struct {int leaf;} app_ctx_t;
@@ -150,6 +151,11 @@ int main(void) {
         midgray+=ui_image_dither_cover_bw(128,x,y)==0;
     }
     assert(black==15 && midgray==8);
+    invalidate_covers();style=5;rows=4;
+    for(int i=0;i<4;++i){seed_gray(i);s_covers[i].width=i==0?176:i==1?70:160;s_covers[i].height=i==0?100:i==1?240:160;}
+    prepare_fast_covers();assert(allocated_bytes==4u*4494);
+    for(int row=0;row<4;++row){EpdRect image=shelf_cover_image(row);assert(image.width<=134&&image.height<=174&&image.width>0&&image.height>0);assert(fast_cover_matches(row,image));assert(!s_covers[row].gray);assert(abs(image.width*(int)s_covers[row].height-image.height*(int)s_covers[row].width)<(int)s_covers[row].height);}
+    invalidate_covers();style=2;rows=9;
     app_ctx_t ctx={0};strcpy(s_shelf[0].path,"/test.epub");s_shelf[0].size=100;s_shelf[0].recent=42;
     for(int i=0;i<80;++i)refresh_cached_progress(&ctx);
     assert(sorts==0 && s_shelf[0].pct==37 && s_shelf[0].chapter==9);

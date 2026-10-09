@@ -160,7 +160,7 @@ void app_settings_set_book_margin(uint8_t px);
 /// 段后距离百分比，0/25/50/75。/ Paragraph-gap percentage: 0/25/50/75.
 uint8_t app_settings_book_paragraph_spacing(void);
 void app_settings_set_book_paragraph_spacing(uint8_t percent);
-/// 书架样式：1 深色书轨、2 亚克力；旧3/4安全回退2。/ Shelf style: rail (1), acrylic (2); retired IDs 3/4 fall back to 2.
+/// 书架样式：1 深色书轨、2 亚克力、5 列表；旧3/4安全回退2。/ Shelf styles: rail (1), acrylic (2), list (5); retired IDs 3/4 fall back to 2.
 uint8_t app_settings_shelf_style(void);
 void app_settings_set_shelf_style(uint8_t style);
 /// 当前 TF 卡书籍目录和字体目录；默认分别为 /sdcard/books、/sdcard/fonts。

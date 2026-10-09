@@ -38,3 +38,8 @@ bool book_image_file_dimensions(const char *path, bool png, unsigned *width, uns
 bool book_image_file_grayscale(const char *path, bool png, unsigned width, unsigned height, uint8_t *out);
 
 bool book_jpeg_frame(const uint8_t *data, size_t size, uint8_t *sof, unsigned *width, unsigned *height);
+
+/// 列表封面缓存保留完整原比例；输出不超过176×240，宽高返回有效像素区。/ Cache uncropped list covers, bounded to 176x240, returning the valid pixel dimensions.
+bool book_cover_load_list_gray(const char *path, const char *title, const char *author,
+                               uint8_t out[BOOK_COVER_W * BOOK_COVER_H], bool allow_decode,
+                               bool *pending, unsigned *width, unsigned *height);
