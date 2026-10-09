@@ -16,7 +16,7 @@
 #include "esp_err.h"
 #include "read_pico_transfer_network.h"
 
-#define READ_PICO_TRANSFER_PASSWORD "readpico"
+#define READ_PICO_TRANSFER_PASSWORD "kiikoread"
 #define READ_PICO_TRANSFER_URL "http://192.168.4.1"
 
 typedef enum {

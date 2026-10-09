@@ -1,14 +1,16 @@
 # kiikoread
 
-项目对外名称统一为 **kiikoread**，网页对设备使用「墨水屏」。保留原 GitHub 仓库网址、升级地址与备份文件名；本次仅调整官网，固件内名称暂不改变。纯白官网包含界面预览、功能介绍、版本选择、网页刷机、Bin 下载和[在线使用说明](flash/manual.html)。运行 `python3 tools/stage_public_flash.py _site` 生成公开网站，GitHub Pages 或 Cloudflare Pages 均可使用 `_site` 作为发布目录。说明书从 `docs/user-manual.zh-CN.json` 同源生成，运行 `tools/build_user_manual.py --font /path/to/a/static-CJK.ttf` 可更新 HTML 与 PDF（需要 Python ReportLab）。
+项目对外名称统一为 **kiikoread**，网页对设备使用「墨水屏」。保留原 GitHub 仓库网址、升级地址与备份文件名；固件界面也统一使用 kiikoread。纯白官网包含界面预览、功能介绍、版本选择、网页刷机、Bin 下载和[在线使用说明](flash/manual.html)。运行 `python3 tools/stage_public_flash.py _site` 生成公开网站，GitHub Pages 或 Cloudflare Pages 均可使用 `_site` 作为发布目录。说明书从 `docs/user-manual.zh-CN.json` 同源生成，运行 `tools/build_user_manual.py --font /path/to/a/static-CJK.ttf` 可更新 HTML 与 PDF（需要 Python ReportLab）。
+正式固件 Bin 统一保存到 [GitHub Releases](https://github.com/wegooo-cell/read-pico-reader/releases)，网站构建按清单下载并校验，不直接发布原始 flash 目录。设备优先读取 `https://kiikoread.com/update.json`，失败后回退原 GitHub 更新源。主站使用 `python3 tools/stage_public_flash.py _site --ota-origin https://kiikoread.com`；GitHub Pages 使用默认参数，保留旧固件可识别的升级地址。
+
 
 [English](README.md) · [日本語](README.ja-JP.md) · [第三方许可](THIRD_PARTY_NOTICES.md)
 
-这是为 **MindReset Read Pico（RDP-G01-W）** 墨水屏开发板制作的独立开源阅读固件，基于 [MindReset 官方示例固件](https://github.com/MindReset/read_pico_firmware) 开发，**并非 MindReset 官方发布**。
+这是为 **MindReset Read kiikoread（RDP-G01-W）** 墨水屏开发板制作的独立开源阅读固件，基于 [MindReset 官方示例固件](https://github.com/MindReset/read_pico_firmware) 开发，**并非 MindReset 官方发布**。
 
 界面包括首页、书架、文件管理和设置；可阅读 TF 卡中的 EPUB、TXT，保存阅读进度，并通过 WiFi、设备热点或 USB 传输文件。
 
-## 当前正式版：rc89
+## 当前正式版：rc90
 
 本次优化启动恢复与封面缓存内存，修复深睡续读，增加中键长按自定义并保护阅读工具栏入口。票根统一使用系统字体；首页与阅读标题复用各自当前字体，按原生字号清晰显示。在线刷机、TF 升级与联网 OTA 同源发布，设备显示简短日志。rc87 已下架，原发布的 rc85、rc86 仍可选择。详见[更新日志](docs/CHANGELOG.md)。
 
@@ -34,7 +36,7 @@ WiFi 和热点传书网页都有「状态栏签名」，保存或清空后写入
 
 ## 文件传输
 
-文件管理直接显示 **WiFi传输、热点传输、USB传输** 三个入口。WiFi 传输连接已保存的网络，未配网时进入网络设置；热点传输直接创建 Pico 热点；USB 传输连接电脑读写 TF 卡。WiFi 与热点网页继续支持 TF 卡目录浏览、任意文件上传、书籍/字体/图片导入和状态栏签名设置。
+文件管理直接显示 **WiFi传输、热点传输、USB传输** 三个入口。WiFi 传输连接已保存的网络，未配网时进入网络设置；热点传输直接创建 kiikoread 热点；USB 传输连接电脑读写 TF 卡。WiFi 与热点网页继续支持 TF 卡目录浏览、任意文件上传、书籍/字体/图片导入和状态栏签名设置。
 
 ## 升级和恢复
 
@@ -48,11 +50,11 @@ WiFi 和热点传书网页都有「状态栏签名」，保存或清空后写入
 
 连接按钮上方可选择最新正式版或原发布的 **rc86 / rc85**，发布时间与 TF 升级 Bin 下载跟随选择。所有版本默认保留设备数据。
 
-打开 [HTTPS 在线刷机页](https://wegooo-cell.github.io/read-pico-reader/)。在电脑端 Chrome 或 Edge 中，用支持数据传输的 USB 线连接 **Read Pico RDP-G01-W**，选择设备串口并按提示刷入。**刷机前确认型号。**普通刷机保留设备设置、阅读记录和 TF 卡内容；固件不附带书籍或预设的阅读记录。
+打开 [HTTPS 在线刷机页](https://wegooo-cell.github.io/read-pico-reader/)。在电脑端 Chrome 或 Edge 中，用支持数据传输的 USB 线连接 **Read kiikoread RDP-G01-W**，选择设备串口并按提示刷入。**刷机前确认型号。**普通刷机保留设备设置、阅读记录和 TF 卡内容；固件不附带书籍或预设的阅读记录。
 
 如果运行本固件的设备无法自动进入下载模式，可在设备上点击**设置 → 升级和恢复 → BOOT 刷机**，等电脑重新识别串口后再用网页刷机。
 
-刷机页现有图文新手指南：**连接 Pico → 选择串口 → 确认安装并等待完成**。页面下方也介绍了首页、书架、文件管理和设置，以及常见问题。
+刷机页现有图文新手指南：**连接 kiikoread → 选择串口 → 确认安装并等待完成**。页面下方也介绍了首页、书架、文件管理和设置，以及常见问题。
 
 刷机清单为 [`flash/manifest.json`](flash/manifest.json)，写入引导程序、分区表、应用程序和 OTA 数据分区；不会覆盖现有 NVS 设置与内置书籍分区。网页由 [Pages 工作流](.github/workflows/pages.yml) 按明确的文件清单部署，不上传本机书籍、备份或额外字体包。[查看更新日志](docs/CHANGELOG.md)。
 

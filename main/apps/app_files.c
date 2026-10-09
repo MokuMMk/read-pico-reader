@@ -573,7 +573,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             // Present but unreadable: say the filesystem is the problem and offer the way out.
             snprintf(total, sizeof(total), "需要格式化");
             snprintf(usage, sizeof(usage), "%s", s_sd_notice[0] ? s_sd_notice
-                     : (s_sd_format_confirm ? "再点一次确认格式化" : "格式化可能可以解决此问题"));
+                     : (s_sd_format_confirm ? "将清空卡内全部数据，再点确认" : "格式化可能可以解决此问题"));
         } else {
             snprintf(total, sizeof(total), "未挂载");
             snprintf(usage, sizeof(usage), "请检查 TF 卡");
@@ -939,7 +939,8 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
     // 点别处就撤销确认，免得提示一直停在"再点一次"。
     // A tap elsewhere cancels the confirmation, so the prompt does not stay armed.
-    if (!long_press && s_sd_format_confirm) {
+    bool format_cancelled = !long_press && s_sd_format_confirm;
+    if (format_cancelled) {
         s_sd_format_confirm = false;
         s_sd_notice[0] = 0;
     }
@@ -971,7 +972,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             return ctx->request_app ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
         }
     }
-    return APP_REDRAW_NONE;
+    return format_cancelled ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
 }
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {

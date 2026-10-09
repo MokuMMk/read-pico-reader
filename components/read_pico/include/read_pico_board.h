@@ -32,8 +32,8 @@ extern "C" {
 /// / CST836U INT on TXD0 / GPIO43. Open-drain, active-low, 10k pull-up on the FPC.
 #define READ_PICO_TP_INT_GPIO CONFIG_READ_PICO_TP_INT_GPIO
 
-#define READ_PICO_PRODUCT_NAME "Read Pico"
-#define READ_PICO_DEVICE_NAME "小纸 Pico"
+#define READ_PICO_PRODUCT_NAME "kiikoread"
+#define READ_PICO_DEVICE_NAME "kiikoread"
 /// 芯片平放实测 -5,-119,-1005；转到设备坐标后屏幕朝上约为 +Z。
 /// / Chip at rest on the bench: -5,-119,-1005. Device frame is about +Z face-up.
 #define READ_PICO_ACCEL_ZERO_X_MG 119

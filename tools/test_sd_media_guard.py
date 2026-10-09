@@ -9,7 +9,7 @@ out = root / 'build/sd-media-test'
 out.mkdir(parents=True, exist_ok=True)
 for name in ('driver/sdmmc_host.h', 'esp_log.h', 'esp_vfs_fat.h',
              'freertos/FreeRTOS.h', 'freertos/task.h', 'read_pico_board.h',
-             'sdmmc_cmd.h', 'esp_err.h'):
+             'sdmmc_cmd.h', 'esp_err.h', 'esp_heap_caps.h'):
     p = out / name
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text('#pragma once\n', encoding='utf-8')
@@ -18,6 +18,7 @@ source = r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <pthread.h>
@@ -36,12 +37,21 @@ typedef int esp_err_t;
 #define GPIO_NUM_NC -1
 #define SDMMC_FREQ_HIGHSPEED 40000
 #define SDMMC_SLOT_FLAG_INTERNAL_PULLUP 1
-#define SDMMC_HOST_DEFAULT() ((sdmmc_host_t){0})
+#define SDMMC_HOST_DEFAULT() ((sdmmc_host_t){.init=mock_host_init,.deinit=mock_host_deinit})
 #define SDMMC_SLOT_CONFIG_DEFAULT() ((sdmmc_slot_config_t){0})
-typedef struct { int max_freq_khz; } sdmmc_host_t;
+static esp_err_t mock_host_init(void){return ESP_OK;}
+static esp_err_t mock_host_deinit(void){return ESP_OK;}
+typedef struct { int max_freq_khz,slot; esp_err_t (*init)(void),(*deinit)(void); } sdmmc_host_t;
 typedef struct { int width,clk,cmd,d0,d1,d2,d3,cd,wp,flags; } sdmmc_slot_config_t;
 typedef struct { bool format_if_mount_failed; int max_files,allocation_unit_size; } esp_vfs_fat_sdmmc_mount_config_t;
-typedef struct { struct { char name[8]; } cid; struct { int capacity,sector_size; } csd; } sdmmc_card_t;
+typedef struct { struct { char name[8]; } cid; struct { uint32_t capacity,sector_size; } csd; } sdmmc_card_t;
+#define MALLOC_CAP_INTERNAL 1
+#define MALLOC_CAP_DMA 2
+static void *heap_caps_malloc(size_t n,int caps){(void)caps;return malloc(n);}
+static void heap_caps_free(void *p){free(p);}
+static esp_err_t sdmmc_host_init_slot(int slot,const sdmmc_slot_config_t *config){(void)slot;(void)config;return ESP_OK;}
+static esp_err_t sdmmc_card_init(const sdmmc_host_t *host,sdmmc_card_t *card){(void)host;(void)card;return ESP_ERR_TIMEOUT;}
+static esp_err_t sdmmc_read_sectors(sdmmc_card_t *card,void *buffer,size_t start,size_t count){(void)card;(void)buffer;(void)start;(void)count;return ESP_ERR_TIMEOUT;}
 typedef pthread_mutex_t portMUX_TYPE;
 #define portMUX_INITIALIZER_UNLOCKED PTHREAD_MUTEX_INITIALIZER
 #define portENTER_CRITICAL(p) assert(pthread_mutex_lock(p)==0)

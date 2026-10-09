@@ -12,6 +12,7 @@ import sys
 from urllib.parse import urlparse
 
 from verify_flash_bundle import check, check_archived_releases
+from release_assets import hydrate
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,20 +30,21 @@ class LocalLinks(HTMLParser):
                 self.links.append(value)
 
 
-def stage(output: Path) -> None:
-    check(FLASH)
+def stage(output: Path, ota_origin: str | None = None) -> None:
     output.mkdir(parents=True, exist_ok=True)
     for name in ("index.html", "notices.html", "manual.html", "site.css", "site.js", "installer-bridge.js",
                  "manifest.json", "toc-preview.png", "firmware.bin",
                  "bootloader.bin", "partitions.bin", "ota_data_initial.bin", "Pico-update.bin", "update.json"):
-        shutil.copy2(FLASH / name, output / name)
+        if (FLASH / name).is_file(): shutil.copy2(FLASH / name, output / name)
     # 官网仅发布展示资源与用户说明；内部构建及调试记录不进入网站。
     # Publish website assets and the user manual, excluding private build and debug files.
     shutil.copytree(FLASH / "assets", output / "assets", dirs_exist_ok=True)
     (output / "manual").mkdir(exist_ok=True)
     shutil.copy2(FLASH / "manual/kiikoread-manual.pdf", output / "manual/kiikoread-manual.pdf")
     version = json.loads((FLASH / "manifest.json").read_text())["version"]
-    shutil.copy2(FLASH / f"Pico-update-{version}.bin", output / f"Pico-update-{version}.bin")
+    versioned = FLASH / f"Pico-update-{version}.bin"
+    if versioned.is_file(): shutil.copy2(versioned, output / versioned.name)
+    hydrate(FLASH, output)
     # 保留已发布版本的固定下载地址，避免旧清单缓存或正在进行的更新突然遇到 404。
     # Keep immutable published URLs so cached manifests and in-flight updates do not suddenly get a 404.
     for upgrade in FLASH.glob("Pico-update-*.bin"):
@@ -93,6 +95,12 @@ def stage(output: Path) -> None:
             target = (output / parsed.path.removeprefix("./")).resolve()
             assert target.is_relative_to(output.resolve()) and target.is_file(), (
                 f"broken local link in {page}: {link}")
+    if ota_origin:
+        assert ota_origin == 'https://kiikoread.com'
+        feed = json.loads((output / 'update.json').read_text())
+        feed['url'] = ota_origin + '/' + f'Pico-update-{version}.bin'
+        (output / 'update.json').write_text(json.dumps(feed, ensure_ascii=False, indent=2) + '\n')
+    check(output)
     files = list(output.rglob("*"))
     count = sum(path.is_file() for path in files)
     size = sum(path.stat().st_size for path in files if path.is_file())
@@ -100,4 +108,9 @@ def stage(output: Path) -> None:
 
 
 if __name__ == "__main__":
-    stage(Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "_site")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('output', nargs='?', type=Path, default=ROOT / '_site')
+    parser.add_argument('--ota-origin', choices=['https://kiikoread.com'])
+    args = parser.parse_args()
+    stage(args.output, args.ota_origin)

@@ -1165,8 +1165,8 @@ static void draw_import(uint8_t* fb) {
     ui_hairline(fb, 207, 36, 612, UI_GRAY_LIGHT);
     static const char *titles[] = {"浏览 TF 卡", "WiFi 传书", "热点传书", "USB 读卡"};
     static const char *details[] = {
-        "查看目录，打开或管理已有图书", "手机与 Pico 连接同一网络",
-        "连接 Pico 热点后上传图书", "连接电脑，把图书放入 books 文件夹"
+        "查看目录，打开或管理已有图书", "手机与墨水屏连接同一网络",
+        "连接 kiikoread 热点后上传图书", "连接电脑，把图书放入 books 文件夹"
     };
     for (int i = 0; i < 4; ++i) {
         EpdRect r = import_rect(i);
@@ -2326,10 +2326,10 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         return;
     }
     ui_clear_page(fb);
-    // 水波纹白底避免整片浅灰反向压黑，封面与亚克力仍保留灰阶。
-    // A white water-mode background avoids broad reverse darkening; covers and acrylic retain grays.
+    // 普通和水波纹共享灰阶画面，只有快刷使用黑白底色。
+    // Normal and ripple share gray artwork; only fast refresh uses the BW background.
     epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP},
-                  app_settings_main_refresh_mode() != APP_MAIN_REFRESH_NORMAL ? 0xf0 : 0xe0, fb);
+                  app_settings_main_fast_refresh() ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
     ui_text(fb, 36, 90, 52, "书架", EPD_DRAW_ALIGN_LEFT, false);
     draw_shelf_header_button(fb, shelf_manage_rect(), false);

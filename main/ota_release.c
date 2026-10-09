@@ -44,9 +44,16 @@ int pico_version_compare(const char *a, const char *b) {
 bool pico_release_url_valid(const char *url) {
     // 升级源限定官方 HTTPS 站点，避免重定向泄漏或被替换为任意下载源。
     // Limit updates to the official HTTPS origin; do not follow arbitrary redirects.
-    static const char prefix[] = "https://wegooo-cell.github.io/read-pico-reader/";
-    if (!url || strncmp(url, prefix, sizeof(prefix) - 1) || strlen(url) >= 256) return false;
-    const char *name = url + sizeof(prefix) - 1;
+    static const char *const prefixes[] = {
+        "https://kiikoread.com/", "https://wegooo-cell.github.io/read-pico-reader/"
+    };
+    if (!url || strlen(url) >= 256) return false;
+    const char *name = NULL;
+    for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+        size_t n = strlen(prefixes[i]);
+        if (!strncmp(url, prefixes[i], n)) { name = url + n; break; }
+    }
+    if (!name) return false;
     if (!*name || strstr(name, "..") || strchr(name, '/') || strchr(name, '\\')) return false;
     for (const char *p = name; *p; ++p)
         if (!isalnum((unsigned char)*p) && *p != '-' && *p != '_' && *p != '.') return false;

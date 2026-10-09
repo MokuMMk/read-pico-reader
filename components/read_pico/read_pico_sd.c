@@ -11,11 +11,13 @@
 
 #include <errno.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
 #include "driver/sdmmc_host.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -30,6 +32,7 @@
 static const char* TAG = "sd_card";
 static sdmmc_card_t* card;
 static int probe_state;
+static bool filesystem_unreadable;
 static portMUX_TYPE state_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool media_invalidated;
 static read_pico_sd_info_t cached_info;
@@ -73,9 +76,9 @@ static void fill_info(read_pico_sd_info_t* info, esp_err_t mount_err) {
     // A successful mount proves presence; failed detection must not override it.
     info->present = detect_err == ESP_OK ? present : mount_err != ESP_ERR_NOT_FOUND;
     info->error = mount_err;
-    // 挂载错误不能证明缺少文件系统，尤其是协商、内存与 I/O 故障；只允许显式格式化。
-    // A mount error does not prove a missing filesystem (negotiation/OOM/I/O); formatting stays explicit.
-    info->needs_format = false;
+    // 挂载错误本身不证明文件系统问题；仅只读识别到 exFAT 或空白卡才提示。
+    // Mount errors alone are inconclusive; only read-only confirmation of exFAT/blank media enables the hint.
+    info->needs_format = info->present && filesystem_unreadable;
     if (mount_err != ESP_OK || card == NULL) return;
 
     info->mounted = true;
@@ -106,7 +109,47 @@ static void ensure_media_dirs(void) {
     }
 }
 
+// 只识别明确不支持的文件系统，不写卡，也不根据通用 ESP_FAIL 猜测。
+// Identify known unsupported media without writing or interpreting generic ESP_FAIL as a filesystem error.
+static bool unsupported_boot_sector(const uint8_t *sector) {
+    if (!memcmp(sector + 3, "EXFAT   ", 8)) return true;
+    for (unsigned i = 0; i < 512; ++i) if (sector[i]) return false;
+    return true;
+}
+static bool probe_unsupported_filesystem(sdmmc_host_t host, const sdmmc_slot_config_t *slot) {
+    sdmmc_card_t *probe = calloc(1, sizeof(*probe));
+    uint8_t *sector = heap_caps_malloc(512, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    bool owned = false, unsupported = false;
+    if (!probe || !sector) goto done;
+    host.max_freq_khz = 10000;
+    if (host.init() != ESP_OK) goto done; // 不接管其他已初始化会话。/ Never take over another initialized session.
+    owned = true;
+    if (sdmmc_host_init_slot(host.slot, slot) != ESP_OK || sdmmc_card_init(&host, probe) != ESP_OK ||
+        probe->csd.sector_size != 512 || sdmmc_read_sectors(probe, sector, 0, 1) != ESP_OK) goto done;
+    unsupported = unsupported_boot_sector(sector);
+    if (!unsupported && sector[510] == 0x55 && sector[511] == 0xaa) {
+        uint32_t starts[4] = {0};
+        for (unsigned i = 0; i < 4; ++i) {
+            const uint8_t *entry = sector + 446 + 16 * i;
+            if (!entry[4]) continue;
+            starts[i] = (uint32_t)entry[8] | (uint32_t)entry[9] << 8 | (uint32_t)entry[10] << 16 | (uint32_t)entry[11] << 24;
+        }
+        for (unsigned i = 0; i < 4 && !unsupported; ++i) {
+            if (!starts[i] || starts[i] >= probe->csd.capacity) continue;
+            if (sdmmc_read_sectors(probe, sector, starts[i], 1) != ESP_OK) goto done;
+            // 分区必须明确标识 exFAT；普通 FAT 或未知损坏不建议格式化。
+            // A partition must explicitly identify exFAT; do not suggest formatting FAT or unknown corruption.
+            unsupported = !memcmp(sector + 3, "EXFAT   ", 8);
+        }
+    }
+done:
+    if (owned) host.deinit();
+    free(probe); heap_caps_free(sector);
+    return unsupported;
+}
+
 static esp_err_t mount_card(bool format_if_failed) {
+    filesystem_unreadable = false;
     if (card != NULL) return ESP_OK;
 
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
@@ -157,6 +200,7 @@ static esp_err_t mount_card(bool format_if_failed) {
     if (err != ESP_OK) {
         card = NULL;
         ESP_LOGW(TAG, "Mount failed: %s", esp_err_to_name(err));
+        if (!format_if_failed && err == ESP_FAIL) filesystem_unreadable = probe_unsupported_filesystem(host, &slot);
     } else ensure_media_dirs();
     return err;
 }

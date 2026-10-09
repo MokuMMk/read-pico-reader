@@ -707,7 +707,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
 
     if (s_page == SETTINGS_MAIN || s_page == SETTINGS_SHELF_STYLE)
         epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP},
-                      app_settings_main_refresh_mode() != APP_MAIN_REFRESH_NORMAL && s_page == SETTINGS_MAIN ? 0xf0 : 0xe0, fb);
+                      app_settings_main_fast_refresh() && s_page == SETTINGS_MAIN ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
     if (s_page == SETTINGS_LOCK_PIN) {
         back_header(fb, "锁屏密码");
@@ -726,7 +726,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 42, 214, 21, "自定义名称与头像", EPD_DRAW_ALIGN_LEFT, false);
         row(fb, 266, "设备名称", app_settings_device_name());
         row(fb, 366, "更换头像", app_settings_avatar_path()[0] ? "已选择图片  ›" : "默认图标  ›");
-        ui_text(fb, 44, 612, 21, "Pico reader by Kiiko", EPD_DRAW_ALIGN_LEFT, false);
         ui_nav_draw(fb, 3);
         return;
     }
@@ -752,7 +751,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_page == SETTINGS_TEXT_EDIT) {
         back_header(fb, s_editor_signature ? "状态栏签名" : "设备名称");
         ui_text(fb, 642, 95, 24, "完成", EPD_DRAW_ALIGN_RIGHT, false);
-        ui_text(fb, 36, 201, 21, s_editor_signature ? "状态栏中间显示，留空则隐藏" : "显示在设置页的 Pico 资料卡", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 36, 201, 21, s_editor_signature ? "状态栏中间显示，留空则隐藏" : "显示在设置页的资料卡", EPD_DRAW_ALIGN_LEFT, false);
         ui_text_input_draw(fb, &s_editor_input, (EpdRect){36, 243, 612, 82}, 28, false, NULL);
         if (s_editor_notice[0]) ui_text_fixed_vc(fb, 36, 510, 22, s_editor_notice, EPD_DRAW_ALIGN_LEFT, false);
         ui_keyboard_draw(fb, 560);
@@ -1068,7 +1067,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
                 s_update.state == PICO_UPDATE_AVAILABLE ? "开始更新" : "检查更新", s_update.state == PICO_UPDATE_AVAILABLE);
             settings_card(fb, (EpdRect){36, 662, 612, 262}, 22, UI_GRAY_WHITE, 0x70);
             ui_text(fb, 60, 689, 29, "TF 卡升级", EPD_DRAW_ALIGN_LEFT, false);
-            ui_text(fb, 60, 739, 23, "根目录：Pico-update.bin", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 60, 739, 23, "升级包放在 TF 卡根目录", EPD_DRAW_ALIGN_LEFT, false);
             ui_text(fb, 60, 786, 21, s_local_update.ready ? s_local_update.candidate_version : "把官网升级包放入 TF 卡根目录", EPD_DRAW_ALIGN_LEFT, false);
             ui_draw_button(fb, (EpdRect){60, 840, 564, 62}, s_local_pending ? "正在安装，请勿断电" :
                 s_local_update.ready ? "安装 TF 卡升级包" : "重新检查 TF 卡", s_local_update.ready);
@@ -1083,7 +1082,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         section(fb, 248, "换机或刷机后，快速恢复个性化设置");
         settings_card(fb, (EpdRect){36, 299, 612, 197}, 22, UI_GRAY_WHITE, 0x70);
         ui_text(fb, 60, 326, 26, "TF 卡根目录", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 60, 377, 23, "Pico-settings.backup", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 377, 23, "配置备份文件", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 60, 435, 19, "文字排版、设备资料、阅读记录与书签", EPD_DRAW_ALIGN_LEFT, false);
         ui_draw_button(fb, (EpdRect){36, 561, 612, 83}, "保存当前配置到 TF 卡", false);
         ui_draw_button(fb, (EpdRect){36, 681, 612, 83},
@@ -1214,27 +1213,20 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         if (app_settings_main_fast_refresh() && avatar_ok) ui_image_bw_rect(fb, (EpdRect){57, profile_y + 11, 82, 82});
         if (!avatar_ok) {
             ui_fill_round_rect(fb, (EpdRect){57, profile_y + 11, 82, 82}, 20, 0x30);
-            ui_text(fb, 98, profile_y + 25, 49, "P", EPD_DRAW_ALIGN_CENTER, true);
+            ui_text(fb, 98, profile_y + 25, 49, "K", EPD_DRAW_ALIGN_CENTER, true);
         }
+        // 姓名与编辑垂直居中，预留实际系统字形的宽度。/ Center name/edit and reserve native glyph width.
+        const int name_px = 32, edit_px = 20, center_y = profile_y + 53;
+        int edit_left = 618 - ui_text_fixed_width_px(ui_text_effective_px(edit_px), "编辑  ›");
+        int name_width = edit_left - 24 - 164;
         char profile_name[64]; snprintf(profile_name, sizeof(profile_name), "%s", app_settings_device_name());
-        while (profile_name[0] && ttf_text_width_px(ui_text_effective_px(30), profile_name) > 345) {
+        while (profile_name[0] && ui_text_fixed_width_px(ui_text_effective_px(name_px), profile_name) > name_width) {
             size_t n = strlen(profile_name) - 1;
             while (n && ((unsigned char)profile_name[n] & 0xc0) == 0x80) --n;
             profile_name[n] = 0;
         }
-        ui_text(fb, 164, profile_y + 19, 30, profile_name, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 164, profile_y + 62, 19, "Pico reader by Kiiko", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 618, profile_y + 62, 19, "编辑  ›", EPD_DRAW_ALIGN_RIGHT, false);
-        const pmu_snapshot_t *pmu = read_pico_pmu_get();
-        {
-            char battery[12] = "--%";
-            int percent = pmu_battery_percent(pmu);
-            if (percent >= 0) snprintf(battery, sizeof(battery), "%u%%", (unsigned)percent);
-            // 电量和“编辑”从同一左边界起排，避免数字较短时看起来偏右。
-            // Start the percentage at the edit label's left edge so short numbers do not appear offset.
-            int edit_left = 618 - ui_text_fixed_width_px(ui_text_effective_px(19), "编辑  ›");
-            ui_text(fb, edit_left, profile_y + 26, 22, battery, EPD_DRAW_ALIGN_LEFT, false);
-        }
+        ui_text_vc(fb, 164, center_y, name_px, profile_name, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_vc(fb, 618, center_y, edit_px, "编辑  ›", EPD_DRAW_ALIGN_RIGHT, false);
     }
     char wifi_ssid[33] = {0}; bool wifi_saved = false;
     (void)read_pico_transfer_get_saved_wifi(wifi_ssid, &wifi_saved);
@@ -1284,7 +1276,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     setting_group(fb, SETTINGS_MAINTENANCE_Y - 34, "升级和恢复", SETTINGS_MAINTENANCE_Y,
                   maintenance_icons, maintenance_labels, maintenance_values, 3);
     epd_fill_rect((EpdRect){0, 0, UI_LOCK_WIDTH, 160},
-                  app_settings_main_refresh_mode() != APP_MAIN_REFRESH_NORMAL ? 0xf0 : 0xe0, fb);
+                  app_settings_main_fast_refresh() ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
     ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
     ui_nav_draw(fb, 3);
@@ -1863,7 +1855,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                      err == ESP_OK ? (wifi_saved ? "配置与阅读记录已恢复；WiFi 请重新连接" :
                                                    "配置与阅读记录已恢复") :
                      err == ESP_ERR_INVALID_STATE ? "未识别到 TF 卡，请插卡后重试" :
-                     err == ESP_ERR_NOT_FOUND ? "未找到 Pico-settings.backup" :
+                     err == ESP_ERR_NOT_FOUND ? "未找到配置备份文件" :
                      err == ESP_ERR_INVALID_RESPONSE ? "配置文件损坏或版本不兼容" :
                      "恢复未完成，请重试");
             return APP_REDRAW_PAGE;

@@ -22,7 +22,7 @@
 #include "esp_partition.h"
 #include "esp_system.h"
 
-static const char *TAG = "pico_ota";
+static const char *TAG = "kiikoread_ota";
 
 static void set_message(char *out, size_t size, const char *text) {
     if (!out || !size) return;
@@ -57,7 +57,7 @@ esp_err_t pico_ota_inspect(const char *path, pico_ota_info_t *info) {
 
     struct stat file_stat = {0};
     if (stat(path, &file_stat) != 0) {
-        set_message(info->message, sizeof(info->message), "TF 卡根目录未找到 Pico-update.bin");
+        set_message(info->message, sizeof(info->message), "TF 卡根目录未找到固件升级包");
         return ESP_ERR_NOT_FOUND;
     }
     if (file_stat.st_size <= 0) {
@@ -85,7 +85,7 @@ esp_err_t pico_ota_inspect(const char *path, pico_ota_info_t *info) {
     esp_err_t err = read_candidate(file, &header, &candidate);
     fclose(file);
     if (err != ESP_OK) {
-        set_message(info->message, sizeof(info->message), "升级包不是有效的 Pico 固件");
+        set_message(info->message, sizeof(info->message), "升级包不是有效的 kiikoread 固件");
         return err;
     }
 
@@ -95,7 +95,7 @@ esp_err_t pico_ota_inspect(const char *path, pico_ota_info_t *info) {
                     sizeof(running_desc->project_name)) ||
         !copy_field(candidate_project, sizeof(candidate_project), candidate.project_name,
                     sizeof(candidate.project_name)) || strcmp(current_project, candidate_project) != 0) {
-        set_message(info->message, sizeof(info->message), "升级包不属于当前 Pico 固件");
+        set_message(info->message, sizeof(info->message), "升级包不属于当前 kiikoread 固件");
         return ESP_ERR_INVALID_RESPONSE;
     }
     if (!copy_field(info->candidate_version, sizeof(info->candidate_version), candidate.version,

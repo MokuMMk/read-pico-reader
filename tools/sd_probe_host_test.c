@@ -12,7 +12,7 @@
 #include "esp_vfs_fat.h"
 #include "freertos/task.h"
 
-static bool test_present;
+static bool test_present, test_exfat, test_raw_error;
 static bool detect_failure;
 static int mount_calls, unmount_calls, test_fail_above_khz;
 static esp_err_t test_mount_error = ESP_ERR_TIMEOUT;
@@ -25,6 +25,11 @@ static sdmmc_card_t test_card = {
 #include "../components/read_pico/read_pico_sd.c"
 #undef mkdir
 
+esp_err_t test_host_init(void){return ESP_OK;}
+esp_err_t test_host_deinit(void){return ESP_OK;}
+esp_err_t sdmmc_host_init_slot(int slot,const sdmmc_slot_config_t *config){(void)slot;(void)config;return ESP_OK;}
+esp_err_t sdmmc_card_init(const sdmmc_host_t *host,sdmmc_card_t *out){(void)host;*out=test_card;return test_raw_error?ESP_ERR_TIMEOUT:ESP_OK;}
+esp_err_t sdmmc_read_sectors(sdmmc_card_t *c,void *buffer,size_t start,size_t count){(void)c;(void)start;assert(count==1);if(test_raw_error)return ESP_ERR_TIMEOUT;memset(buffer,0x5a,512);if(test_exfat)memcpy((char*)buffer+3,"EXFAT   ",8);return ESP_OK;}
 bool read_pico_sd_present(void) { return test_present; }
 esp_err_t read_pico_sd_detect(bool* present) {
     if (detect_failure) return ESP_ERR_TIMEOUT;
@@ -125,6 +130,14 @@ int main(void) {
     test_mount_error=ESP_FAIL;
     assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
     assert(read_pico_sd_get_info(&info)==ESP_FAIL && !info.needs_format);
+
+    test_exfat=true;
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    assert(read_pico_sd_get_info(&info)==ESP_FAIL && info.needs_format);
+    test_raw_error=true;
+    assert(read_pico_sd_remount()==ESP_ERR_NOT_FINISHED);
+    assert(read_pico_sd_get_info(&info)==ESP_FAIL && !info.needs_format);
+    test_raw_error=test_exfat=false;
 
     // CD 通信未知时仍尝试实际挂载，不能假设拔卡。/ Unknown CD still permits an actual mount, not assumed removal.
     detect_failure=true;

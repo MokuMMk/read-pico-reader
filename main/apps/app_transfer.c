@@ -235,7 +235,7 @@ static void draw_methods(uint8_t *fb) {
     static const char *titles[] = {"WiFi传书", "热点传书"};
     static const char *details[] = {
         "与手机或电脑连接同一个无线网络",
-        "由 Pico 创建临时网络，离线也能传书"
+        "由墨水屏创建临时网络，离线也能传书"
     };
     for (int i = 0; i < 2; ++i) {
         EpdRect row = method_control_rect(i);
@@ -783,7 +783,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_draw_round_rect(fb, connection, 24, 0x98);
     char name[64];
     snprintf(name, sizeof(name), "%s", s_mode == READ_PICO_TRANSFER_MODE_AP ? s_status.ssid : s_status.wifi_ssid);
-    if (!name[0]) snprintf(name, sizeof(name), "%s", s_mode == READ_PICO_TRANSFER_MODE_AP ? "Pico 热点" : "已保存的 WiFi");
+    if (!name[0]) snprintf(name, sizeof(name), "%s", s_mode == READ_PICO_TRANSFER_MODE_AP ? "kiikoread 热点" : "已保存的 WiFi");
     fit_label(name, 26, 420);
     ui_text(fb, 66, 190, 26, name, EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, 66, 236, 19,
@@ -810,7 +810,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             ui_fill_round_rect(fb, tab, 18, (s_qr_url == (i == 1)) ? 0x42 : UI_GRAY_WHITE);
             ui_draw_round_rect(fb, tab, 18, 0x92);
             ui_text_vc(fb, tab.x + tab.width / 2, tab.y + tab.height / 2, 21,
-                       i ? "打开传书网页" : "连接 Pico 热点", EPD_DRAW_ALIGN_CENTER, s_qr_url == (i == 1));
+                       i ? "打开传书网页" : "连接 kiikoread 热点", EPD_DRAW_ALIGN_CENTER, s_qr_url == (i == 1));
         }
     } else {
         ui_text_vc(fb, 342, 602, url_px,

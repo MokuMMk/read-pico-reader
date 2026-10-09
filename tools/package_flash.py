@@ -23,6 +23,7 @@ def package(build: Path, output: Path):
             'stage local tests in build/, or increment the version for an authorized release')
     manifest=json.loads((ROOT/'flash/manifest.json').read_text())
     manifest['version']=version
+    manifest['name']='kiikoread'
     manifest['updated_at']=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(timespec='seconds')
     manifest['pico_ota']={'layout':'pico-dual-4m-v1','base_version':version,
         'minimum_base_version':'0.3.3-rc72','online_ota_base_version':'0.3.3-rc79','rollback':True}
@@ -35,7 +36,7 @@ def package(build: Path, output: Path):
     release={'schema':1,'version':version,'project':'Read_Pico','board':'RDP-G01-W','layout':'pico-dual-4m-v1',
         'minimum_base_version':'0.3.3-rc72','url':f'https://wegooo-cell.github.io/read-pico-reader/{upgrade_name}',
         'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),
-        'notes':'1. 移除微信读书登录、书架同步与书籍下载\n2. 文件管理独立显示 WiFi、热点、USB 传输\n3. 优化联网升级显示与内存使用，进度条仅追加更新'}
+        'notes':'1. kiikoread 品牌与全新官网\n2. 资料卡简化、姓名排版优化\n3. 水波纹主页完整灰阶\n4. TF 卡兼容、缺失字体闪屏修复\n5. 拼贴及密码锁屏、列表书架、首行缩进微调\n6. 主站联网升级，保留 GitHub 更新途径'}
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
     (output/'update.json').write_text(json.dumps(release,ensure_ascii=False,indent=2)+'\n')
     check(output)

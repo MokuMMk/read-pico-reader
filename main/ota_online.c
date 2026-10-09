@@ -212,31 +212,32 @@ static bool check_feed(void) {
     char *json = heap_caps_malloc(8193, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     pico_release_t *release = heap_caps_calloc(1, sizeof(*release), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!json || !release) { state(PICO_UPDATE_FAILED, "内存不足，请退出传书后重试"); goto failed; }
-    char url[192]; snprintf(url, sizeof(url), "%s?t=%lld", PICO_OTA_FEED_URL, (long long)time(NULL));
-    int code = -1; int64_t length = -1;
-    esp_http_client_handle_t client = NULL;
-    for (int i = 0; i < 3 && !atomic_load(&s_cancel); ++i) {
-        if (wait_network()) client = open_http(url, &code, &length);
-        if (client) break;
-        vTaskDelay(pdMS_TO_TICKS(250));
-    }
-    if (!client) { state(PICO_UPDATE_FAILED, "更新服务器连接失败，请稍后重试"); goto failed; }
-    if (code != 200 || length > 8192) {
+    // 主站失败后回退已有 GitHub 更新源；同一缓冲区顺序请求，无并发 TLS 连接。
+    // Fall back to the existing GitHub source, reusing one buffer and one TLS connection at a time.
+    static const char *const feeds[] = {PICO_OTA_FEED_URL, PICO_OTA_FEED_FALLBACK_URL};
+    bool valid = false;
+    for (size_t source = 0; source < sizeof(feeds) / sizeof(feeds[0]) && !atomic_load(&s_cancel); ++source) {
+        char url[192]; snprintf(url, sizeof(url), "%s?t=%lld", feeds[source], (long long)time(NULL));
+        int code = -1; int64_t length = -1;
+        esp_http_client_handle_t client = NULL;
+        for (int i = 0; i < 2 && !atomic_load(&s_cancel); ++i) {
+            if (wait_network()) client = open_http(url, &code, &length);
+            if (client) break;
+            vTaskDelay(pdMS_TO_TICKS(250));
+        }
+        if (!client) continue;
+        if (code != 200 || length > 8192) { esp_http_client_cleanup(client); continue; }
+        size_t received = 0;
+        int64_t idle = esp_timer_get_time() + 30000000;
+        int n = -1;
+        while (received < 8192 && (n = read_chunk(client, (uint8_t *)json + received, (int)(8192 - received), &idle)) > 0)
+            received += n;
+        bool complete = esp_http_client_is_complete_data_received(client);
         esp_http_client_cleanup(client);
-        state(PICO_UPDATE_FAILED, code == 404 ? "联网更新暂未发布，请使用 TF 卡升级" : "更新清单读取失败，请重试");
-        goto failed;
+        json[received] = 0;
+        if (n >= 0 && complete && pico_release_parse(json, received, release) == ESP_OK) { valid = true; break; }
     }
-    size_t received = 0;
-    int64_t idle = esp_timer_get_time() + 30000000;
-    int n = -1;
-    while (received < 8192 && (n = read_chunk(client, (uint8_t *)json + received, (int)(8192 - received), &idle)) > 0)
-        received += n;
-    bool complete = esp_http_client_is_complete_data_received(client);
-    esp_http_client_cleanup(client);
-    json[received] = 0;
-    if (n < 0 || !complete || pico_release_parse(json, received, release) != ESP_OK) {
-        state(PICO_UPDATE_FAILED, "更新清单无效或下载中断，请重试"); goto failed;
-    }
+    if (!valid) { state(PICO_UPDATE_FAILED, "更新服务器连接失败或清单无效，请稍后重试"); goto failed; }
     const esp_app_desc_t *running = esp_app_get_description();
     if (strcmp(release->project, running->project_name) || !layout_valid() ||
         pico_version_compare(running->version, release->minimum_base_version) < 0) {
@@ -396,7 +397,7 @@ static esp_err_t start(bool downloading) {
     xSemaphoreGive(s_mutex);
     state(downloading ? PICO_UPDATE_DOWNLOADING : PICO_UPDATE_CHECKING,
           downloading ? "正在下载，短暂断网会自动重连" : "正在连接并检查更新");
-    if (xTaskCreate(worker, "pico_ota", 12288, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreate(worker, "kiikoread_ota", 12288, NULL, 4, NULL) != pdPASS) {
         xSemaphoreTake(s_mutex, portMAX_DELAY); s_status->busy = false; xSemaphoreGive(s_mutex);
         state(PICO_UPDATE_FAILED, "内存不足，无法开始升级"); return ESP_ERR_NO_MEM;
     }

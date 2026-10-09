@@ -12,6 +12,12 @@ int main(void) {
  assert(pico_version_compare("0.3.3-rc79","0.3.3-rc9")>0);
  assert(pico_version_compare("0.3.3","0.3.3-rc79")>0);
  assert(pico_version_compare("0.4.0-rc1","0.3.3")>0);
+ assert(pico_release_url_valid("https://kiikoread.com/Pico-update-0.3.3-rc90.bin"));
+ assert(!pico_release_url_valid("https://kiikoread.com.evil/a.bin"));
+ assert(!pico_release_url_valid("https://kiikoread.com@evil/a.bin"));
+ assert(!pico_release_url_valid("https://kiikoread.com:8443/a.bin"));
+ assert(!pico_release_url_valid("https://kiikoread.com/../a.bin"));
+ assert(!pico_release_url_valid("https://kiikoread.com/a.bin?url=evil"));
  assert(!pico_release_url_valid("http://wegooo-cell.github.io/read-pico-reader/a.bin"));
  assert(!pico_release_url_valid("https://wegooo-cell.github.io.evil/read-pico-reader/a.bin"));
  assert(!pico_release_url_valid("https://wegooo-cell.github.io/read-pico-reader/../a.bin"));

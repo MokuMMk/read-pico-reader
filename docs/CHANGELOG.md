@@ -3,10 +3,20 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
-## 本地开发中 / Unreleased local development
+## 0.3.3-rc90 / 2026-10-09
 
-- 官网品牌改为 kiikoread，采用纯白界面；增加可切换放大的界面展示、功能介绍、统一版本的刷机/下载/日期/日志，以及同源在线和 PDF 使用说明。保留原发布包、历史版本与升级网址；固件名称暂不修改。
-  Rebrand the bright-white website as kiikoread, with selectable enlarged screen previews, features, consistent release flashing/download/date/notes and shared HTML/PDF documentation. Preserve published binaries, archives and upgrade URLs; defer device rebranding.
+- 固件名称统一为 kiikoread；资料卡移除署名与电量，姓名和编辑垂直居中。水波纹主页使用与普通模式相同的灰阶画面。
+  Rebrand the firmware as kiikoread, simplify the profile card and center its name/edit action; ripple and normal main pages share gray artwork.
+- 新增 kiikoread.com 主站联网升级，失败回退 GitHub；保留原刷机与更新入口。正式二进制统一保存到 GitHub Releases，网页与 OTA 使用经过 SHA-256 验证的同一构建。
+  Add primary-site OTA with GitHub fallback, preserve existing flashing/update entry points and store official binaries in Releases with verified website/OTA mirrors.
+- 合入 PR #22：缺失系统字体不再每 750ms 反复加载内建字体并触发全刷，字体回到卡内后仍能自动加载。
+  Merge PR #22: missing system fonts no longer repeatedly reload the built-in or trigger full refresh; retries still pick up restored files.
+- 合入 PR #23：只读确认卡内为不支持的文件系统时提供格式化提示，需再次确认清空全部数据；初始化、供电与读写错误不误提示格式化。
+  Merge PR #23: offer formatting for read-only confirmed unsupported media, with explicit second-tap data-loss confirmation; avoid misleading hints for initialization, power and I/O failures.
+
+
+- 官网品牌改为 kiikoread，采用纯白界面；增加可切换放大的界面展示、功能介绍、统一版本的刷机/下载/日期/日志，以及同源在线和 PDF 使用说明。保留原发布包、历史版本与升级网址。
+  Rebrand the bright-white website as kiikoread, with selectable enlarged screen previews, features, consistent release flashing/download/date/notes and shared HTML/PDF documentation. Preserve published binaries, archives and upgrade URLs.
 
 - 应用确认的较小列表封面120×156，保持原中心点、右侧书名/作者/进度及局部弹动，等比例填充并居中裁切。
   Apply the approved 120×156 list covers, preserving their center, text/progress positions and local bounce with aspect fill and centered cropping.

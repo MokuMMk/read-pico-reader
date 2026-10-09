@@ -8,7 +8,7 @@ Frozen: upload raw files one by one; the device confines all edits to the SD car
 -->
 <html lang="zh-CN">
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pico · TF 卡传输</title>
+<title>kiikoread · TF 卡传输</title>
 <style>
 :root{color-scheme:light;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans SC",system-ui,sans-serif;color:#202221;background:#ededeb}
 *{box-sizing:border-box}body{max-width:760px;margin:0 auto;padding:26px 20px 68px;font-size:16px;line-height:1.55}
@@ -38,14 +38,14 @@ dialog::backdrop{background:#20222175}dialog h2{margin-bottom:10px}dialog p{marg
 .crop-controls{flex:1;min-width:220px}.crop-controls label{display:block;margin:14px 0 5px;font-weight:600}.crop-controls input[type=range]{width:100%;accent-color:#303331}.crop-controls .primary{margin-top:16px}
 @media(max-width:540px){body{padding:18px 12px 48px;font-size:15px}header{align-items:start}h1{font-size:31px}section{padding:17px;border-radius:19px}.entry-actions{width:100%;justify-content:start}li{flex-wrap:wrap}}
 </style>
-<header><div><p class="eyebrow">PICO / TRANSFER</p><h1>TF 卡传输</h1></div><span class="muted">一次连接一台设备</span></header>
-<section><h2>存储状态</h2><p id="storage" role="status">正在读取设备状态…</p><p class="hint">保持 Pico 停留在传输页面。上传后会保存到对应文件夹。</p></section>
+<header><div><p class="eyebrow">kiikoread / TRANSFER</p><h1>TF 卡传输</h1></div><span class="muted">一次连接一台设备</span></header>
+<section><h2>存储状态</h2><p id="storage" role="status">正在读取设备状态…</p><p class="hint">保持 kiikoread 停留在传输页面。上传后会保存到对应文件夹。</p></section>
 <section id="browser"><div class="line"><h2>浏览 TF 卡</h2><button id="refresh" class="tiny" type="button">刷新目录</button></div>
 <div class="toolbar"><button id="up" class="tiny" type="button">上一级</button><span id="path">/</span><button id="newFolder" class="tiny" type="button">新建文件夹</button></div>
 <div class="upload" data-kind="file"><p class="hint">先打开目标文件夹，再添加文件。支持任意格式，保留原文件名；同名文件会先询问。</p><input type="file" multiple aria-label="选择任意文件"><button class="primary send" type="button">添加文件到当前目录</button><p class="result" role="status"></p></div>
 <p id="listState" class="hint" role="status"></p><ul id="entries"></ul>
 <div class="pages"><button id="previous" class="tiny" type="button">上一页</button><span id="pageState" class="muted"></span><button id="next" class="tiny" type="button">下一页</button></div></section>
-<section id="signatureSettings"><h2>状态栏签名</h2><p class="hint">在 Pico 顶部居中显示。保存后重启仍会保留，留空保存即可隐藏。</p><input id="signatureText" type="text" maxlength="95" aria-label="状态栏签名" placeholder="写下你的签名"><button id="signatureSave" class="primary" type="button">保存签名</button><p id="signatureResult" class="result" role="status">正在读取签名…</p></section>
+<section id="signatureSettings"><h2>状态栏签名</h2><p class="hint">在墨水屏顶部居中显示。保存后重启仍会保留，留空保存即可隐藏。</p><input id="signatureText" type="text" maxlength="95" aria-label="状态栏签名" placeholder="写下你的签名"><button id="signatureSave" class="primary" type="button">保存签名</button><p id="signatureResult" class="result" role="status">正在读取签名…</p></section>
 <section class="upload" data-kind="book"><h2>上传书籍</h2><p class="hint">EPUB、TXT → books。同名文件会先询问。</p><input type="file" accept=".epub,.txt" multiple aria-label="选择书籍"><button class="primary send" type="button">上传到 books</button><p class="result" role="status"></p></section>
 <section class="upload" data-kind="font"><h2>上传字体</h2><p class="hint">TTF、OTF → fonts。上传后可在设备字体设置中选择。</p><input type="file" accept=".ttf,.otf" multiple aria-label="选择字体"><button class="primary send" type="button">上传到 fonts</button><p class="result" role="status"></p></section>
 <section id="wallpaper"><h2>设置锁屏壁纸</h2><p class="hint">选择手机中的图片，拖动裁剪框里的画面，用滑块缩放。上传后自动切换为壁纸锁屏。</p><div class="crop-layout"><canvas id="cropPreview" class="crop-preview" width="342" height="608" aria-label="684 × 1216 锁屏裁剪预览"></canvas><div class="crop-controls"><input id="wallpaperFile" type="file" accept="image/*" aria-label="选择锁屏图片"><label for="cropZoom">缩放图片</label><input id="cropZoom" type="range" min="1" max="3" step="0.01" value="1" aria-label="缩放图片"><p class="muted">输出尺寸：684 × 1216 像素。可在框内拖动调整位置。</p><button id="cropReset" type="button">居中重置</button><button id="wallpaperSend" class="primary" type="button" disabled>裁剪并设为锁屏</button><p id="wallpaperResult" class="result" role="status">请先选择图片</p></div></div></section>
@@ -70,9 +70,9 @@ $('newFolder').onclick=()=>openEditor('mkdir');
 $('previous').onclick=()=>{if(page){--page;loadDirectory().catch(showError)}};
 $('next').onclick=()=>{if(page+1<pages){++page;loadDirectory().catch(showError)}};
 async function loadSignature(){const r=await request('/signature');if(r.status!==200)throw Error(r.body.error||'无法读取签名');$('signatureText').value=r.body.signature||'';$('signatureResult').textContent='可编辑签名后保存'}
-$('signatureSave').onclick=async()=>{if(busy)return;const text=$('signatureText').value,result=$('signatureResult');if(new TextEncoder().encode(text).length>95){result.textContent='签名过长，最多95字节（约31个汉字）';return}if(/[\x00-\x1f\x7f\u2028\u2029]/.test(text)){result.textContent='签名不能包含换行或控制字符';return}lock(true);try{result.textContent='正在保存…';const r=await request('/signature',{method:'POST',headers:{'Content-Type':'text/plain; charset=utf-8'},body:text});if(r.status!==200)throw Error(r.body.error||'保存失败');result.textContent=text?'签名已保存，Pico 状态栏已更新':'签名已清除'}catch(error){result.textContent=error.message}finally{lock(false)}};
+$('signatureSave').onclick=async()=>{if(busy)return;const text=$('signatureText').value,result=$('signatureResult');if(new TextEncoder().encode(text).length>95){result.textContent='签名过长，最多95字节（约31个汉字）';return}if(/[\x00-\x1f\x7f\u2028\u2029]/.test(text)){result.textContent='签名不能包含换行或控制字符';return}lock(true);try{result.textContent='正在保存…';const r=await request('/signature',{method:'POST',headers:{'Content-Type':'text/plain; charset=utf-8'},body:text});if(r.status!==200)throw Error(r.body.error||'保存失败');result.textContent=text?'签名已保存，kiikoread 状态栏已更新':'签名已清除'}catch(error){result.textContent=error.message}finally{lock(false)}};
 loadSignature().catch(error=>$('signatureResult').textContent=error.message);
-function upload(file,url,onProgress){return new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('PUT',url);xhr.upload.onprogress=e=>onProgress(e.loaded,e.total||file.size);xhr.onload=()=>{try{resolve({status:xhr.status,body:JSON.parse(xhr.responseText)})}catch{reject(Error('设备响应无法解析，请检查文件是否已保存'))}};xhr.onerror=()=>reject(Error('连接中断，请保持手机连接 Pico 热点'));xhr.send(file)})}
+function upload(file,url,onProgress){return new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('PUT',url);xhr.upload.onprogress=e=>onProgress(e.loaded,e.total||file.size);xhr.onload=()=>{try{resolve({status:xhr.status,body:JSON.parse(xhr.responseText)})}catch{reject(Error('设备响应无法解析，请检查文件是否已保存'))}};xhr.onerror=()=>reject(Error('连接中断，请保持手机连接 kiikoread 热点'));xhr.send(file)})}
 const types={file:{re:null,url:'/file-upload',limit:0},book:{re:/\.(epub|txt)$/i,url:'/upload',limit:0},font:{re:/\.(ttf|otf)$/i,url:'/font-upload',limit:33554432},picture:{re:/\.(jpg|jpeg|png)$/i,url:'/image-upload',limit:20971520}};
 const cropWidth=684,cropHeight=1216;
 let cropImage=null,cropZoom=1,cropX=0,cropY=0,cropPointer=null;

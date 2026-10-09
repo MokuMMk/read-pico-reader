@@ -112,3 +112,11 @@ Desktop.ini
 *.workspace # General workspace files, can be from various tools
 *.suo       # Visual Studio Solution User Options
 *.sln.docstates # Visual Studio
+
+# Official binaries live in Releases; local packages are hydrated for website builds.
+/flash/firmware.bin
+/flash/bootloader.bin
+/flash/partitions.bin
+/flash/ota_data_initial.bin
+/flash/Pico-update.bin
+/flash/Pico-update-*.bin

@@ -43,6 +43,13 @@ for name in ('system_path', 'activate', 'app_font_activate_system', 'app_font_ac
 unit += r'''
 int main(void){
  app_lock_font_t saved;
+ // 缺失字体可重复尝试，但不会重载内建或报告变化。/ Retry missing fonts without reloading built-in or reporting changes.
+ strcpy(missing,chosen);unsigned first=opens;
+ assert(!app_font_activate_system()&&ttf_font_is_builtin()&&opens==first+1);
+ assert(!app_font_retry_active()&&ttf_font_is_builtin()&&opens==first+2);
+ missing[0]=0;assert(app_font_retry_active()&&!strcmp(active,chosen));
+ assert(!app_font_retry_active());
+
  app_font_activate_reading();assert(s_reading&&!system_face&&!system_scale&&!strcmp(active,reader));
  app_font_begin_lock(&saved);assert(!s_reading&&system_face&&system_scale&&!strcmp(active,chosen));
  assert(saved.reading&&!strcmp(saved.path,reader));

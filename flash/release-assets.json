@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "tag": "v0.3.3-rc90",
+  "files": {
+    "firmware.bin": {
+      "asset": "kiikoread-0.3.3-rc90.bin",
+      "size": 3950864,
+      "sha256": "805c1dac67d15fc413b1f6425e66d4ac6f18cfb6792b2e85bb5b6f0099222809"
+    },
+    "Pico-update.bin": {
+      "asset": "kiikoread-0.3.3-rc90.bin",
+      "size": 3950864,
+      "sha256": "805c1dac67d15fc413b1f6425e66d4ac6f18cfb6792b2e85bb5b6f0099222809"
+    },
+    "Pico-update-0.3.3-rc90.bin": {
+      "asset": "kiikoread-0.3.3-rc90.bin",
+      "size": 3950864,
+      "sha256": "805c1dac67d15fc413b1f6425e66d4ac6f18cfb6792b2e85bb5b6f0099222809"
+    },
+    "bootloader.bin": {
+      "asset": "bootloader-0.3.3-rc90.bin",
+      "size": 21232,
+      "sha256": "84f2b2db501045d9884422e25730444d3ab029f6eec601ff8b03246349a20361"
+    },
+    "partitions.bin": {
+      "asset": "partitions-0.3.3-rc90.bin",
+      "size": 3072,
+      "sha256": "edba9d92e5fc51c706c12f4b4a5d5d23728ba8fb0fbc00be654f1eccef404bda"
+    },
+    "ota_data_initial.bin": {
+      "asset": "ota-data-0.3.3-rc90.bin",
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    }
+  }
+}

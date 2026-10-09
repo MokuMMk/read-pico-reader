@@ -124,7 +124,7 @@ def check(folder: Path) -> None:
     assert feed["schema"] == 1 and feed["version"] == version and feed["project"] == project
     assert feed["board"] == "RDP-G01-W" and feed["layout"] == capability["layout"]
     assert feed["minimum_base_version"] == capability["minimum_base_version"]
-    assert feed["url"] == f"https://wegooo-cell.github.io/read-pico-reader/{upgrade_name}"
+    assert feed["url"] in (f"https://wegooo-cell.github.io/read-pico-reader/{upgrade_name}", f"https://kiikoread.com/{upgrade_name}")
     assert feed["size"] == len(image) and feed["sha256"] == hashlib.sha256(image).hexdigest()
     assert (folder / "Pico-update.bin").read_bytes() == image
     assert (folder / upgrade_name).read_bytes() == image

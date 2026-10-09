@@ -1,10 +1,12 @@
 # kiikoread
 
 公開プロジェクト名は **kiikoread** です。Web サイトでは機器を「墨水屏」と表記し、GitHub URL・更新 URL・既存のバックアップ名は維持します。この Web 改修では機器内の名称を変更しません。白い公式サイトに画面プレビュー、機能紹介、版選択、Web USB 書き込み、Bin ダウンロードと[使用説明](flash/manual.html)を用意しました。`python3 tools/stage_public_flash.py _site` で公開ファイルを生成し、GitHub Pages / Cloudflare Pages の出力先を `_site` に設定できます。HTML と PDF は `docs/user-manual.zh-CN.json` から `tools/build_user_manual.py --font /path/to/a/static-CJK.ttf` で生成します（Python ReportLab が必要です）。
+正式 Bin は [GitHub Releases](https://github.com/wegooo-cell/read-pico-reader/releases) に保存し、公開サイト生成時に取得・検証します。OTA は kiikoread.com を優先し、失敗時は従来の GitHub 更新元へ戻ります。主サイトの生成は `python3 tools/stage_public_flash.py _site --ota-origin https://kiikoread.com`、GitHub Pages では既定パラメーターを使います。
+
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-MindReset Read Pico（RDP-G01-W）向けの独立したオープンソース読書ファームウェアです。[MindReset の公式デモ](https://github.com/MindReset/read_pico_firmware)を基にしていますが、**MindReset の公式リリースではありません**。
+MindReset Read kiikoread（RDP-G01-W）向けの独立したオープンソース読書ファームウェアです。[MindReset の公式デモ](https://github.com/MindReset/read_pico_firmware)を基にしていますが、**MindReset の公式リリースではありません**。
 
 EPUB と TXT の読書、読書位置の保存、TF カードのファイル管理、Wi-Fi・ホットスポット・USB での転送に対応します。[HTTPS オンライン書き込みページ](https://wegooo-cell.github.io/read-pico-reader/)は PC 版 Chrome または Edge と USB データケーブルで利用できます。書き込む前に基板型番を確認してください。通常の書き込みでは設定、読書記録、TF カードの内容を消去しません。
 
