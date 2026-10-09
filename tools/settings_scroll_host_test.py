@@ -51,6 +51,7 @@ enum {SETTINGS_MAIN,SETTINGS_BLUETOOTH,SETTINGS_BLE_SCAN,SETTINGS_UPGRADE,SETTIN
       SETTINGS_SHELF_STYLE,SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR,SETTINGS_TEXT_EDIT};
 enum EpdDrawMode {MODE_GC16,MODE_GL16,MODE_DU};
 #define UI_NAV_TOP 1096
+#define UI_NAV_REFRESH_END (UI_NAV_TOP & ~31)
 #define UI_LOCK_WIDTH 684
 #define UI_GRAY_WHITE 255
 #define UI_GRAY_BLACK 0
@@ -69,6 +70,7 @@ static int update_display_area_with(void *hl,const int *wave,enum EpdDrawMode mo
 static int update_display_area_diff_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){return update_display_area_with(hl,wave,mode,area);}
 static int update_display_area_full_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){return update_display_area_with(hl,wave,mode,area);}
 static EpdRect upgrade_progress_area(void){return (EpdRect){52,468,580,64};}
+static void display_main_transition_cancel(void){}
 static void guard_draw_result(void *hl,int status){(void)hl;assert(!status);}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&y>=r.y&&x<r.x+r.width&&y<r.y+r.height;}
 typedef enum {APP_MAIN_REFRESH_NORMAL,APP_MAIN_REFRESH_FAST,APP_MAIN_REFRESH_WATER} app_main_refresh_mode_t;

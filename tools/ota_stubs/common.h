@@ -15,6 +15,8 @@
 #define pdMS_TO_TICKS(x) (x)
 #define portMAX_DELAY 0xffffffffu
 #define pdPASS 1
+#define pdTRUE 1
+#define OTA_WITH_SEQUENTIAL_WRITES 0xfffffffeu
 #define ESP_PARTITION_TYPE_APP 0
 #define ESP_PARTITION_TYPE_DATA 1
 #define ESP_PARTITION_SUBTYPE_APP_OTA_0 16
@@ -49,8 +51,13 @@ typedef struct {size_t bytes;} psa_hash_operation_t;
 void *heap_caps_malloc(size_t,int);
 void *heap_caps_calloc(size_t,size_t,int);
 void heap_caps_free(void*);
+size_t heap_caps_get_free_size(unsigned);
+size_t heap_caps_get_largest_free_block(unsigned);
 SemaphoreHandle_t xSemaphoreCreateMutex(void);
 SemaphoreHandle_t xSemaphoreCreateBinary(void);
+SemaphoreHandle_t xSemaphoreCreateRecursiveMutex(void);
+int xSemaphoreTakeRecursive(SemaphoreHandle_t,uint32_t);
+int xSemaphoreGiveRecursive(SemaphoreHandle_t);
 int xSemaphoreTake(SemaphoreHandle_t,uint32_t);
 int xSemaphoreGive(SemaphoreHandle_t);
 int xTaskCreate(void(*)(void*),const char*,unsigned,void*,unsigned,void*);

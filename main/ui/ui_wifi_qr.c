@@ -91,20 +91,6 @@ bool ui_wifi_qr_prepare_url(const char* url) {
     return prepare_payload(url);
 }
 
-bool ui_wifi_qr_prepare_weread(const char* url) {
-    ui_wifi_qr_clear();
-    static const char prefix[] = "https://weread.qq.com/web/confirm?uid=";
-    if (!url || strncmp(url, prefix, sizeof(prefix) - 1)) return false;
-    size_t length = strnlen(url, 320);
-    if (length <= sizeof(prefix) - 1 || length >= 320) return false;
-    for (size_t i = sizeof(prefix) - 1; i < length; ++i) {
-        unsigned char c = (unsigned char)url[i];
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-              (c >= '0' && c <= '9') || c == '-' || c == '_')) return false;
-    }
-    return prepare_payload(url);
-}
-
 void ui_wifi_qr_draw(uint8_t* fb, EpdRect area) {
     epd_fill_rect(area, 0xff, fb);
     if (!s_side) return;

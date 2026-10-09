@@ -32,7 +32,7 @@ class LocalLinks(HTMLParser):
 def stage(output: Path) -> None:
     check(FLASH)
     output.mkdir(parents=True, exist_ok=True)
-    for name in ("index.html", "notices.html", "manifest.json", "transfer-preview.png", "toc-preview.png", "weread-preview.png", "firmware.bin",
+    for name in ("index.html", "notices.html", "manifest.json", "toc-preview.png", "firmware.bin",
                  "bootloader.bin", "partitions.bin", "ota_data_initial.bin", "Pico-update.bin", "update.json"):
         shutil.copy2(FLASH / name, output / name)
     version = json.loads((FLASH / "manifest.json").read_text())["version"]
@@ -68,8 +68,8 @@ def stage(output: Path) -> None:
         ROOT / "licenses/GPL-3.0.txt": "GPL-3.0.txt",
         ROOT / "components/read_pico_search/LICENSE.pypinyin": "PYPINYIN-MIT.txt",
         ROOT / "main/assets/OFL-Noto.txt": "OFL-Noto.txt",
-        ROOT / "components/pico_weread/vendor/LICENSE-CrossMux.txt": "CROSSMUX-MIT.txt",
-        ROOT / "components/pico_weread/vendor/LICENSE-FreeInk-SDK.txt": "FREEINK-SDK-MIT.txt",
+        ROOT / "licenses/CrossMux-MIT.txt": "CROSSMUX-MIT.txt",
+        ROOT / "licenses/FreeInk-SDK-MIT.txt": "FREEINK-SDK-MIT.txt",
     }
     (output / "licenses").mkdir(exist_ok=True)
     for source, name in licenses.items():

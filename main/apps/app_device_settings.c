@@ -12,6 +12,8 @@
  * User revision: profile/signature input paints changed regions without whole-screen wipes based on typing counts.
  * 用户修订：快刷说明标注棋盘格亚克力，普通与水波纹继续保留灰阶；三种主页面刷新模式均固定底栏。
  * User revision: the fast-mode description identifies checkerboard acrylic; ordinary/water keep grays and all main-screen modes retain navigation.
+ * 用户修订：联网升级先画反馈再启动任务；进度只追加黑色段，不擦除已完成段，不累计整页清屏。升级前释放不在显示的封面缓存。
+ * User revision: present feedback before starting online work; append black progress without erasing completed segments or counting page cleanup. Release off-screen cover caches before updating.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,6 +88,9 @@ static char s_upgrade_notice[96];
 static uint32_t s_update_drawn_percent, s_update_drawn_at;
 static pico_update_state_t s_update_drawn_state;
 static bool s_update_drawn_busy, s_upgrade_offer_pending;
+typedef enum { UPGRADE_JOB_NONE, UPGRADE_JOB_CHECK, UPGRADE_JOB_DOWNLOAD } upgrade_job_t;
+static upgrade_job_t s_upgrade_job;
+static int s_upgrade_bar_width;
 static uint32_t upgrade_percent(void) {
     uint32_t percent = s_update.release.size ? (uint64_t)s_update.received * 100 / s_update.release.size : 0;
     return percent > 100 ? 100 : percent;
@@ -96,8 +101,8 @@ static void upgrade_remember(uint32_t now) {
     s_update_drawn_percent = upgrade_percent();
     s_update_drawn_at = now;
 }
-// 结果等任务收尾后一次显示；进度只在五秒且变化五个百分点后局部更新。
-// Show results once after worker cleanup; update only progress after five seconds and five percentage points.
+// 结果等任务收尾后一次显示；进度只在五秒且增长五个百分点后补画新增像素。
+// Show results once after worker cleanup; append progress after five seconds and five percentage points.
 static app_redraw_t upgrade_status_redraw(uint32_t now) {
     bool downloading = s_update.state == PICO_UPDATE_DOWNLOADING;
     if (s_update.busy && s_update.state != PICO_UPDATE_CHECKING && !downloading)
@@ -119,13 +124,57 @@ static app_redraw_t upgrade_status_redraw(uint32_t now) {
     return APP_REDRAW_NONE;
 }
 static EpdRect upgrade_progress_area(void) { return (EpdRect){52, 468, 580, 64}; }
-static void draw_upgrade_progress(uint8_t *fb) {
+static void draw_upgrade_percent(uint8_t *fb) {
     uint32_t percent = upgrade_percent();
-    epd_fill_rect(upgrade_progress_area(), UI_GRAY_WHITE, fb);
+    EpdRect number = {496, 472, 132, 42};
+    epd_fill_rect(number, UI_GRAY_WHITE, fb);
     char progress[32]; snprintf(progress, sizeof(progress), "%lu%%", (unsigned long)percent);
-    ui_text(fb, 624, 477, 26, progress, EPD_DRAW_ALIGN_RIGHT, false);
-    ui_fill_round_rect(fb, (EpdRect){60, 519, 564, 8}, 4, 0xc0);
-    if (percent) ui_fill_round_rect(fb, (EpdRect){60, 519, (int)(564 * percent / 100), 8}, 4, 0x30);
+    ui_text_fixed(fb, 624, 477, 26, progress, EPD_DRAW_ALIGN_RIGHT, false);
+    ui_image_bw_rect(fb, number);
+}
+static void draw_upgrade_progress(uint8_t *fb) {
+    epd_fill_rect(upgrade_progress_area(), UI_GRAY_WHITE, fb);
+    draw_upgrade_percent(fb);
+    epd_fill_rect((EpdRect){60, 518, 564, 10}, UI_GRAY_BLACK, fb);
+    epd_fill_rect((EpdRect){61, 519, 562, 8}, UI_GRAY_WHITE, fb);
+    s_upgrade_bar_width = (int)(562 * upgrade_percent() / 100);
+    if (s_upgrade_bar_width)
+        epd_fill_rect((EpdRect){61, 519, s_upgrade_bar_width, 8}, UI_GRAY_BLACK, fb);
+}
+static void draw_upgrade_progress_delta(uint8_t *fb) {
+    int width = (int)(562 * upgrade_percent() / 100);
+    if (width <= s_upgrade_bar_width) return;
+    draw_upgrade_percent(fb);
+    epd_fill_rect((EpdRect){61 + s_upgrade_bar_width, 519, width - s_upgrade_bar_width, 8}, UI_GRAY_BLACK, fb);
+    s_upgrade_bar_width = width;
+}
+// 排队时只改 UI 快照；本次画面推送结束后的 tick 才启动 TLS/擦写。
+// Scheduling changes only the UI snapshot; start TLS/flash on the tick after its presentation.
+static void upgrade_schedule(bool downloading, uint32_t now) {
+    s_upgrade_job = downloading ? UPGRADE_JOB_DOWNLOAD : UPGRADE_JOB_CHECK;
+    s_update.state = downloading ? PICO_UPDATE_DOWNLOADING : PICO_UPDATE_CHECKING;
+    s_update.busy = true;
+    s_update.received = 0;
+    snprintf(s_update.message, sizeof(s_update.message), "%s", downloading
+        ? "正在下载，短暂断网会自动重连" : "正在连接并检查更新");
+    s_upgrade_offer_pending = !downloading;
+    upgrade_remember(now);
+}
+static app_redraw_t upgrade_start_pending(void) {
+    bool downloading = s_upgrade_job == UPGRADE_JOB_DOWNLOAD;
+    s_upgrade_job = UPGRADE_JOB_NONE;
+    app_home_cover_mode_changed();
+    app_book_cover_mode_changed();
+    esp_err_t error = downloading ? pico_online_download() : pico_online_check();
+    pico_online_get_status(&s_update);
+    if (error == ESP_OK) return APP_REDRAW_NONE;
+    s_upgrade_offer_pending = false;
+    s_update.busy = false;
+    if (s_update.state != PICO_UPDATE_FAILED) s_update.message[0] = 0;
+    s_update.state = PICO_UPDATE_FAILED;
+    if (!s_update.message[0]) snprintf(s_update.message, sizeof(s_update.message), "无法开始升级，请退出传书后重试");
+    snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "%s", s_update.message);
+    return APP_REDRAW_PAGE;
 }
 // 日志按 UTF-8 字符和实际字宽换行，限制六行，不影响下载时的局部刷新。
 // Wrap notes on UTF-8 boundaries using measured widths; cap at six lines without changing download refreshes.
@@ -176,6 +225,8 @@ static void upgrade_open(void) {
     pico_online_get_status(&s_update);
     s_upgrade_confirm = s_local_pending = s_upgrade_restart = false;
     s_upgrade_offer_pending = false;
+    s_upgrade_job = UPGRADE_JOB_NONE;
+    s_upgrade_bar_width = 0;
     upgrade_remember(esp_timer_get_time() / 1000);
     s_upgrade_notice[0] = 0;
     s_page = SETTINGS_UPGRADE;
@@ -1286,6 +1337,7 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
     }
     if (s_upgrade_restart) { s_upgrade_restart = false; esp_restart(); return APP_REDRAW_NONE; }
     if (s_page == SETTINGS_UPGRADE) {
+        if (s_upgrade_job != UPGRADE_JOB_NONE) return upgrade_start_pending();
         if (s_local_pending) {
             s_local_pending = false;
             esp_err_t error = pico_ota_install(PICO_OTA_UPDATE_PATH, s_upgrade_notice, sizeof(s_upgrade_notice));
@@ -1299,7 +1351,7 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
         }
         uint32_t now = esp_timer_get_time() / 1000;
         app_redraw_t redraw = upgrade_status_redraw(now);
-        if (redraw == APP_REDRAW_AREA) draw_upgrade_progress(ctx->fb);
+        if (redraw == APP_REDRAW_AREA) draw_upgrade_progress_delta(ctx->fb);
         return redraw;
     }
     if (!s_sync_pending) return APP_REDRAW_NONE;
@@ -1424,13 +1476,14 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (ev->type != UI_GESTURE_TAP || s_local_pending || s_upgrade_restart) return APP_REDRAW_NONE;
         int y = ev->y0;
         if (y < 190 && ev->x0 < 170) {
+            s_upgrade_job = UPGRADE_JOB_NONE;
             s_upgrade_offer_pending = false;
             if (s_upgrade_confirm) s_upgrade_confirm = false;
             else { pico_online_cancel_join(); s_page = SETTINGS_MAIN; }
             return APP_REDRAW_PAGE;
         }
         int tab = ui_nav_hit(ev->x0, y);
-        if (tab >= 0) { pico_online_cancel_join(); ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
+        if (tab >= 0) { s_upgrade_job = UPGRADE_JOB_NONE; pico_online_cancel_join(); ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
         if (s_upgrade_confirm) {
             bool accept = ui_rect_hit(upgrade_confirm_button(s_upgrade_online, true), ev->x0, y);
             if (accept || ui_rect_hit(upgrade_confirm_button(s_upgrade_online, false), ev->x0, y)) {
@@ -1438,9 +1491,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                 s_upgrade_offer_pending = false;
                 if (accept) {
                     if (s_upgrade_online) {
-                        if (pico_online_download() != ESP_OK) snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "无法开始升级，请重新检查");
-                        pico_online_get_status(&s_update);
-                        upgrade_remember(esp_timer_get_time() / 1000);
+                        upgrade_schedule(true, esp_timer_get_time() / 1000);
                     } else s_local_pending = true;
                 }
                 return APP_REDRAW_PAGE;
@@ -1450,11 +1501,11 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (ev->x0 < 60 || ev->x0 >= 624) return APP_REDRAW_NONE;
         if (y >= 550 && y < 612) {
             s_upgrade_notice[0] = 0;
-            if (s_update.busy) { s_upgrade_offer_pending = false; pico_online_cancel_join(); }
+            if (s_update.busy) { s_upgrade_job = UPGRADE_JOB_NONE; s_upgrade_offer_pending = false; pico_online_cancel_join(); }
             else if (s_update.state == PICO_UPDATE_AVAILABLE) { s_upgrade_confirm = true; s_upgrade_online = true; }
             else {
-                s_upgrade_offer_pending = pico_online_check() == ESP_OK;
-                if (!s_upgrade_offer_pending) snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "无法检查更新，请退出传书后重试");
+                upgrade_schedule(false, esp_timer_get_time() / 1000);
+                return APP_REDRAW_PAGE;
             }
             pico_online_get_status(&s_update);
             upgrade_remember(esp_timer_get_time() / 1000);
@@ -1915,6 +1966,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
 }
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     if (s_page == SETTINGS_UPGRADE) {
+        s_upgrade_job = UPGRADE_JOB_NONE;
         if (s_local_pending || s_upgrade_restart) return APP_REDRAW_NONE;
         pico_online_cancel_join(); s_upgrade_confirm = false;
     }
@@ -1938,9 +1990,11 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 static void settings_exit(app_ctx_t *ctx) {
+    s_upgrade_job = UPGRADE_JOB_NONE;
     (void)ctx; ui_keyboard_end(); pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
 }
 static void on_before_lock(app_ctx_t *ctx) {
+    s_upgrade_job = UPGRADE_JOB_NONE;
     (void)ctx; pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
     (void)ble_pt_stop(2000);
 }
@@ -1971,10 +2025,20 @@ static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
         guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, area));
         return true;
     }
-    if (redraw != APP_REDRAW_AREA || s_page != SETTINGS_UPGRADE) return false;
-    guard_draw_result(ctx->hl, update_display_area_with(ctx->hl, &E0470_WAVEFORM,
-                      MODE_GL16, upgrade_progress_area()));
-    return true;
+    if (s_page != SETTINGS_UPGRADE) return false;
+    if (redraw == APP_REDRAW_PAGE) {
+        display_main_transition_cancel();
+        render(ctx, ctx->fb);
+        guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM,
+                          MODE_GL16, (EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_REFRESH_END}));
+        return true;
+    }
+    if (redraw == APP_REDRAW_AREA) {
+        guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl, &E0470_FOLLOW_WAVEFORM,
+                          MODE_DU, upgrade_progress_area()));
+        return true;
+    }
+    return false;
 }
 
 const app_desc_t app_device_settings = {

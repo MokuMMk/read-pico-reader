@@ -4,6 +4,8 @@
  *
  * 中文：TF 卡文件入口、目录浏览及 USB/Wi-Fi 传输入口。
  * English: SD file entry, directory browser and USB/Wi-Fi transfer routes.
+ * 用户修订：文件管理直接显示 WiFi、热点、USB 三个入口，不再包含在线书籍下载。
+ * User revision: show direct WiFi, hotspot and USB routes, with no online book downloads.
  * 用户授权新输入法：文件改名使用共用九宫格/全键盘及常亮光标；离页释放候选。
  * Authorized keyboard revision: rename uses shared T9/QWERTY and a steady caret; exit frees candidates.
  * 用户修订：输入只刷新变化区域，布局切换局部灰阶，避免打字累计整屏清残影。
@@ -561,12 +563,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             if (capacity.width > 0) ui_fill_round_rect(fb, capacity, 3, 0x68);
         }
         ui_text(fb, 42, 308, 21, "传输文件", EPD_DRAW_ALIGN_LEFT, false);
-        static const char *const methods[] = {"Wifi/热点传书", "USB传书", "微读传书"};
-        static const char *const details[] = {"选择传输方式", "连接电脑", "微信读书下载"};
+        static const char *const methods[] = {"WiFi传输", "热点传输", "USB传输"};
+        static const char *const details[] = {"同一网络", "连接设备热点", "连接电脑"};
         for (int i = 0; i < 3; ++i) {
             EpdRect card = home_transfer_rect(i);
             ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE);
-            ui_draw_round_rect(fb, card, 20, 0x60);
+            ui_draw_round_rect(fb, card, 20, UI_GRAY_BLACK);
             ui_text_vc(fb, card.x + card.width / 2, card.y + 35, 21, methods[i],
                        EPD_DRAW_ALIGN_CENTER, false);
             ui_text_vc(fb, card.x + card.width / 2, card.y + 75, 19, details[i],
@@ -889,13 +891,11 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_NONE;
     }
     for (int i = 0; !long_press && i < 3; ++i) if (ui_rect_hit(home_transfer_rect(i), ev->x0, ev->y0)) {
-        extern const app_desc_t app_transfer, app_weread;
-        if (i == 2) ctx->request_app = &app_weread;
-        else {
-            if (i == 0) app_transfer_request_method_picker();
-            else app_transfer_request_usb_start();
-            ctx->request_app = &app_transfer;
-        }
+        extern const app_desc_t app_transfer;
+        if (i == 0) app_transfer_request_wifi_upload();
+        else if (i == 1) app_transfer_request_hotspot_start();
+        else app_transfer_request_usb_start();
+        ctx->request_app = &app_transfer;
         return APP_REDRAW_NONE;
     }
     if (ev->y0 >= 520 && ev->y0 < 975) {

@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
- * 中文：真实 OTA 任务的断流、校验、取消和启动提交。/ English: Real OTA interruption, verification, cancel and boot commit. */
+ * 中文：真实 OTA 任务的断流、校验、取消、内存不足及与屏幕扫描的并发互斥。
+ * English: Real OTA interruption, verification, cancellation, memory exhaustion and display/flash exclusion. */
 #include "common.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pthread.h>
+#include <sched.h>
 #include "../main/ota_online.c"
 static const esp_partition_t running={0x10000,0x400000},inactive={0x910000,0x400000},metadata={0xd10000,0x2000};
 static const esp_app_desc_t current={.version="0.3.3-rc78",.project_name="Read_Pico"};
@@ -20,10 +23,26 @@ static int offline_polls;
 static bool cancel_reconnect;
 static void (*pending)(void*);
 static int64_t now;
+static size_t internal_free=131072,internal_block=65536,external_free=1048576,external_block=524288;
+static size_t failed_allocation;
+static pthread_mutex_t flash_display_mutex;
+static _Thread_local unsigned lock_depth;
+static atomic_bool display_active;
+static void assert_flash_locked(void) {assert(lock_depth && !atomic_load(&display_active));}
+
 struct FakeHttp {const uint8_t *data;size_t size,at,offset;bool firmware;int (*event_handler)(esp_http_client_event_t*);void *user_data;};
-void *heap_caps_malloc(size_t n,int c){(void)c;return malloc(n);}
+void *heap_caps_malloc(size_t n,int c){(void)c;return n==failed_allocation?NULL:malloc(n);}
 void *heap_caps_calloc(size_t n,size_t s,int c){(void)c;return calloc(n,s);}
 void heap_caps_free(void *p){free(p);}
+size_t heap_caps_get_free_size(unsigned c){return c&MALLOC_CAP_INTERNAL?internal_free:external_free;}
+size_t heap_caps_get_largest_free_block(unsigned c){return c&MALLOC_CAP_INTERNAL?internal_block:external_block;}
+SemaphoreHandle_t xSemaphoreCreateRecursiveMutex(void){
+ pthread_mutexattr_t attr;assert(!pthread_mutexattr_init(&attr));
+ assert(!pthread_mutexattr_settype(&attr,PTHREAD_MUTEX_RECURSIVE));
+ assert(!pthread_mutex_init(&flash_display_mutex,&attr));assert(!pthread_mutexattr_destroy(&attr));return (void*)3;
+}
+int xSemaphoreTakeRecursive(SemaphoreHandle_t s,uint32_t wait){assert(s==(void*)3&&wait==portMAX_DELAY);assert(!pthread_mutex_lock(&flash_display_mutex));++lock_depth;return pdTRUE;}
+int xSemaphoreGiveRecursive(SemaphoreHandle_t s){assert(s==(void*)3&&lock_depth);--lock_depth;assert(!pthread_mutex_unlock(&flash_display_mutex));return pdTRUE;}
 SemaphoreHandle_t xSemaphoreCreateMutex(void){return (void*)1;}
 SemaphoreHandle_t xSemaphoreCreateBinary(void){return (void*)2;}
 static void run(void){assert(pending);void(*f)(void*)=pending;pending=NULL;f(NULL);}
@@ -37,11 +56,11 @@ const esp_app_desc_t *esp_app_get_description(void){return &current;}
 const esp_partition_t *esp_partition_find_first(int type,int sub,const char *label){(void)label;if(bad_layout)return NULL;if(type==1)return &metadata;return sub==16?&running:&inactive;}
 const esp_partition_t *esp_ota_get_running_partition(void){return &running;}
 const esp_partition_t *esp_ota_get_next_update_partition(void*p){(void)p;return same_slot?&running:&inactive;}
-esp_err_t esp_ota_begin(const esp_partition_t*p,size_t n,esp_ota_handle_t*h){assert(p==&inactive&&n==4096);++begin_calls;written_size=0;*h=7;return ESP_OK;}
-esp_err_t esp_ota_write(esp_ota_handle_t h,const void *p,size_t n){assert(h==7&&written_size+n<=sizeof(written));memcpy(written+written_size,p,n);written_size+=n;return ESP_OK;}
-esp_err_t esp_ota_abort(esp_ota_handle_t h){assert(h==7);++abort_calls;return ESP_OK;}
-esp_err_t esp_ota_end(esp_ota_handle_t h){assert(h==7);return end_error;}
-esp_err_t esp_ota_set_boot_partition(const esp_partition_t *p){assert(p==&inactive);++boot_calls;return ESP_OK;}
+esp_err_t esp_ota_begin(const esp_partition_t*p,size_t n,esp_ota_handle_t*h){assert_flash_locked();assert(p==&inactive&&n==OTA_WITH_SEQUENTIAL_WRITES);++begin_calls;written_size=0;*h=7;return ESP_OK;}
+esp_err_t esp_ota_write(esp_ota_handle_t h,const void *p,size_t n){assert_flash_locked();sched_yield();assert(!atomic_load(&display_active));assert(h==7&&written_size+n<=sizeof(written));memcpy(written+written_size,p,n);written_size+=n;return ESP_OK;}
+esp_err_t esp_ota_abort(esp_ota_handle_t h){assert_flash_locked();assert(h==7);++abort_calls;return ESP_OK;}
+esp_err_t esp_ota_end(esp_ota_handle_t h){assert_flash_locked();assert(h==7);return end_error;}
+esp_err_t esp_ota_set_boot_partition(const esp_partition_t *p){assert_flash_locked();assert(p==&inactive);++boot_calls;return ESP_OK;}
 void read_pico_transfer_get_status(read_pico_transfer_status_t*s){*s=(read_pico_transfer_status_t){.mode=1,.network_ready=offline_polls==0};}
 esp_err_t read_pico_transfer_get_saved_wifi(char*s,bool*b){strcpy(s,"test");*b=true;return ESP_OK;}
 void read_pico_transfer_stop(void){}
@@ -65,8 +84,17 @@ int psa_hash_setup(psa_hash_operation_t*h,int alg){assert(alg==PSA_ALG_SHA_256);
 int psa_hash_update(psa_hash_operation_t*h,const void*p,size_t n){(void)p;h->bytes+=n;return PSA_SUCCESS;}
 int psa_hash_finish(psa_hash_operation_t*h,uint8_t*p,size_t cap,size_t*n){assert(cap==32&&h->bytes==4096);memset(p,0,32);*n=32;return PSA_SUCCESS;}
 int psa_hash_abort(psa_hash_operation_t*h){(void)h;return PSA_SUCCESS;}
-static void fixture(void){pico_online_cancel_join();memset(firmware,0,sizeof(firmware));esp_image_header_t header={.magic=0xe9,.chip_id=9};memcpy(firmware,&header,sizeof(header));esp_app_desc_t desc={.magic_word=ESP_APP_DESC_MAGIC_WORD,.version="0.3.3-rc79",.project_name="Read_Pico"};memcpy(firmware+32,&desc,sizeof(desc));snprintf(feed,sizeof(feed),"{\"schema\":1,\"version\":\"0.3.3-rc79\",\"project\":\"Read_Pico\",\"board\":\"RDP-G01-W\",\"layout\":\"pico-dual-4m-v1\",\"minimum_base_version\":\"0.3.3-rc72\",\"url\":\"https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc79.bin\",\"sha256\":\"%064d\",\"notes\":\"test\",\"size\":4096}",0);limit=4096;bad_layout=same_slot=cancel_read=again=false;written_size=0;boot_calls=abort_calls=begin_calls=end_error=fail_task=0;}
+static void fixture(void){pico_online_cancel_join();internal_free=131072;internal_block=65536;external_free=1048576;external_block=524288;failed_allocation=0;memset(firmware,0,sizeof(firmware));esp_image_header_t header={.magic=0xe9,.chip_id=9};memcpy(firmware,&header,sizeof(header));esp_app_desc_t desc={.magic_word=ESP_APP_DESC_MAGIC_WORD,.version="0.3.3-rc79",.project_name="Read_Pico"};memcpy(firmware+32,&desc,sizeof(desc));snprintf(feed,sizeof(feed),"{\"schema\":1,\"version\":\"0.3.3-rc79\",\"project\":\"Read_Pico\",\"board\":\"RDP-G01-W\",\"layout\":\"pico-dual-4m-v1\",\"minimum_base_version\":\"0.3.3-rc72\",\"url\":\"https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc79.bin\",\"sha256\":\"%064d\",\"notes\":\"test\",\"size\":4096}",0);limit=4096;bad_layout=same_slot=cancel_read=again=false;written_size=0;boot_calls=abort_calls=begin_calls=end_error=fail_task=0;}
 static void check_download(void){wifi_ps=WIFI_PS_MIN_MODEM;ps_disabled=ps_restored=0;assert(pico_online_check()==ESP_OK);assert(pico_online_busy());run();assert(s_status->state==PICO_UPDATE_AVAILABLE&&!pico_online_busy());assert(wifi_ps==WIFI_PS_MIN_MODEM&&ps_disabled==1&&ps_restored==1);assert(pico_online_download()==ESP_OK);run();assert(wifi_ps==WIFI_PS_MIN_MODEM&&ps_disabled==2&&ps_restored==2);}
+// 两个真实线程交错写闪存与推屏，重复验证锁和递归路径。
+// Interleave flash writes and display scans on real threads, including recursive acquisition.
+static void *display_thread(void *arg){(void)arg;for(unsigned i=0;i<1000;++i){
+ bool held=pico_online_display_begin();assert(held&&lock_depth==1);
+ bool nested=pico_online_display_begin();assert(nested&&lock_depth==2);
+ atomic_store(&display_active,true);sched_yield();atomic_store(&display_active,false);
+ pico_online_display_end(nested);pico_online_display_end(held);assert(!lock_depth);
+}return NULL;}
+static void *flash_thread(void *arg){(void)arg;for(unsigned i=0;i<1000;++i){assert(flash_write(7,firmware,0)==ESP_OK);assert(!lock_depth);}return NULL;}
 int main(void){
  _Static_assert(sizeof(esp_image_header_t)==24&&sizeof(esp_app_desc_t)==256,"real header sizes");
  fixture();again=true;check_download();assert(s_status->state==PICO_UPDATE_READY&&written_size==4096&&!memcmp(firmware,written,4096)&&!boot_calls);assert(pico_online_commit()==ESP_OK&&boot_calls==1);
@@ -87,6 +115,18 @@ int main(void){
  fixture();bad_layout=true;assert(pico_online_check()==ESP_OK);run();assert(s_status->state==PICO_UPDATE_FAILED&&!begin_calls&&wifi_ps==WIFI_PS_MIN_MODEM);
  fixture();assert(pico_online_check()==ESP_OK);pico_online_cancel_join();assert(!pico_online_busy()&&s_status->state==PICO_UPDATE_CANCELLED);
  fixture();fail_task=1;assert(pico_online_check()==ESP_ERR_NO_MEM&&!pico_online_busy());
+ fixture();internal_free=49151;assert(pico_online_check()==ESP_ERR_NO_MEM&&!pending&&!pico_online_busy()&&s_status->state==PICO_UPDATE_FAILED&&!begin_calls);
+ fixture();internal_block=16383;assert(pico_online_check()==ESP_ERR_NO_MEM&&!pending&&!begin_calls);
+ fixture();external_free=524287;assert(pico_online_check()==ESP_ERR_NO_MEM&&!pending&&!begin_calls);
+ fixture();external_block=32767;assert(pico_online_check()==ESP_ERR_NO_MEM&&!pending&&!begin_calls);
+ fixture();assert(pico_online_check()==ESP_OK);internal_free=32767;int opens=http_opens;run();assert(s_status->state==PICO_UPDATE_FAILED&&!pico_online_busy()&&http_opens==opens&&!begin_calls&&wifi_ps==WIFI_PS_MIN_MODEM);
+ fixture();failed_allocation=4096;check_download();assert(s_status->state==PICO_UPDATE_FAILED&&!begin_calls&&!boot_calls);
+ fixture();failed_allocation=288;check_download();assert(s_status->state==PICO_UPDATE_FAILED&&!begin_calls&&!boot_calls);
+ fixture();pthread_t display_job,flash_job;
+ assert(!pthread_create(&display_job,NULL,display_thread,NULL));assert(!pthread_create(&flash_job,NULL,flash_thread,NULL));
+ assert(!pthread_join(display_job,NULL));assert(!pthread_join(flash_job,NULL));assert(!lock_depth);
+ assert(!pthread_mutex_destroy(&flash_display_mutex));
  free(s_status);s_status=NULL;
+ puts("PASS: low/fragmented memory and allocation failures keep the current slot; 2000 concurrent display/flash operations remain exclusive; sequential erases");
  puts("PASS: OTA split headers, EAGAIN, bounded Range resume, rejected wrong/ignored ranges, radio power-save restoration, hash/project checks, cancellation, inactive slot and explicit boot commit");
 }
