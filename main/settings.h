@@ -145,6 +145,9 @@ void app_settings_set_book_tracking(uint8_t index);
 /// 普通正文首行缩进 0..3 字，默认两字。/ First-line indent: 0..3 em, default 2.
 uint8_t app_settings_book_indent(void);
 void app_settings_set_book_indent(uint8_t em);
+/// 正文首行缩进微调，-20..20像素，默认0；无缩进时不生效。/ First-line adjustment in pixels, -20..20 (default 0); ignored with no indent.
+int8_t app_settings_book_indent_adjust(void);
+void app_settings_set_book_indent_adjust(int8_t px);
 /// 正文阅读线：0 无，1 虚线，2 点线。/ Body reading guides: none, dashed or dotted.
 uint8_t app_settings_book_reading_line(void);
 void app_settings_set_book_reading_line(uint8_t style);

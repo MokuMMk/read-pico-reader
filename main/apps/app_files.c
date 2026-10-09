@@ -385,15 +385,13 @@ static void file_detail(char *dst, size_t cap, const file_item_t *item) {
 // 文件列表的分隔线保持两像素，墨水屏上比浅色发丝线更容易辨认。
 // Two-pixel file dividers stay legible on the panel without changing the layout.
 static void file_rule(uint8_t *fb, int x, int y, int width) {
-    epd_fill_rect((EpdRect){x, y, width, 2}, 0x68, fb);
+    ui_draw_separator(fb, y, x, width, 0x60);
 }
 
 // 大卡片用双层描边，避免单像素浅灰线在低对比度屏上消失。
 // Double-stroke large cards so their outlines survive low-contrast E-ink rendering.
 static void file_card_border(uint8_t *fb, EpdRect rect, int radius) {
-    ui_draw_round_rect(fb, rect, radius, 0x70);
-    ui_draw_round_rect(fb, (EpdRect){rect.x + 1, rect.y + 1,
-                                     rect.width - 2, rect.height - 2}, radius - 1, 0x70);
+    ui_draw_control_frame(fb, rect, radius, 0x50);
 }
 
 static void fit_name(char *name, int px, int width) {
@@ -457,7 +455,7 @@ static void render_actions(uint8_t *fb) {
         for (int i = 0; i < 4; ++i) {
             EpdRect button = {40 + (i % 2) * 312, 648 + (i / 2) * 122, 292, 100};
             ui_fill_round_rect(fb, button, 20, 0xe8);
-            ui_draw_round_rect(fb, button, 20, 0x60);
+            ui_draw_control_frame(fb, button, 20, 0x60);
             ui_text_vc(fb, button.x + button.width / 2, button.y + 50, 25,
                        labels[i], EPD_DRAW_ALIGN_CENTER, false);
         }
@@ -530,8 +528,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             file_rule(fb, 101, y + 85, 547);
         }
         if (s_folder == 3) {
-            ui_draw_round_rect(fb, (EpdRect){36, 875, 293, 76}, 8, UI_GRAY_BLACK);
-            ui_draw_round_rect(fb, (EpdRect){355, 875, 293, 76}, 8, UI_GRAY_BLACK);
+            ui_draw_control_frame(fb, (EpdRect){36, 875, 293, 76}, 8, UI_GRAY_BLACK);
+            ui_draw_control_frame(fb, (EpdRect){355, 875, 293, 76}, 8, UI_GRAY_BLACK);
             ui_text(fb, 182, 897, 24, s_view == FILE_VIEW_MOVE ? "取消移动" : "设为书籍目录", EPD_DRAW_ALIGN_CENTER, false);
             ui_text(fb, 501, 897, 24, s_view == FILE_VIEW_MOVE ? "移动到此处" : "设为字体目录", EPD_DRAW_ALIGN_CENTER, false);
             if (s_message[0]) ui_text(fb, 36, 995, 22, s_message, EPD_DRAW_ALIGN_LEFT, false);
@@ -568,7 +566,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (int i = 0; i < 3; ++i) {
             EpdRect card = home_transfer_rect(i);
             ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE);
-            ui_draw_round_rect(fb, card, 20, UI_GRAY_BLACK);
+            ui_draw_control_frame(fb, card, 20, UI_GRAY_BLACK);
             ui_text_vc(fb, card.x + card.width / 2, card.y + 35, 21, methods[i],
                        EPD_DRAW_ALIGN_CENTER, false);
             ui_text_vc(fb, card.x + card.width / 2, card.y + 75, 19, details[i],
@@ -577,7 +575,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         char summary[48]; snprintf(summary, sizeof(summary), "根目录 · %d 项", s_count);
         ui_text(fb, 36, 482, 21, summary, EPD_DRAW_ALIGN_LEFT, false);
         ui_fill_round_rect(fb, (EpdRect){537, 458, 111, 50}, 23, UI_GRAY_WHITE);
-        ui_draw_round_rect(fb, (EpdRect){537, 458, 111, 50}, 23, 0x70);
+        ui_draw_control_frame(fb, (EpdRect){537, 458, 111, 50}, 23, 0x70);
         ui_text_vc(fb, 592, 483, 19, "名称 ↑", EPD_DRAW_ALIGN_CENTER, false);
         int first = s_page * root_rows();
         int rows = s_count - first;

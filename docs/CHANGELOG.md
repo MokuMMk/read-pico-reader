@@ -13,9 +13,11 @@ User-visible changes by release; see [README](../README.md) for usage.
 - 浅色拼贴封面增加沿真实圆角边缘的细灰描边，缓存自动重建；深色封面保持原样。
 - 新增可选四位数字锁屏密码：开启确认、验证原密码后修改/关闭，真实锁屏模糊背景、导入系统字体、圆内按下反馈及局部黑白快刷；浅睡/深睡/冷启动验证后恢复页面，取消保持锁定。凭据使用加盐摘要，普通配置恢复不覆盖；低内存、触摸读错和多指取消不会绕过验证。
 - 密码键盘输入仅局部更新圆内反馈及密码圆点，不处理背景或字形，优化数字、删除与取消的响应速度。
-- 新增每页四本的列表书架：完整比例封面、作者、阅读进度、收藏标记及双行长标题，支持翻页、重启和配置恢复。
+- 新增每页四本的列表书架：统一尺寸的等比裁切封面、作者、阅读进度、收藏标记及双行长标题，支持翻页、重启和配置恢复。
 - 拼贴封面新增柔和投影，白色文字描边减细；锁屏图像使用16级灰阶抖动表现256级输入亮度，保持有界工作内存。
-- 密码顶部锁图标改为平滑圆角，减轻背景模糊；电源唤醒时下部背景分两段灰阶渐变，输入不补刷背景，低内存与冷启动直接显示最终密码页。
+- 密码顶部锁图标改为平滑圆角，减轻背景模糊；密码入场一次显示完整画面，不补刷第二段背景，低内存与冷启动直接显示最终密码页。
+- 列表书架外框和分隔线加深至双像素，常用按钮、设置卡片边框同步加强，快刷与水波纹模式保持可读。列表封面统一134×174像素，等比放大后居中裁切。
+- 首行缩进新增1像素微调（-20～+20，默认0）、数值点击复位及重启/配置备份恢复，正文标题与对齐块保持原位。
 - 本地测试保持 rc89，尚未发布。
 
 Add a D-layout library collage lock with aspect-preserved real covers, native imported system typography, SD caching, bounded workspaces and safe memory fallback. Pale covers gain a fine rounded gray outline. An optional four-digit PIN verifies wake/cold starts, retains the saved page, confirms setup and requires the old PIN for changes. Cached frosted lock art and native system glyphs use local feedback; faults cannot bypass authentication. Salted credentials are excluded from ordinary backups. Retired pocket/spine settings migrate to acrylic. Local builds retain rc89 and are not published.

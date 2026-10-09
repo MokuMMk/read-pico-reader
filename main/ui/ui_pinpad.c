@@ -23,7 +23,7 @@ static const int xs[3]={158,342,526};
 static const int ys[4]={544,703,862,1021};
 EpdRect ui_pinpad_full(void){return (EpdRect){0,0,PAD_W,PAD_H};}
 EpdRect ui_pinpad_entry_area(void){return (EpdRect){196,371,292,91};}
-EpdRect ui_pinpad_backdrop_area(void){return (EpdRect){0,470,PAD_W,PAD_H-470};}
+
 static uint8_t pixel(const uint8_t *frame,int x,int y){
     int px=x,py=y;
     switch(epd_get_rotation()){
@@ -125,20 +125,11 @@ static void lock_icon(uint8_t *fb){
         if(coverage){unsigned gray=(pixel(fb,x,y)>>4)*17u;epd_draw_pixel(x,y,ui_image_dither_gray((gray*(16-coverage)+8)/16,x,y),fb);}
     }
 }
-static void paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area,const uint8_t *original,uint8_t frost){
+static void paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area){
     int right=area.x+area.width,bottom=area.y+area.height;
     for(int y=area.y;y<bottom&&y<PAD_H;++y)for(int x=area.x;x<right&&x<PAD_W;++x)
         if(x>=0&&y>=0){
             uint8_t gray=pad->background?pixel(pad->background,x,y):0xe0;
-            if(original&&pad->background&&y>=470&&frost<255){
-                // 同一坐标的原锁图渐变到已缓存底图，抖动相位固定；上部控件始终清晰。
-                // Blend the original lock art into the cached frost at a stable dither phase; retain a crisp header.
-                unsigned source=(pixel(original,x,y)>>4)*17u,target=(gray>>4)*17u;
-                // 120px垂直衔接消除固定上部与渐变下部之间的横向接缝。
-                // A 120px vertical blend removes a horizontal seam between the fixed header and fading lower art.
-                unsigned amount=frost+(y<590?(255u-frost)*(590u-y)/120u:0);
-                gray=ui_image_dither_gray((source*(255-amount)+target*amount+127)/255,x,y);
-            }
             epd_draw_pixel(x,y,gray,fb);
         }
     if(intersects(area,(EpdRect){180,135,324,168})){
@@ -161,8 +152,8 @@ static void paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area,const uint8_t 
         }else text(fb,box.x+box.width/2,1132,27,hit==10?"取消":"删除",0,pad,hit);
     }
 }
-void ui_pinpad_paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area){paint(fb,pad,area,NULL,255);}
-void ui_pinpad_paint_entry(uint8_t *fb,const ui_pinpad_t *pad,const uint8_t *original,uint8_t frost){paint(fb,pad,ui_pinpad_full(),original,frost);}
+void ui_pinpad_paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area){paint(fb,pad,area);}
+
 void ui_pinpad_paint_input(uint8_t *fb,const ui_pinpad_t *pad){
     // 不生成TTF蒙版、不分配内存，只改黑白反馈；矩形内其余像素保持原样。
     // No glyph masks or allocations: change binary feedback only, retaining every surrounding pixel.

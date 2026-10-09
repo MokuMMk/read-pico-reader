@@ -65,6 +65,16 @@ static int app_settings_reader_turn_effect(void){return 1;}
 static int book_layout_page_image_count(size_t page){(void)page;return 0;}
 static app_redraw_t paint_reading(app_ctx_t *ctx,int mode){(void)ctx;assert(mode==MODE_GL16);++paints;return APP_REDRAW_AREA;}
 '''
+unit += r"""
+static int indent=2,adjustment,layout_indent=2,layout_adjustment;
+static int app_settings_book_indent(void){return indent;}
+static int app_settings_book_indent_adjust(void){return adjustment;}
+static void app_settings_set_book_indent(uint8_t em){indent=em;}
+static void app_settings_set_book_indent_adjust(int8_t px){adjustment=px;}
+static void book_layout_set_first_line_indent(unsigned em){assert(draw_locked);layout_indent=em;}
+static void book_layout_set_first_line_indent_adjust(int px){assert(draw_locked);layout_adjustment=px;}
+"""
+unit += function('apply_reader_indent', BOOK) + '\n'
 for name in ('app_book_request_open', 'app_book_request_open_from_home', 'app_book_request_resume',
              'toggle_reader_fullscreen', 'reader_turn_chrome', 'turn_page'):
     unit += function(name, BOOK) + '\n'
@@ -78,6 +88,15 @@ static void reset(bool full,bool tools,size_t page,size_t chapter){
 }
 int main(void){
  app_ctx_t ctx={.now_ms=1000};
+ reset(true,false,2,0);size_t anchor=book_layout_page_start_offset(s_page);
+ assert(apply_reader_indent(&ctx,2,-7)==APP_REDRAW_PAGE&&adjustment==-7&&layout_adjustment==-7&&indent==2);
+ assert(book_layout_page_start_offset(s_page)==anchor&&saves==1);
+ assert(apply_reader_indent(&ctx,2,-7)==APP_REDRAW_NONE&&saves==1);
+ failed_reflows=1;
+ assert(apply_reader_indent(&ctx,3,12)==APP_REDRAW_NONE&&indent==2&&adjustment==-7&&layout_indent==2&&layout_adjustment==-7&&saves==1);
+ assert(book_layout_page_start_offset(s_page)==anchor&&!draw_locked);
+ assert(apply_reader_indent(&ctx,2,21)==APP_REDRAW_NONE&&saves==1);
+
  assert(app_book_request_open("/sdcard/book.epub")&&s_requested_fullscreen&&!s_requested_open_home);
  assert(app_book_request_resume("/sdcard/book.epub",false)&&!s_requested_fullscreen&&s_requested_open_home);
  assert(app_book_request_open_from_home("/sdcard/other.epub")&&s_requested_fullscreen);

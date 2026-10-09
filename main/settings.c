@@ -8,6 +8,8 @@
  * User revision: at least one short key or the middle hold must open the toolbar; refuse removal of the last entry, repair missing entries at boot/restore, and change runtime mappings only after a successful commit.
  * 用户修订：三键短按映射单独持久化；备份v11追加长按映射，旧备份恢复长按全刷。
  * User revision: persist short key mappings; backup v11 adds a checked hold action; older backups retain full-refresh holds.
+ * 用户修订：首行缩进微调-20..20px单独持久化，备份v12追加校验块；旧备份恢复0，不更改密码凭据。
+ * User revision: persist a -20..20px indent adjustment; v12 adds a checked block, legacy backups default to zero and leave PIN credentials intact.
  * NVS load/store. A failed open keeps the deep-sleep default; the
  * partition is not erased.
  */
@@ -64,6 +66,7 @@
 #define NVS_KEY_BOOK_MARGIN "bk_margin"
 #define NVS_KEY_BOOK_TRACK "bk_track"
 #define NVS_KEY_BOOK_INDENT "bk_indent"
+#define NVS_KEY_BOOK_INDENT_ADJUST "bk_indent_adj"
 #define NVS_KEY_BOOK_RULE "bk_rule"
 #define NVS_KEY_BOOK_RULE_OFFSET "bk_rule_y"
 #define NVS_KEY_SHELF_STYLE "shelf_ui"
@@ -106,6 +109,7 @@ static bool s_ble_turner;
 static bool s_shelf_recent_sort;
 static uint8_t s_book_tracking = 2, s_book_reading_line, s_book_rule_offset = 4;
 static uint8_t s_book_indent = 2;
+static uint8_t s_book_indent_adjust = 20;
 static uint8_t s_auto_lock_minutes;
 static uint8_t s_shelf_style = 2;
 static char s_books_dir[MEDIA_DIR_MAX] = "/sdcard/books";
@@ -246,7 +250,7 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_HIDE_IMAGES, &hide_images) == ESP_OK) s_reader_hide_images = hide_images == 1;
     if (nvs_get_u8(h, NVS_KEY_BLE_TURNER, &ble_turner) == ESP_OK) s_ble_turner = ble_turner == 1;
     if (nvs_get_u8(h, NVS_KEY_SHELF_RECENT, &recent_sort) == ESP_OK) s_shelf_recent_sort = recent_sort == 1;
-    uint8_t tracking = 2, reading_line = 0, rule_offset = 4, indent = 2;
+    uint8_t tracking = 2, reading_line = 0, rule_offset = 4, indent = 2, indent_adjust = 20;
     if (nvs_get_u8(h, NVS_KEY_BOOK_TRACK, &tracking) == ESP_OK && tracking <= 4)
         s_book_tracking = tracking;
     if (nvs_get_u8(h, NVS_KEY_BOOK_RULE, &reading_line) == ESP_OK && reading_line <= 2)
@@ -255,6 +259,8 @@ void app_settings_init(void) {
         s_book_rule_offset = rule_offset;
     if (nvs_get_u8(h, NVS_KEY_BOOK_INDENT, &indent) == ESP_OK && indent <= 3)
         s_book_indent = indent;
+    s_book_indent_adjust = nvs_get_u8(h, NVS_KEY_BOOK_INDENT_ADJUST, &indent_adjust) == ESP_OK && indent_adjust <= 40
+        ? indent_adjust : 20;
     uint8_t line = 130, para = 50, margin = 36;
     if (nvs_get_u8(h, NVS_KEY_BOOK_LINE, &line) == ESP_OK) {
         if (line >= 110 && line <= 150) s_book_line = line;
@@ -605,6 +611,12 @@ void app_settings_set_book_indent(uint8_t em) {
     s_book_indent = em;
     nvs_put_u8(NVS_KEY_BOOK_INDENT, em);
 }
+int8_t app_settings_book_indent_adjust(void) { return (int8_t)s_book_indent_adjust - 20; }
+void app_settings_set_book_indent_adjust(int8_t px) {
+    if (px < -20 || px > 20 || px == app_settings_book_indent_adjust()) return;
+    s_book_indent_adjust = (uint8_t)(px + 20);
+    nvs_put_u8(NVS_KEY_BOOK_INDENT_ADJUST, s_book_indent_adjust);
+}
 uint8_t app_settings_book_reading_line(void) { return s_book_reading_line; }
 void app_settings_set_book_reading_line(uint8_t style) {
     if (style > 2 || style == s_book_reading_line) return;
@@ -713,10 +725,20 @@ static bool backup_hold_valid(const settings_backup_hold_t *hold) {
     for (unsigned i = 0; i < 4; ++i) stored |= (uint32_t)hold->checksum[i] << (8 * i);
     return hold->action < APP_READER_KEY_COUNT && stored == backup_hold_checksum(hold);
 }
+// v12 追加独立校验的微调块，保留旧字段偏移与旧备份读取。/ V12 appends a sealed adjustment block, preserving legacy fields and readers.
+typedef struct { uint8_t encoded, checksum[4]; } settings_backup_indent_adjust_t;
+static uint32_t backup_indent_adjust_checksum(const settings_backup_indent_adjust_t *adjust) {
+    return (2166136261u ^ adjust->encoded) * 16777619u;
+}
+static bool backup_indent_adjust_valid(const settings_backup_indent_adjust_t *adjust) {
+    uint32_t stored = 0;
+    for (unsigned i = 0; i < 4; ++i) stored |= (uint32_t)adjust->checksum[i] << (8 * i);
+    return adjust->encoded <= 40 && stored == backup_indent_adjust_checksum(adjust);
+}
 static unsigned backup_version(const settings_backup_v1_t *backup) {
     if (memcmp(backup->magic, "PICOSET", 7)) return 0;
     unsigned char c = backup->magic[7];
-    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : 0;
+    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : 0;
 }
 
 static void backup_erase_secret(void *ptr, size_t size) {
@@ -796,7 +818,7 @@ static bool backup_card_ready(void) {
 esp_err_t app_settings_backup_save(void) {
     if (!backup_card_ready()) return ESP_ERR_INVALID_STATE;
     settings_backup_v1_t backup = {0};
-    memcpy(backup.magic, "PICOSETB", sizeof(backup.magic));
+    memcpy(backup.magic, "PICOSETC", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -849,6 +871,9 @@ esp_err_t app_settings_backup_save(void) {
     settings_backup_hold_t hold = {.action = s_reader_hold_action};
     uint32_t hold_hash = backup_hold_checksum(&hold);
     for (unsigned i = 0; i < 4; ++i) hold.checksum[i] = (uint8_t)(hold_hash >> (8 * i));
+    settings_backup_indent_adjust_t adjust = {.encoded = s_book_indent_adjust};
+    uint32_t adjust_hash = backup_indent_adjust_checksum(&adjust);
+    for (unsigned i = 0; i < 4; ++i) adjust.checksum[i] = (uint8_t)(adjust_hash >> (8 * i));
     settings_backup_wifi_t wifi = {0};
     esp_err_t wifi_err = read_pico_transfer_export_wifi_backup(&wifi.credentials);
     if (wifi_err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); return wifi_err; }
@@ -861,6 +886,7 @@ esp_err_t app_settings_backup_save(void) {
     if (ok) ok = fwrite(&profile, 1, sizeof(profile), file) == sizeof(profile);
     if (ok) ok = fwrite(&keys, 1, sizeof(keys), file) == sizeof(keys);
     if (ok) ok = fwrite(&hold, 1, sizeof(hold), file) == sizeof(hold);
+    if (ok) ok = fwrite(&adjust, 1, sizeof(adjust), file) == sizeof(adjust);
     if (ok) ok = fwrite(&wifi, 1, sizeof(wifi), file) == sizeof(wifi);
     backup_erase_secret(&wifi, sizeof(wifi));
     if (ok) ok = book_history_backup_write(file) == ESP_OK;
@@ -937,6 +963,7 @@ esp_err_t app_settings_backup_restore(void) {
     unsigned version = ok ? backup_version(&backup) : 0;
     settings_backup_hold_t hold = {.action = APP_READER_KEY_REFRESH};
     uint8_t indent = 2, rule_offset = 4, staged_shutdown = 0;
+    settings_backup_indent_adjust_t adjust = {.encoded = 20};
     settings_backup_profile_t profile = {.device_name = "Pico"};
     settings_backup_keys_t keys = {.actions = {APP_READER_KEY_PREV, APP_READER_KEY_TOOLS, APP_READER_KEY_NEXT}};
     settings_backup_wifi_t wifi = {0};
@@ -992,6 +1019,8 @@ esp_err_t app_settings_backup_restore(void) {
         ok = fread(&keys, 1, sizeof(keys), file) == sizeof(keys) && backup_keys_valid(&keys);
     if (ok && version >= 11)
         ok = fread(&hold, 1, sizeof(hold), file) == sizeof(hold) && backup_hold_valid(&hold);
+    if (ok && version >= 12)
+        ok = fread(&adjust, 1, sizeof(adjust), file) == sizeof(adjust) && backup_indent_adjust_valid(&adjust);
     long history_position = -1;
     has_wifi = ok && version >= 7;
     if (has_wifi) ok = fread(&wifi, 1, sizeof(wifi), file) == sizeof(wifi) && backup_wifi_valid(&wifi);
@@ -1058,6 +1087,7 @@ esp_err_t app_settings_backup_restore(void) {
     BACKUP_SET_U8(NVS_KEY_IMMERSIVE, BK_IMMERSIVE);
     BACKUP_SET_U8(NVS_KEY_BOOK_TRACK, BK_TRACKING);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_INDENT, indent);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_INDENT_ADJUST, adjust.encoded);
     BACKUP_SET_U8(NVS_KEY_BOOK_RULE, BK_READING_LINE);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_RULE_OFFSET, rule_offset);
     BACKUP_SET_U8(NVS_KEY_BOOK_LINE, BK_LINE_SPACING);
@@ -1104,6 +1134,7 @@ esp_err_t app_settings_backup_restore(void) {
     s_reader_immersive = f[BK_IMMERSIVE];
     s_book_tracking = f[BK_TRACKING];
     s_book_indent = indent;
+    s_book_indent_adjust = adjust.encoded;
     s_book_reading_line = f[BK_READING_LINE];
     s_book_rule_offset = rule_offset;
     s_book_line = f[BK_LINE_SPACING];

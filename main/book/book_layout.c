@@ -29,6 +29,7 @@ static int s_px;
 static unsigned s_line_percent = 150, s_paragraph_percent = 50;
 static int s_tracking_px;
 static unsigned s_first_line_indent_em = 2;
+static int s_first_line_indent_adjust_px;
 static unsigned s_reading_line;
 static int s_reading_line_offset;
 static bool s_images_visible = true;
@@ -192,6 +193,9 @@ void book_layout_set_typography(int tracking_px) {
 void book_layout_set_first_line_indent(unsigned em) {
     s_first_line_indent_em = em <= 3 ? em : 2;
 }
+void book_layout_set_first_line_indent_adjust(int px) {
+    s_first_line_indent_adjust_px = px >= -20 && px <= 20 ? px : 0;
+}
 EpdRect book_layout_balanced_rect(EpdRect outer, int px, int tracking_px) {
     if (px <= 0 || outer.width < px || tracking_px < -4 || tracking_px > 4) return outer;
     int step = px + tracking_px;
@@ -337,6 +341,8 @@ static bool take_line(size_t off, size_t* next, bool* paragraph_end, int* px, bo
         advance += s_tracking_px;
         if (advance < 1) advance = 1;
         *indent = advance * (int)s_first_line_indent_em;
+        if (s_first_line_indent_em) *indent += s_first_line_indent_adjust_px;
+        if (*indent < 0) *indent = 0;
     }
     if (*indent >= s_rect.width) *indent = s_rect.width > 1 ? s_rect.width - 1 : 0;
     if (*indent + *px > s_rect.width) *indent = 0;

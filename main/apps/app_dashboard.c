@@ -365,8 +365,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         snprintf(value, sizeof(value), "累计 %llu 分钟", (unsigned long long)(sum / 60));
     ui_text_vc(fb, 648, 643, 20, value, EPD_DRAW_ALIGN_RIGHT, false);
     ui_fill_round_rect(fb, (EpdRect){36, 698, 612, 334}, 25, UI_GRAY_WHITE);
-    ui_draw_round_rect(fb, (EpdRect){36, 698, 612, 334}, 25, 0x70);
-    ui_draw_round_rect(fb, (EpdRect){37, 699, 610, 332}, 24, 0x70);
+    ui_draw_control_frame(fb, (EpdRect){36, 698, 612, 334}, 25, 0x50);
     ui_text_vc(fb, 62, 743, 22, "每天阅读时长", EPD_DRAW_ALIGN_LEFT, false);
     uint64_t average_minutes = (sum + 210) / 420;
     if (average_minutes >= 60)

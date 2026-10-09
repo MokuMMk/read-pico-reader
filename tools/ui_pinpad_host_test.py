@@ -76,15 +76,10 @@ int main(int argc,char **argv){
  memset(bg,255,684*1216/2);FILE *background=fopen(argv[2],"rb");if(background){for(int y=0;y<1216;++y)for(int x=0;x<684;++x){int v=fgetc(background);assert(v>=0);epd_draw_pixel(x,y,v,bg);}fclose(background);}else for(int y=0;y<1216;++y)for(int x=0;x<684;++x)epd_draw_pixel(x,y,((x/52+y/48)&1)?240:32,bg);
  ui_pinpad_t pad={0};ui_pinpad_begin(&pad,bg,"输入密码");assert(pad.background&&pad.pressed==-1&&!pad.count);
  ui_pinpad_paint(fb,&pad,ui_pinpad_full());save(argv[3],fb);
- // 入场仅改变下部底图；最终画面逐像素等于直接绘制，缓存及常驻内存不增长。
- // Entry changes only lower artwork; its final pixels match direct painting, with no cache or resident memory growth.
+ // 同一完整密码页重画保持像素与缓存不变；输入只修改控件。/ Repainting the final PIN page retains pixels/cache; input updates controls only.
  memcpy(old,fb,684*1216/2);size_t before_entry=live;
- ui_pinpad_paint_entry(fb,&pad,bg,144);save(argv[5],fb);assert(live==before_entry);
- unsigned changes=0;for(int y=0;y<1216;++y)for(int x=0;x<684;++x){if(y<470)assert(pixel(old,x,y)==pixel(fb,x,y));else changes+=pixel(old,x,y)!=pixel(fb,x,y);}
- assert(changes>0);assert(pixel(old,342,703)==pixel(fb,342,703));
- ui_pinpad_paint(fb,&pad,ui_pinpad_backdrop_area());assert(!memcmp(old,fb,684*1216/2)&&live==before_entry);
- ui_pinpad_paint_entry(fb,&pad,bg,255);assert(!memcmp(old,fb,684*1216/2));
- ui_pinpad_paint_entry(fb,&pad,NULL,144);assert(!memcmp(old,fb,684*1216/2));
+ ui_pinpad_paint(fb,&pad,ui_pinpad_full());save(argv[5],fb);
+ assert(!memcmp(old,fb,684*1216/2)&&live==before_entry);
  uint8_t *back=malloc(684*1216/2);memcpy(back,pad.background,684*1216/2);size_t resident=live;
  EpdRect dirty;memcpy(old,fb,684*1216/2);assert(event(&pad,UI_GESTURE_PRESS,342,703,&dirty)==UI_PIN_CHANGED&&pad.pressed==5&&pad.count==0);
  ui_pinpad_paint_input(fb,&pad);save(argv[4],fb);assert(live==resident&&!memcmp(back,pad.background,684*1216/2));

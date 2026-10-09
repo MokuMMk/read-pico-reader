@@ -195,6 +195,11 @@ int main(void) {
     rect_eq(ui_rect_union((EpdRect){680,1210,INT_MAX,INT_MAX}, (EpdRect){0}), 680,1210,4,6);
     rect_eq(ui_rect_union((EpdRect){INT_MIN,INT_MIN,10,10}, (EpdRect){0}), 0,0,0,0);
     uint8_t fb[W * H]; memset(fb, UI_GRAY_WHITE, sizeof(fb));
+    ui_draw_control_frame(fb,(EpdRect){10,10,60,40},0,0xa0);
+    assert(fb[10*W+30]<128&&fb[11*W+30]<128&&fb[12*W+30]==255);
+    ui_draw_separator(fb,70,10,60,0xa0);assert(fb[70*W+30]<128&&fb[71*W+30]<128&&fb[72*W+30]==255);
+    ui_draw_round_rect(fb,(EpdRect){80,10,10,40},0,0xa0);assert(fb[10*W+85]>=128);
+    memset(fb,UI_GRAY_WHITE,sizeof(fb));
     ui_draw_pressed_round_rect(fb, (EpdRect){10,10,60,40}, 0);
     assert(fb[30 * W + 40] == UI_GRAY_LIGHT);
     assert(fb[30 * W + 14] == UI_GRAY_BLACK && fb[30 * W + 16] == UI_GRAY_BLACK);

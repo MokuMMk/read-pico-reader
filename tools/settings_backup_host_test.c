@@ -68,6 +68,8 @@ static uint8_t loaded_main_mode;
 static bool has_main_mode;
 static uint8_t loaded_hold=APP_READER_KEY_REFRESH;
 static bool has_hold;
+static uint8_t loaded_adjust=20;
+static bool has_adjust;
 static uint8_t loaded_keys[3];
 static bool has_keys[3];
 static int loaded_shelf=-1, loaded_lock=-1;
@@ -77,8 +79,8 @@ esp_err_t nvs_flash_init(void) { return ESP_OK; }
 esp_err_t nvs_flash_erase(void) { return ESP_OK; }
 esp_err_t nvs_open(const char *ns, int mode, nvs_handle_t *h) { (void)ns; (void)mode; *h = 1; return ESP_OK; }
 void nvs_close(nvs_handle_t h) { (void)h; }
-esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; if(!strcmp(key,NVS_KEY_SHELF_STYLE)&&loaded_shelf>=0){*value=(uint8_t)loaded_shelf;return ESP_OK;} if(!strcmp(key,NVS_KEY_SHELF_V22)&&loaded_shelf_v22){*value=1;return ESP_OK;} if(!strcmp(key,NVS_KEY_LOCK_STYLE)&&loaded_lock>=0){*value=(uint8_t)loaded_lock;return ESP_OK;} if(!strcmp(key,NVS_KEY_HOLD_ACTION)&&has_hold){*value=loaded_hold;return ESP_OK;} for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])&&has_keys[i]){*value=loaded_keys[i];return ESP_OK;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH) && has_main_mode) { *value=loaded_main_mode;return ESP_OK; } if (!strcmp(key, "ui_fast")) { *value = test_loaded_fast; return ESP_OK; } if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } return ESP_FAIL; }
-esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) { (void)h; if(!strcmp(key,NVS_KEY_SHELF_STYLE))loaded_shelf=value; if(!strcmp(key,NVS_KEY_SHELF_V22))loaded_shelf_v22=value==1; if(!strcmp(key,NVS_KEY_LOCK_STYLE))loaded_lock=value; if(!strcmp(key,NVS_KEY_HOLD_ACTION)){loaded_hold=value;has_hold=true;} for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])){loaded_keys[i]=value;has_keys[i]=true;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH)) {has_main_mode=true;loaded_main_mode=value;} if (!strcmp(key, "ui_fast")) test_loaded_fast=value; return ESP_OK; }
+esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; if(!strcmp(key,NVS_KEY_BOOK_INDENT_ADJUST)&&has_adjust){*value=loaded_adjust;return ESP_OK;} if(!strcmp(key,NVS_KEY_SHELF_STYLE)&&loaded_shelf>=0){*value=(uint8_t)loaded_shelf;return ESP_OK;} if(!strcmp(key,NVS_KEY_SHELF_V22)&&loaded_shelf_v22){*value=1;return ESP_OK;} if(!strcmp(key,NVS_KEY_LOCK_STYLE)&&loaded_lock>=0){*value=(uint8_t)loaded_lock;return ESP_OK;} if(!strcmp(key,NVS_KEY_HOLD_ACTION)&&has_hold){*value=loaded_hold;return ESP_OK;} for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])&&has_keys[i]){*value=loaded_keys[i];return ESP_OK;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH) && has_main_mode) { *value=loaded_main_mode;return ESP_OK; } if (!strcmp(key, "ui_fast")) { *value = test_loaded_fast; return ESP_OK; } if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } return ESP_FAIL; }
+esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) { (void)h; if(!strcmp(key,NVS_KEY_BOOK_INDENT_ADJUST)){loaded_adjust=value;has_adjust=true;} if(!strcmp(key,NVS_KEY_SHELF_STYLE))loaded_shelf=value; if(!strcmp(key,NVS_KEY_SHELF_V22))loaded_shelf_v22=value==1; if(!strcmp(key,NVS_KEY_LOCK_STYLE))loaded_lock=value; if(!strcmp(key,NVS_KEY_HOLD_ACTION)){loaded_hold=value;has_hold=true;} for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])){loaded_keys[i]=value;has_keys[i]=true;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH)) {has_main_mode=true;loaded_main_mode=value;} if (!strcmp(key, "ui_fast")) test_loaded_fast=value; return ESP_OK; }
 esp_err_t nvs_get_str(nvs_handle_t h, const char *key, char *value, size_t *size) { (void)h; (void)key; (void)value; (void)size; return ESP_FAIL; }
 esp_err_t nvs_set_str(nvs_handle_t h, const char *key, const char *value) { (void)h; (void)key; (void)value; return ESP_OK; }
 esp_err_t nvs_erase_key(nvs_handle_t h, const char *key) { (void)h; (void)key; return ESP_OK; }
@@ -88,6 +90,12 @@ int main(void) {
     assert(app_settings_system_contrast() == 100);
     assert(app_settings_book_line_spacing() == 130); /* New installations start at the middle slider stop. */
 
+    assert(app_settings_book_indent_adjust()==0);
+    app_settings_set_book_indent_adjust(-20);assert(loaded_adjust==0);
+    s_book_indent_adjust=20;app_settings_init();assert(app_settings_book_indent_adjust()==-20);
+    app_settings_set_book_indent_adjust(20);app_settings_set_book_indent_adjust(21);assert(loaded_adjust==40);
+    loaded_adjust=255;app_settings_init();assert(app_settings_book_indent_adjust()==0);
+    app_settings_set_book_indent_adjust(-7);
     has_keys[0]=has_keys[1]=has_keys[2]=true;
     loaded_keys[0]=APP_READER_KEY_PREV;loaded_keys[1]=APP_READER_KEY_HOME;loaded_keys[2]=APP_READER_KEY_NONE;
     app_settings_init();assert(app_settings_reader_key_action(1)==APP_READER_KEY_TOOLS);
@@ -139,6 +147,7 @@ int main(void) {
     s_book_px = 62;
     s_book_tracking = 4;
     s_book_indent = 3;
+    app_settings_set_book_indent_adjust(-7);
     s_book_rule_offset = 7; /* +6 px */
     s_reader_full_pages = 5;
     s_reader_turn_effect = 1;
@@ -169,6 +178,8 @@ int main(void) {
     assert(fread(&saved_keys,1,sizeof(saved_keys),saved)==sizeof(saved_keys) && backup_keys_valid(&saved_keys));
     settings_backup_hold_t saved_hold;
     assert(fread(&saved_hold,1,sizeof(saved_hold),saved)==sizeof(saved_hold) && backup_hold_valid(&saved_hold));
+    settings_backup_indent_adjust_t saved_adjust;
+    assert(fread(&saved_adjust,1,sizeof(saved_adjust),saved)==sizeof(saved_adjust)&&backup_indent_adjust_valid(&saved_adjust));
     settings_backup_wifi_t saved_network;
     assert(fread(&saved_network, 1, sizeof(saved_network), saved) == sizeof(saved_network));
     assert(fclose(saved) == 0);
@@ -195,18 +206,25 @@ int main(void) {
     memset(&saved_wifi, 0, sizeof(saved_wifi));
     saved = fopen(BACKUP_FILE, "r+b");
     assert(saved && fseek(saved, sizeof(settings_backup_v1_t) + 7 +
-                            sizeof(settings_backup_profile_t) + sizeof(settings_backup_keys_t) + sizeof(settings_backup_hold_t) +
+                            sizeof(settings_backup_profile_t) + sizeof(settings_backup_keys_t) + sizeof(settings_backup_hold_t) + sizeof(settings_backup_indent_adjust_t) +
                             offsetof(settings_backup_wifi_t, credentials.password), SEEK_SET) == 0);
     assert(fputc('X', saved) != EOF && fclose(saved) == 0);
     assert(app_settings_backup_restore() == ESP_ERR_INVALID_RESPONSE);
     assert(!saved_wifi.configured && wifi_imports == 0);
     saved = fopen(BACKUP_FILE, "r+b");
     assert(saved && fseek(saved, sizeof(settings_backup_v1_t) + 7 +
-                            sizeof(settings_backup_profile_t) + sizeof(settings_backup_keys_t) + sizeof(settings_backup_hold_t), SEEK_SET) == 0);
+                            sizeof(settings_backup_profile_t) + sizeof(settings_backup_keys_t) + sizeof(settings_backup_hold_t) + sizeof(settings_backup_indent_adjust_t), SEEK_SET) == 0);
     assert(fwrite(&saved_network, 1, sizeof(saved_network), saved) == sizeof(saved_network));
     assert(fclose(saved) == 0);
     // 映射损坏或截断必须在任何设置/网络/阅读资料写入前拒绝。
     // Reject damaged mappings before writing settings, networks or history.
+    long adjust_at=sizeof(settings_backup_v1_t)+7+sizeof(settings_backup_profile_t)+sizeof(settings_backup_keys_t)+sizeof(settings_backup_hold_t);
+    saved=fopen(BACKUP_FILE,"r+b");assert(saved&&fseek(saved,adjust_at,SEEK_SET)==0);
+    assert(fputc(41,saved)!=EOF&&fclose(saved)==0);
+    int before_bad_adjust=commit_count;assert(app_settings_backup_restore()==ESP_ERR_INVALID_RESPONSE);
+    assert(commit_count==before_bad_adjust&&wifi_imports==0&&history_restores==0);
+    saved=fopen(BACKUP_FILE,"r+b");assert(saved&&fseek(saved,adjust_at,SEEK_SET)==0);
+    assert(fwrite(&saved_adjust,1,sizeof(saved_adjust),saved)==sizeof(saved_adjust)&&fclose(saved)==0);
     long keys_at=sizeof(settings_backup_v1_t)+7+sizeof(settings_backup_profile_t);
     saved=fopen(BACKUP_FILE,"r+b");assert(saved&&fseek(saved,keys_at,SEEK_SET)==0);
     assert(fputc(APP_READER_KEY_COUNT,saved)!=EOF&&fclose(saved)==0);
@@ -225,6 +243,7 @@ int main(void) {
     s_book_px = 48;
     s_book_tracking = 2;
     s_book_indent = 0;
+    s_book_indent_adjust = 40;
     s_book_rule_offset = 4;
     s_reader_full_pages = 15;
     s_reader_turn_effect = 0;
@@ -254,6 +273,7 @@ int main(void) {
     assert(wifi_imports == 1 && saved_wifi.configured &&
            !strcmp(saved_wifi.ssid, "Home_2.4G") &&
            !strcmp(saved_wifi.password, "password123"));
+    assert(app_settings_book_indent_adjust()==-7&&loaded_adjust==13);
     assert(s_book_px == 62 && s_book_tracking == 4 && s_book_indent == 3 &&
            s_book_rule_offset == 7 && s_reader_full_pages == 5);
     assert(s_reader_turn_effect == 1 && s_reader_power_turn && s_reader_immersive && s_shelf_style == 2);
@@ -273,6 +293,35 @@ int main(void) {
     assert(app_settings_backup_save()==ESP_OK);
     app_settings_set_main_refresh_mode(APP_MAIN_REFRESH_NORMAL);
     assert(app_settings_backup_restore()==ESP_OK&&app_settings_main_fast_refresh());
+    // v11 没有微调块；保留映射、网络及阅读记录，微调安全回到0。
+    // V11 lacks the adjustment block; retain keys/network/history, defaulting adjustment to zero.
+    saved=fopen(BACKUP_FILE,"r+b");assert(saved);
+    assert(fread(&legacy_header,1,sizeof(legacy_header),saved)==sizeof(legacy_header));
+    assert(fread(legacy_ext,1,sizeof(legacy_ext),saved)==sizeof(legacy_ext));
+    assert(fread(&saved_profile,1,sizeof(saved_profile),saved)==sizeof(saved_profile));
+    assert(fread(&saved_keys,1,sizeof(saved_keys),saved)==sizeof(saved_keys));
+    assert(fread(&saved_hold,1,sizeof(saved_hold),saved)==sizeof(saved_hold));
+    long v11_adjust_at=ftell(saved);
+    assert(fseek(saved,(long)sizeof(settings_backup_indent_adjust_t),SEEK_CUR)==0);
+    long v11_network_at=ftell(saved);assert(fseek(saved,0,SEEK_END)==0);long v12_end=ftell(saved);
+    size_t v11_tail_bytes=(size_t)(v12_end-v11_network_at);uint8_t *v11_tail=malloc(v11_tail_bytes);assert(v11_tail);
+    assert(fseek(saved,v11_network_at,SEEK_SET)==0&&fread(v11_tail,1,v11_tail_bytes,saved)==v11_tail_bytes);
+    memcpy(legacy_header.magic,"PICOSETB",8);backup_seal(&legacy_header);
+    uint32_t v11_hash=backup_shutdown_checksum(&legacy_header,legacy_ext[0],legacy_ext[1],legacy_ext[2]);
+    for(int i=0;i<4;++i)legacy_ext[i+3]=(uint8_t)(v11_hash>>(8*i));
+    v11_hash=backup_profile_checksum(&legacy_header,legacy_ext[0],legacy_ext[1],legacy_ext[2],&saved_profile);
+    for(int i=0;i<4;++i)saved_profile.checksum[i]=(uint8_t)(v11_hash>>(8*i));
+    rewind(saved);assert(fwrite(&legacy_header,1,sizeof(legacy_header),saved)==sizeof(legacy_header));
+    assert(fwrite(legacy_ext,1,sizeof(legacy_ext),saved)==sizeof(legacy_ext));
+    assert(fwrite(&saved_profile,1,sizeof(saved_profile),saved)==sizeof(saved_profile));
+    assert(fwrite(&saved_keys,1,sizeof(saved_keys),saved)==sizeof(saved_keys));
+    assert(fwrite(&saved_hold,1,sizeof(saved_hold),saved)==sizeof(saved_hold));
+    assert(ftell(saved)==v11_adjust_at&&fwrite(v11_tail,1,v11_tail_bytes,saved)==v11_tail_bytes);free(v11_tail);
+    assert(fflush(saved)==0&&ftruncate(fileno(saved),v12_end-(long)sizeof(settings_backup_indent_adjust_t))==0&&fclose(saved)==0);
+    app_settings_set_book_indent_adjust(12);
+    assert(app_settings_backup_restore()==ESP_OK&&app_settings_book_indent_adjust()==0&&loaded_adjust==20);
+    assert(app_settings_reader_hold_action()==saved_hold.action&&app_settings_reader_key_action(0)==saved_keys.actions[0]);
+    assert(app_settings_backup_save()==ESP_OK);
     // v10 按键/网络/阅读数据不变；缺少长按块时恢复默认全刷。
     // Preserve v10 mappings/network/history; absent hold blocks default to refresh.
     saved=fopen(BACKUP_FILE,"r+b");assert(saved);
@@ -280,7 +329,7 @@ int main(void) {
     assert(fread(legacy_ext,1,sizeof(legacy_ext),saved)==sizeof(legacy_ext));
     assert(fread(&saved_profile,1,sizeof(saved_profile),saved)==sizeof(saved_profile));
     assert(fread(&saved_keys,1,sizeof(saved_keys),saved)==sizeof(saved_keys));
-    long v10_tail_start=ftell(saved)+(long)sizeof(settings_backup_hold_t);
+    long v10_tail_start=ftell(saved)+(long)sizeof(settings_backup_hold_t)+(long)sizeof(settings_backup_indent_adjust_t);
     assert(fseek(saved,0,SEEK_END)==0);long v11_end=ftell(saved);
     size_t v10_tail_size=(size_t)(v11_end-v10_tail_start);uint8_t *v10_tail=malloc(v10_tail_size);assert(v10_tail);
     assert(fseek(saved,v10_tail_start,SEEK_SET)==0&&fread(v10_tail,1,v10_tail_size,saved)==v10_tail_size);
@@ -297,10 +346,10 @@ int main(void) {
     assert(fwrite(&saved_profile,1,sizeof(saved_profile),saved)==sizeof(saved_profile));
     assert(fwrite(&saved_keys,1,sizeof(saved_keys),saved)==sizeof(saved_keys));
     assert(fwrite(v10_tail,1,v10_tail_size,saved)==v10_tail_size);free(v10_tail);assert(fflush(saved)==0);
-    assert(ftruncate(fileno(saved),v11_end-(long)sizeof(settings_backup_hold_t))==0&&fclose(saved)==0);
+    assert(ftruncate(fileno(saved),v11_end-(long)sizeof(settings_backup_hold_t)-(long)sizeof(settings_backup_indent_adjust_t))==0&&fclose(saved)==0);
     unsigned prior_wifi=wifi_imports,prior_history=history_restores;
     s_reader_hold_action=APP_READER_KEY_HOME;assert(app_settings_backup_restore()==ESP_OK);
-    assert(app_settings_reader_hold_action()==APP_READER_KEY_REFRESH && app_settings_main_fast_refresh());
+    assert(app_settings_reader_hold_action()==APP_READER_KEY_REFRESH && app_settings_main_fast_refresh() && app_settings_book_indent_adjust()==0);
     assert(wifi_imports==prior_wifi+1&&history_restores==prior_history+1);
     assert(app_settings_reader_key_action(0)==saved_keys.actions[0]&&app_settings_reader_key_action(1)==APP_READER_KEY_TOOLS&&app_settings_reader_key_action(2)==saved_keys.actions[2]);
     assert(app_settings_backup_save()==ESP_OK); // Continue v8 conversion from current v11.
@@ -316,7 +365,7 @@ int main(void) {
     saved_profile.home_full_refresh=(saved_profile.home_full_refresh&127)|64;
     legacy_hash=backup_profile_checksum(&legacy_header,legacy_ext[0],legacy_ext[1],legacy_ext[2],&saved_profile);
     for(int i=0;i<4;++i)saved_profile.checksum[i]=(uint8_t)(legacy_hash>>(i*8));
-    long tail_start=ftell(saved)+(long)sizeof(settings_backup_keys_t)+(long)sizeof(settings_backup_hold_t);
+    long tail_start=ftell(saved)+(long)sizeof(settings_backup_keys_t)+(long)sizeof(settings_backup_hold_t)+(long)sizeof(settings_backup_indent_adjust_t);
     assert(fseek(saved,0,SEEK_END)==0);long file_end=ftell(saved);
     size_t tail_size=(size_t)(file_end-tail_start);uint8_t *tail=malloc(tail_size);assert(tail);
     assert(fseek(saved,tail_start,SEEK_SET)==0&&fread(tail,1,tail_size,saved)==tail_size);
@@ -324,7 +373,7 @@ int main(void) {
     assert(fwrite(legacy_ext,1,sizeof(legacy_ext),saved)==sizeof(legacy_ext));
     assert(fwrite(&saved_profile,1,sizeof(saved_profile),saved)==sizeof(saved_profile));
     assert(fwrite(tail,1,tail_size,saved)==tail_size);free(tail);assert(fflush(saved)==0);
-    assert(ftruncate(fileno(saved),file_end-(long)sizeof(settings_backup_keys_t)-(long)sizeof(settings_backup_hold_t))==0);assert(fclose(saved)==0);
+    assert(ftruncate(fileno(saved),file_end-(long)sizeof(settings_backup_keys_t)-(long)sizeof(settings_backup_hold_t)-(long)sizeof(settings_backup_indent_adjust_t))==0);assert(fclose(saved)==0);
     assert(app_settings_backup_restore()==ESP_OK&&app_settings_main_refresh_mode()==APP_MAIN_REFRESH_NORMAL);
     assert(app_settings_reader_key_action(0)==APP_READER_KEY_PREV && app_settings_reader_key_action(1)==APP_READER_KEY_TOOLS && app_settings_reader_key_action(2)==APP_READER_KEY_NEXT);
     assert(app_settings_reader_hold_action()==APP_READER_KEY_REFRESH);

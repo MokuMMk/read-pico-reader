@@ -285,6 +285,7 @@ static int app_settings_book_line_spacing(void){return 130;}
 static int app_settings_book_paragraph_spacing(void){return 50;}
 static int app_settings_book_tracking(void){return 2;}
 static int app_settings_book_indent(void){return 2;}
+static int app_settings_book_indent_adjust(void){return 0;}
 static int app_settings_book_reading_line(void){return 0;}
 static int app_settings_book_reading_line_offset(void){return 0;}
 static bool app_settings_reader_immersive(void){return test_reader_immersive;}
@@ -293,6 +294,7 @@ static bool app_settings_reader_hide_images(void){return test_hide_images;}
 static void book_layout_set_spacing(int line,int para){(void)line;(void)para;}
 static void book_layout_set_typography(int tracking){(void)tracking;}
 static void book_layout_set_first_line_indent(unsigned em){(void)em;}
+static void book_layout_set_first_line_indent_adjust(int px){(void)px;}
 static void book_layout_set_reading_line(int style){(void)style;}
 static void book_layout_set_reading_line_offset(int offset){(void)offset;}
 static void book_layout_set_images_visible(bool visible){test_images_visible=visible;}

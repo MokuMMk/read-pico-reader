@@ -474,10 +474,24 @@ EpdRect ui_inset_rect(EpdRect r, int d) {
     };
 }
 
+void ui_draw_control_frame(uint8_t* framebuffer, EpdRect rect, int radius, uint8_t color) {
+    // 在字形/封面量化前把结构线限制为深灰；双像素线保持原矩形内边界，不扩展刷新范围。
+    // Keep structural ink dark before glyph/cover quantization; two pixels stay inside the original frame and refresh bounds.
+    const uint8_t ink = color > 0x50 ? 0x50 : color;
+    ui_draw_round_rect(framebuffer, rect, radius, ink);
+    if (rect.width > 2 && rect.height > 2)
+        ui_draw_round_rect(framebuffer, ui_inset_rect(rect, 1), radius > 0 ? radius - 1 : 0, ink);
+}
+
+void ui_draw_separator(uint8_t* framebuffer, int y, int x, int width, uint8_t color) {
+    if (width <= 0) return;
+    epd_fill_rect((EpdRect){x, y, width, 2}, ui_contrast_gray(color > 0x60 ? 0x60 : color), framebuffer);
+}
+
 void ui_draw_selected_round_rect(
     uint8_t* framebuffer, EpdRect rect, int radius
 ) {
-    ui_draw_round_rect(framebuffer, rect, radius, UI_GRAY_BLACK);
+    ui_draw_control_frame(framebuffer, rect, radius, UI_GRAY_BLACK);
     for (int i = 0; i < UI_SEL_RING; i++) {
         int d = UI_SEL_INSET + i;
         EpdRect inner = ui_inset_rect(rect, d);
@@ -494,7 +508,7 @@ void ui_draw_choice_round_rect(
     if (on) {
         ui_draw_selected_round_rect(framebuffer, rect, radius);
     } else {
-        ui_draw_round_rect(framebuffer, rect, radius, UI_GRAY_BLACK);
+        ui_draw_control_frame(framebuffer, rect, radius, UI_GRAY_BLACK);
     }
 }
 
@@ -802,7 +816,7 @@ void ui_draw_chip(
     if (on) {
         ui_draw_selected_round_rect(framebuffer, rect, UI_CHIP_RADIUS);
     } else {
-        ui_draw_round_rect(framebuffer, rect, UI_CHIP_RADIUS, UI_GRAY_LIGHT);
+        ui_draw_control_frame(framebuffer, rect, UI_CHIP_RADIUS, UI_GRAY_LIGHT);
     }
     ui_text_vc(
         framebuffer, rect.x + rect.width / 2, rect.y + rect.height / 2,
@@ -1374,7 +1388,7 @@ static EpdRect no_font_card_rect(int y) {
 static void draw_bmp_card(
     uint8_t* framebuffer, EpdRect card, const ui_fallback_bmp_t* bmp
 ) {
-    ui_draw_round_rect(framebuffer, card, UI_BTN_RADIUS, UI_GRAY_BLACK);
+    ui_draw_control_frame(framebuffer, card, UI_BTN_RADIUS, UI_GRAY_BLACK);
     int x = card.x + (card.width - bmp->width) / 2;
     int y = card.y + (card.height - bmp->height) / 2;
     ui_blit_bmp(framebuffer, x, y, bmp);

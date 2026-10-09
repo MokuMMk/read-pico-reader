@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * 中文：独立锁屏输入循环；禁止触摸键、蓝牙、拿起或冷启动绕过密码。
  * English: Isolated locked-input loop; touch keys, BLE, pickup and cold starts cannot bypass authentication.
- * 冻结：只有摘要校验成功才能返回；模糊缓存只建一次，入场最多两段灰阶，按键只推变化区域。
- * Frozen: Return only after digest verification; build frost once, use at most two gray entry steps and present only changed controls while typing.
+ * 冻结：只有摘要校验成功才能返回；模糊缓存只建一次，入场只推一次灰阶，按键只推变化区域。
+ * Frozen: Return only after digest verification; build frost once, present entry once and update only changed controls while typing.
  */
 #include "lock_screen.h"
 #include "lock_pin.h"
@@ -62,17 +62,7 @@ static void present_input(EpdiyHighlevelState *hl,EpdRect area){
     guard_draw_result(hl,result);
     if(result!=EPD_DRAW_SUCCESS)present(hl,ui_pinpad_full());
 }
-static void present_pin_entry(EpdiyHighlevelState *hl,const ui_pinpad_t *pad,const uint8_t *original,bool animate){
-    uint8_t *fb=epd_hl_get_framebuffer(hl);
-    if(!animate||!original||!pad->background){ui_pinpad_paint(fb,pad,ui_pinpad_full());present(hl,ui_pinpad_full());return;}
-    // 复用原图和缓存底图；两次同步差分之间不加等待，不在输入过程中补刷灰阶。
-    // Reuse original and cached artwork: two synchronous differences, no artificial delay or deferred gray refresh while typing.
-    ui_pinpad_paint_entry(fb,pad,original,144);
-    epd_poweron();enum EpdDrawError result=update_display_area_diff_with(hl,&E0470_WAVEFORM,MODE_GL16,ui_pinpad_full());
-    guard_draw_result(hl,result);
-    if(result!=EPD_DRAW_SUCCESS){ui_pinpad_paint(fb,pad,ui_pinpad_full());present(hl,ui_pinpad_full());return;}
-    ui_pinpad_paint(fb,pad,ui_pinpad_backdrop_area());present(hl,ui_pinpad_backdrop_area());
-}
+
 void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7a20h_handle_t acc,bool boot){
     uint8_t *fb=epd_hl_get_framebuffer(hl);
     (void)ble_pt_stop(2000);
@@ -97,7 +87,8 @@ void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7
         ui_pinpad_reset(&pad,"输入密码",lock_pin_available()?"":"凭据读取失败，请重启后重试");
         if(!lock_pin_available())pad.blocked=true;
         else if(esp_timer_get_time()/1000<retry_at){pad.blocked=true;snprintf(pad.notice,sizeof(pad.notice),"请等待 10 秒后重试");}
-        present_pin_entry(hl,&pad,original,waiting);
+        // 直接推送完整密码画面一次，不再补刷第二段背景。/ Present the complete PIN screen once, without a second backdrop stage.
+        ui_pinpad_paint(fb,&pad,ui_pinpad_full());present(hl,ui_pinpad_full());
         // 密码等待不是启动失败；待验证时保留一次性恢复，不提前开书。
         // Waiting for a PIN is not a failed boot; hold one-shot resume without opening the book.
         if(boot){pico_boot_ready();pico_boot_hold_resume();boot=false;}

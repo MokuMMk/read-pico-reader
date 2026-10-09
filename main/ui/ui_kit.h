@@ -176,6 +176,10 @@ void ui_draw_icon(
 void ui_draw_round_rect(
     uint8_t* framebuffer, EpdRect rect, int radius, uint8_t color
 );
+/// 控件外框用深色双像素线，黑白快刷后不消失；封面及图标仍用原绘图接口。/ Use a dark two-pixel control frame that survives BW refresh; covers and icons retain the original primitives.
+void ui_draw_control_frame(uint8_t* framebuffer, EpdRect rect, int radius, uint8_t color);
+/// 深色双像素结构分隔线；装饰性细线仍用ui_hairline。/ Dark two-pixel structural separator; retain ui_hairline for decorative rules.
+void ui_draw_separator(uint8_t* framebuffer, int y, int x, int width, uint8_t color);
 /// 选中：外框保留，内缩一圈加粗，不整块填黑，减轻残影。
 /// Selected: keep the outer frame and thicken an inset ring; do not fill solid black, which ghosts.
 void ui_draw_selected_round_rect(uint8_t* framebuffer, EpdRect rect, int radius);

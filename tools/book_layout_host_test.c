@@ -279,6 +279,28 @@ int main(void) {
             }
         }
     }
+    book_layout_set_first_line_indent(2);book_layout_set_typography(0);
+    test_cjk_advance=33;test_opener_bearing=12;
+    for(int delta=-20;delta<=20;++delta){
+        book_layout_set_first_line_indent_adjust(delta);
+        const char *text="　“甲乙丙丁”";
+        assert(book_layout_build(text,strlen(text),r,48));drawn[0]=0;book_layout_draw_page(&fb,0,r,48);
+        assert(first_draw_x+12==r.x+66+delta&&book_layout_page_start_offset(0)==0);
+    }
+    book_layout_set_first_line_indent(0);book_layout_set_first_line_indent_adjust(20);
+    assert(book_layout_build("甲乙",strlen("甲乙"),r,48));drawn[0]=0;book_layout_draw_page(&fb,0,r,48);assert(first_draw_x==r.x);
+    book_layout_set_first_line_indent(1);test_cjk_advance=10;test_opener_bearing=0;book_layout_set_first_line_indent_adjust(-20);
+    assert(book_layout_build("甲乙",strlen("甲乙"),r,10));drawn[0]=0;book_layout_draw_page(&fb,0,r,10);assert(first_draw_x==r.x);
+    book_layout_set_first_line_indent_adjust(21); // Invalid values reset safely to zero.
+    assert(book_layout_build("甲乙",strlen("甲乙"),r,10));drawn[0]=0;book_layout_draw_page(&fb,0,r,10);assert(first_draw_x==r.x+10);
+    for(int align=0;align<=2;++align){
+        blk_t isolated={.offset=0,.len=strlen("甲乙"),.heading=align==0,.align=(uint8_t)align,.image=-1};
+        book_layout_set_first_line_indent(2);book_layout_set_first_line_indent_adjust(0);
+        assert(book_layout_build_blocks("甲乙",isolated.len,&isolated,1,r,10));drawn[0]=0;book_layout_draw_page(&fb,0,r,10);int original_x=first_draw_x;
+        book_layout_set_first_line_indent_adjust(20);
+        assert(book_layout_build_blocks("甲乙",isolated.len,&isolated,1,r,10));drawn[0]=0;book_layout_draw_page(&fb,0,r,10);assert(first_draw_x==original_x);
+    }
+    book_layout_set_first_line_indent_adjust(0);
     test_cjk_advance = test_opener_bearing = 0;
     book_layout_set_typography(0);
     book_layout_set_first_line_indent(2);

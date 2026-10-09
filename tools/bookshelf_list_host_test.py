@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # 中文：真实列表绘制、原比例封面和双行标题的边界检查与原生预览。
-# English: Native list painting, aspect-fit covers, two-line bounds and a native preview.
+# English: Native list painting, aspect-fill covers, two-line bounds and a native preview.
 import argparse
 from pathlib import Path
 import subprocess
@@ -60,7 +60,7 @@ static uint8_t ui_contrast_gray(uint8_t gray){return gray;}
 '''
  for n in ('_rotate','epd_draw_pixel','epd_get_pixel','epd_draw_hline','epd_draw_vline','epd_fill_rect','epd_draw_circle','epd_fill_circle_helper','epd_fill_circle','epd_write_line','epd_draw_line'):
   unit+=function(n,ROOT/'components/epdiy/src/epdiy.c')+'\n'
- for n in ('clamp_radius','draw_arc','ui_draw_round_rect','ui_fill_round_rect'):unit+=function(n,ROOT/'main/ui/ui_kit.c')+'\n'
+ for n in ('clamp_radius','draw_arc','ui_draw_round_rect','ui_fill_round_rect','ui_inset_rect','ui_draw_control_frame','ui_draw_separator'):unit+=function(n,ROOT/'main/ui/ui_kit.c')+'\n'
  unit+=function('pixel',ROOT/'main/ui/ui_pinpad.c')+'\n'
  unit+='typedef struct {unsigned x,y,width,height;} book_crop_t;\n'
  unit+=function('book_cover_crop',ROOT/'main/book/book_cover.c')+'\n'
@@ -105,12 +105,17 @@ int main(int argc,char **argv){
  ui_text_fixed_vc(fb,36,122,52,"书架",EPD_DRAW_ALIGN_LEFT,false);
  ui_fill_round_rect(fb,(EpdRect){442,94,97,54},18,255);ui_draw_round_rect(fb,(EpdRect){442,94,97,54},18,0x70);ui_text_fixed_vc(fb,490,121,20,"管理",EPD_DRAW_ALIGN_CENTER,false);
  ui_fill_round_rect(fb,(EpdRect){551,94,97,54},18,255);ui_draw_round_rect(fb,(EpdRect){551,94,97,54},18,0x70);ui_text_fixed_vc(fb,599,121,20,"+ 导入",EPD_DRAW_ALIGN_CENTER,false);
- epd_fill_rect((EpdRect){36,195,612,2},0x60,fb);ui_fill_round_rect(fb,(EpdRect){36,216,612,788},20,255);
+ epd_fill_rect((EpdRect){36,195,612,2},0x60,fb);ui_fill_round_rect(fb,(EpdRect){36,216,612,788},20,255);ui_draw_control_frame(fb,(EpdRect){36,216,612,788},20,0x50);
  shelf_entry_t items[4]={{"我与地坛","史铁生",true,true,42},{"十八岁出门远行","余华",true,false,18},{"夏天、烟火和我的尸体","乙一",false,true,0},{"活山","娜恩 · 谢泼德",true,false,100}};
  for(int i=0;i<4;++i){char path[1024];snprintf(path,sizeof(path),"%s/%d.raw",argv[2],i);FILE *f=fopen(path,"rb");assert(f);assert(fread(&s_covers[i].width,4,1,f)==1&&fread(&s_covers[i].height,4,1,f)==1);unsigned bytes=s_covers[i].width*s_covers[i].height;assert(bytes<=176*240);s_covers[i].gray=malloc(bytes);assert(s_covers[i].gray&&fread(s_covers[i].gray,1,bytes,f)==bytes);fclose(f);
  EpdRect r=shelf_cover_image(i);assert(r.x>=64&&r.x+r.width<=198&&r.y>=216+i*197&&r.y+r.height<=216+(i+1)*197);
- assert(abs(r.width*(int)s_covers[i].height-r.height*(int)s_covers[i].width)<=(int)s_covers[i].height);
+ assert(r.x==64&&r.width==134&&r.height==174);
+ book_crop_t crop=book_cover_crop(s_covers[i].width,s_covers[i].height,r.width,r.height);
+ assert(crop.width&&crop.height&&crop.x+crop.width<=s_covers[i].width&&crop.y+crop.height<=s_covers[i].height);
+ assert(abs((int)crop.width*r.height-(int)crop.height*r.width)<=174);
  draw_shelf_cover(fb,row_rect(i),i,items[i].name,items[i].favorite);draw_list_row(fb,i,&items[i]);free(s_covers[i].gray);}
+ for(int row=0;row<3;++row)for(int yy=0;yy<2;++yy)assert(pixel(fb,300,216+row*197+196+yy)<128);
+ assert(pixel(fb,36,260)<128&&pixel(fb,37,260)<128&&pixel(fb,38,260)>=240);
  ui_text_fixed_vc(fb,342,1060,17,"15本书 · 01/04",EPD_DRAW_ALIGN_CENTER,false);
  ui_text_fixed_vc(fb,226,1060,22,"<",EPD_DRAW_ALIGN_CENTER,false);ui_text_fixed_vc(fb,458,1060,22,">",EPD_DRAW_ALIGN_CENTER,false);
  epd_draw_hline(0,1096,684,0x90,fb);epd_fill_rect((EpdRect){224,1097,54,4},0,fb);
@@ -120,7 +125,7 @@ int main(int argc,char **argv){
  // A long title stays in the two-line text region without touching author/progress.
  memset(fb,255,684*1216/2);draw_list_title(fb,"名字很长名字很长名字很长名字很长名字很长名字很长名字很长",258);
  for(int y=0;y<1216;++y)for(int x=0;x<684;++x)if(pixel(fb,x,y)!=240)assert(x>=244&&x<622&&y>=237&&y<313);
- free(fb);ttf_font_unload();puts("PASS: native list painting; uncropped ratios, 4 rows, favorites, progress, two-line UTF-8 bounds");
+ free(fb);ttf_font_unload();puts("PASS: native list painting; uniform boxes, aspect-fill crop, 4 rows, favorites, progress, two-line UTF-8 bounds");
 }
 '''
  (p/'test.c').write_text(unit)

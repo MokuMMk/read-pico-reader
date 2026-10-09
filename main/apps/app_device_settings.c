@@ -443,12 +443,10 @@ static bool time_save(void) {
 
 static void settings_card(uint8_t *fb, EpdRect rect, int radius, uint8_t fill, uint8_t edge) {
     ui_fill_round_rect(fb, rect, radius, fill);
-    ui_draw_round_rect(fb, rect, radius, edge);
-    ui_draw_round_rect(fb, (EpdRect){rect.x + 1, rect.y + 1,
-                                     rect.width - 2, rect.height - 2}, radius - 1, edge);
+    ui_draw_control_frame(fb, rect, radius, edge);
 }
 static void settings_divider(uint8_t *fb, int y, int x, int width) {
-    epd_fill_rect((EpdRect){x, y, width, 2}, 0x78, fb);
+    ui_draw_separator(fb, y, x, width, 0x60);
 }
 static void row(uint8_t *fb, int y, const char *label, const char *value) {
     ui_text(fb, 54, y + 17, 27, label, EPD_DRAW_ALIGN_LEFT, false);
@@ -796,11 +794,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (int i = 0; i < 5; ++i) {
             int x = 36 + i * 122;
             ui_text(fb, x + 52, 300, 24, labels[i], EPD_DRAW_ALIGN_CENTER, false);
-            ui_draw_round_rect(fb, (EpdRect){x, 354, 106, 62}, 8, UI_GRAY_BLACK);
+            ui_draw_control_frame(fb, (EpdRect){x, 354, 106, 62}, 8, UI_GRAY_BLACK);
             ui_text_vc(fb, x + 53, 385, 30, "+", EPD_DRAW_ALIGN_CENTER, false);
             char value[8]; snprintf(value, sizeof(value), i == 0 ? "%04d" : "%02d", values[i]);
             ui_text(fb, x + 53, 456, i == 0 ? 34 : 39, value, EPD_DRAW_ALIGN_CENTER, false);
-            ui_draw_round_rect(fb, (EpdRect){x, 535, 106, 62}, 8, UI_GRAY_BLACK);
+            ui_draw_control_frame(fb, (EpdRect){x, 535, 106, 62}, 8, UI_GRAY_BLACK);
             ui_text_vc(fb, x + 53, 566, 30, "−", EPD_DRAW_ALIGN_CENTER, false);
         }
         ui_text(fb, 36, 649, 23, "点上方 + 或下方 − 调整数字", EPD_DRAW_ALIGN_LEFT, false);
@@ -833,7 +831,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             const ttf_font_item_t *item = item_index ? ttf_font_item(item_index - 1) : NULL;
             bool active = item ? !strcmp(selected, item->path) : !selected[0];
             settings_card(fb, box, 18, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
-            ui_draw_round_rect(fb, box, 18, active ? 0x90 : 0xd0);
+            ui_draw_control_frame(fb, box, 18, active ? 0x90 : 0xd0);
             char label[TTF_FONT_NAME_MAX];
             snprintf(label, sizeof(label), "%s", item ? system_font_label(item->path) : "思源黑体（内建）");
             while (label[0] && ttf_text_width_px(ui_text_effective_px(26), label) > box.width - 102) {
@@ -962,7 +960,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         if (s_wallpaper_confirm) {
             EpdRect dialog = {68, 435, 548, 306};
             ui_fill_round_rect(fb, dialog, 26, UI_GRAY_WHITE);
-            ui_draw_round_rect(fb, dialog, 26, 0x50);
+            ui_draw_control_frame(fb, dialog, 26, 0x50);
             ui_text_vc(fb, 342, 503, 31, "设为壁纸锁屏？", EPD_DRAW_ALIGN_CENTER, false);
             ui_text_vc(fb, 342, 565, 20, "确认后，短按电源键将显示此图片", EPD_DRAW_ALIGN_CENTER, false);
             EpdRect cancel = {94, 643, 232, 68}, confirm = {358, 643, 232, 68};
