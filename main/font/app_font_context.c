@@ -43,8 +43,18 @@ bool app_font_activate_system(void) {
     char fallback[TTF_FONT_PATH_MAX];
     const char* path = system_path(fallback);
     bool changed = activate(path);
-    if (!ttf_font_ready() || strcmp(path, ttf_font_path()))
+    // 目标字体打不开时回退内建。内建已经在用时，这次回退既不需要重新加载、也没有改变任何东西：
+    // 把它报成 changed，主循环的定期重试就会当成"字体就绪"并整屏重画，卡上缺这个字体文件时
+    // 就是每 FONT_RETRY_INTERVAL_MS 一次全刷（还附带一次完整字体重载）。
+    // Fall back to the built-in when the target will not open. When the built-in is already the
+    // active face this neither needs a reload nor changes anything, and reporting a change would
+    // make the loop's periodic retry read it as "font ready" and repaint the whole screen: a full
+    // refresh every FONT_RETRY_INTERVAL_MS, plus a full font reload, whenever the card lacks the
+    // chosen face.
+    if (!(ttf_font_ready() && ttf_font_is_builtin()) &&
+        (!ttf_font_ready() || strcmp(path, ttf_font_path()))) {
         changed = ttf_font_open_builtin() == ESP_OK || changed;
+    }
     // 未选字体时由内建思源黑体绘制界面；TTF 仍保留完整字库供文件名缺字回退。
     // Built-in Source Han Sans draws default UI; the full TTF remains loaded for missing glyphs.
     ui_text_set_system_font(!pico_boot_recovery() && chosen[0] && ttf_font_ready() &&
