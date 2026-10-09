@@ -6,6 +6,7 @@
  */
 #include "lock_screen.h"
 #include "lock_pin.h"
+#include "settings.h"
 #include "ui_pinpad.h"
 #include "ui_kit.h"
 #include "sleep.h"
@@ -27,20 +28,38 @@
 #define LOCK_SCREEN_CACHE_PARENT "/sdcard/.readpico"
 #endif
 #define LOCK_ART_PATH LOCK_SCREEN_CACHE_PARENT "/locks/pin-background.bin"
-#define ART_MAGIC UINT32_C(0x50414431)
-typedef struct {uint32_t magic,rotation,checksum;} art_header_t;
+#define ART_MAGIC UINT32_C(0x50414432)
+typedef struct {uint32_t magic,rotation,style,checksum;uint64_t wallpaper;} art_header_t;
 extern const uint8_t lock_4bpp_bin_start[] asm("_binary_lock_4bpp_bin_start");
 static uint32_t checksum(const uint8_t *bytes){uint32_t h=2166136261u;for(unsigned i=0;i<FRAME_BYTES;++i)h=(h^bytes[i])*16777619u;return h;}
+static uint64_t wallpaper_key(void){
+    if(app_settings_lock_style()!=1)return 0;
+    const char *path=app_settings_wallpaper_path();
+    uint64_t key=UINT64_C(14695981039346656037);
+    for(const unsigned char *p=(const unsigned char*)path;*p;++p)key=(key^*p)*UINT64_C(1099511628211);
+    struct stat st;
+    if(stat(path,&st)==0){
+        uint64_t info[2]={(uint64_t)st.st_size,(uint64_t)st.st_mtime};
+        const unsigned char *bytes=(const unsigned char*)info;
+        for(unsigned i=0;i<sizeof(info);++i)key=(key^bytes[i])*UINT64_C(1099511628211);
+    }
+    return key;
+}
 bool lock_screen_restore(uint8_t *frame){
+    if(!frame)return false;
     FILE *f=fopen(LOCK_ART_PATH,"rb");if(!f)return false;art_header_t h;
+    // 跨样式/换壁纸后先拒绝旧图，再由锁屏入口绘制当前选择；不多分配一帧。
+    // Reject old art before reading pixels after a style/wallpaper change; the lock entry draws the current choice without another frame.
     bool ok=fread(&h,1,sizeof(h),f)==sizeof(h)&&h.magic==ART_MAGIC&&h.rotation==(uint32_t)epd_get_rotation()&&
+        h.style==app_settings_lock_style()&&h.wallpaper==wallpaper_key()&&
         fread(frame,1,FRAME_BYTES,f)==FRAME_BYTES&&fgetc(f)==EOF&&h.checksum==checksum(frame);
     fclose(f);return ok;
 }
 static void save_art(const uint8_t *frame){
     (void)mkdir(LOCK_SCREEN_CACHE_PARENT,0775);(void)mkdir(LOCK_SCREEN_CACHE_PARENT "/locks",0775);
     FILE *f=fopen(LOCK_ART_PATH ".tmp","wb");if(!f)return;
-    art_header_t h={ART_MAGIC,(uint32_t)epd_get_rotation(),checksum(frame)};
+    art_header_t h={.magic=ART_MAGIC,.rotation=(uint32_t)epd_get_rotation(),
+        .style=app_settings_lock_style(),.checksum=checksum(frame),.wallpaper=wallpaper_key()};
     bool ok=fwrite(&h,1,sizeof(h),f)==sizeof(h)&&fwrite(frame,1,FRAME_BYTES,f)==FRAME_BYTES&&fflush(f)==0;
     if(fclose(f))ok=false;
     if(ok&&rename(LOCK_ART_PATH ".tmp",LOCK_ART_PATH)==0)return;

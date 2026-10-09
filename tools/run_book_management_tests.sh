@@ -23,6 +23,7 @@ python3 tools/lock_collage_host_test.py
 python3 tools/lock_pin_host_test.py
 python3 tools/ui_pinpad_host_test.py
 python3 tools/lock_screen_host_test.py
+python3 tools/lock_style_host_test.py
 python3 tools/shelf_fast_cache_host_test.py
 python3 tools/bookshelf_list_host_test.py
 python3 tools/list_cover_cache_host_test.py

@@ -5,6 +5,9 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 本地开发中 / Unreleased local development
 
+- 密码锁屏缓存增加样式与壁纸身份校验，切换后深睡唤醒/冷启动不再误用之前的拼贴图；自动休眠与手动锁屏继续使用当前选择。旧缓存自动重建，密码和配置不受影响。
+  PIN artwork caches now check the selected style and wallpaper identity, preventing stale collage reuse on cold/deep wake. Auto/manual lock keep the current choice; old artwork is regenerated without changing credentials or settings.
+
 - 修复 TF 卡检测通信失败被误判为拔卡的问题；高速初始化失败先等待重试，再降至 20/10 MHz，`ESP_ERR_INVALID_STATE` 不再直接终止重试。初始化错误不自动建议格式化；保留真实拔卡失效、显式重挂及 USB 独占保护。
   TF detection I/O failures no longer masquerade as removal. Failed high-speed initialization settles and retries before 20/10 MHz fallback, including `ESP_ERR_INVALID_STATE`. Init failures do not suggest formatting; true removal, explicit remount and USB ownership guards remain.
 
