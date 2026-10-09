@@ -33,7 +33,9 @@ def hydrate(source: Path, output: Path) -> None:
             fetched[asset] = target
             continue
         if asset in fetched:
-            shutil.copy2(fetched[asset], target)
+            cached = fetched[asset]
+            assert cached.stat().st_size == info['size'] and hashlib.sha256(cached.read_bytes()).hexdigest() == info['sha256'], 'Release alias checksum mismatch'
+            shutil.copy2(cached, target)
             continue
         url = REPO + release['tag'] + '/' + asset
         for attempt in range(3):

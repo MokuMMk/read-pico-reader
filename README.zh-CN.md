@@ -6,7 +6,7 @@
 
 [English](README.md) · [日本語](README.ja-JP.md) · [第三方许可](THIRD_PARTY_NOTICES.md)
 
-这是为 **MindReset Read kiikoread（RDP-G01-W）** 墨水屏开发板制作的独立开源阅读固件，基于 [MindReset 官方示例固件](https://github.com/MindReset/read_pico_firmware) 开发，**并非 MindReset 官方发布**。
+这是为 **MindReset RDP-G01-W** 墨水屏开发板制作的独立开源阅读固件，基于 [MindReset 官方示例固件](https://github.com/MindReset/read_pico_firmware) 开发，**并非 MindReset 官方发布**。
 
 界面包括首页、书架、文件管理和设置；可阅读 TF 卡中的 EPUB、TXT，保存阅读进度，并通过 WiFi、设备热点或 USB 传输文件。
 
@@ -50,7 +50,7 @@ WiFi 和热点传书网页都有「状态栏签名」，保存或清空后写入
 
 连接按钮上方可选择最新正式版或原发布的 **rc86 / rc85**，发布时间与 TF 升级 Bin 下载跟随选择。所有版本默认保留设备数据。
 
-打开 [HTTPS 在线刷机页](https://wegooo-cell.github.io/read-pico-reader/)。在电脑端 Chrome 或 Edge 中，用支持数据传输的 USB 线连接 **Read kiikoread RDP-G01-W**，选择设备串口并按提示刷入。**刷机前确认型号。**普通刷机保留设备设置、阅读记录和 TF 卡内容；固件不附带书籍或预设的阅读记录。
+打开 [HTTPS 在线刷机页](https://wegooo-cell.github.io/read-pico-reader/)。在电脑端 Chrome 或 Edge 中，用支持数据传输的 USB 线连接 **RDP-G01-W 墨水屏**，选择设备串口并按提示刷入。**刷机前确认型号。**普通刷机保留设备设置、阅读记录和 TF 卡内容；固件不附带书籍或预设的阅读记录。
 
 如果运行本固件的设备无法自动进入下载模式，可在设备上点击**设置 → 升级和恢复 → BOOT 刷机**，等电脑重新识别串口后再用网页刷机。
 

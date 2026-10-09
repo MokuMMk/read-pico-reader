@@ -6,7 +6,7 @@ Official firmware binaries are stored in [GitHub Releases](https://github.com/we
 
 [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-An independent, open-source reading firmware for the **MindReset Read kiikoread (RDP-G01-W)** ESP32-S3 e-paper board. It is based on [MindReset's official demo firmware](https://github.com/MindReset/read_pico_firmware), but is **not an official MindReset release**.
+An independent, open-source reading firmware for the **MindReset RDP-G01-W** ESP32-S3 e-paper board. It is based on [MindReset's official demo firmware](https://github.com/MindReset/read_pico_firmware), but is **not an official MindReset release**.
 
 The current interface has Home, Bookshelf, Files, and Settings. It reads EPUB and TXT books from a TF card, remembers reading progress, and supports Wi-Fi, hotspot, or USB file transfer. The online flasher installs the same firmware image as the local `flash/` bundle.
 
@@ -34,7 +34,7 @@ Rename, profile name, status signature, shelf search and WiFi password fields sh
 
 Select the latest release or the original **rc86 / rc85** build above the connection button. The publication time and TF-image download follow the selection. Ordinary installation keeps the preserve-data default for all versions.
 
-Visit the [HTTPS web flasher](https://wegooo-cell.github.io/read-pico-reader/). Use a desktop Chrome or Edge browser with a USB data cable. Select the Read kiikoread serial device and follow the prompts. **Check the board model before flashing.** Ordinary installation preserves the device's settings and reading records, as well as TF-card contents. It does not include books or sample reading history.
+Visit the [HTTPS web flasher](https://wegooo-cell.github.io/read-pico-reader/). Use a desktop Chrome or Edge browser with a USB data cable. Select the ink-screen reader’s serial device and follow the prompts. **Check the board model before flashing.** Ordinary installation preserves the device's settings and reading records, as well as TF-card contents. It does not include books or sample reading history.
 
 If automatic entry to download mode fails on a device already running this firmware, open **Settings → Upgrade & restore → BOOT flashing** on the device, wait for the computer to detect its serial port again, then retry the web flasher.
 
