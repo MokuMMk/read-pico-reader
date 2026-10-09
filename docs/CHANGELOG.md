@@ -34,6 +34,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 Add a D-layout library collage lock with aspect-preserved real covers, native imported system typography, SD caching, bounded workspaces and safe memory fallback. Pale covers gain a fine rounded gray outline. An optional four-digit PIN verifies wake/cold starts, retains the saved page, confirms setup and requires the old PIN for changes. Cached frosted lock art and native system glyphs use local feedback; faults cannot bypass authentication. Salted credentials are excluded from ordinary backups. Retired pocket/spine settings migrate to acrylic. Local builds retain rc89 and are not published.
 
+- 文件页的存储卡卡片在“卡在但文件系统读不了”时改为显示“需要格式化 / 格式化可能可以解决此问题”，点一次询问、再点一次才格式化，点别处取消。此前这种情况与“卡没插”显示同一句话，把用户指向了错误的排查方向。
+  The storage card on the files page now reads "needs formatting / formatting may fix this" when a card is present but its filesystem cannot be read, with one tap to ask and a second to format (a tap elsewhere cancels). It used to show the same line as an absent card, which pointed at the wrong problem.
 - 加快主页水波纹：使用与阅读相同的一拍一带调度，将24带83拍改为16带52拍，保留12ms目标节拍、完整37相、原灰阶波形、底栏范围与异常恢复。软件目标由996ms缩至624ms，实际速度与残影需实屏确认；阅读翻页、刷新模式默认值不变。
   Speed up main-screen ripple with reader-style compact launches: 16 bands/52 ticks instead of 24 bands/83 ticks, retaining the 12ms target, all 37 phases, gray waveform, navigation bounds and recovery. The software target drops from 996ms to 624ms; hardware speed and ghosting require device checks. Reader turns and refresh-mode defaults are unchanged.
 

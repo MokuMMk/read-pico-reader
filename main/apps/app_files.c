@@ -65,6 +65,15 @@ static bool s_scan_pending;
 static char s_message[96];
 static char s_dir[288] = "/sdcard";
 static read_pico_sd_info_t s_sd;
+// 卡在、挂不上、又不是超时，多半是文件系统本机不认（exFAT 之类）。这种卡仍然格得动，
+// 所以卡片本身变成可点的：第一次点只是问，第二次点才真的格。
+// A card is in the slot but will not mount and it is not a timeout: most likely a filesystem this
+// firmware does not read, exFAT for instance. Such a card can still be formatted, so the card
+// itself becomes a tap target -- the first tap asks, the second one does it.
+static bool s_sd_format_confirm;
+// 格式化尝试的反馈，显示在卡片的信息行上；为空时回到提示语。
+// Feedback from a format attempt, shown on the card's info line; empty falls back to the hint.
+static char s_sd_notice[64];
 typedef enum { FILE_VIEW_LIST, FILE_VIEW_ACTIONS, FILE_VIEW_RENAME, FILE_VIEW_MOVE } file_view_t;
 static file_view_t s_view;
 static file_item_t s_selected;
@@ -87,6 +96,17 @@ static int root_rows(void) { return 5; }
 static EpdRect home_transfer_rect(int index) {
     return (EpdRect){36 + index * 208, 346, 196, 100};
 }
+
+// 存储卡卡片的位置，绘制与命中测试共用一份，免得两处各写一个坐标。
+// The storage card's rect, shared by drawing and hit testing so the two cannot drift apart.
+static EpdRect storage_card_rect(void) { return (EpdRect){36, 171, 612, 112}; }
+
+// 需要格式化：卡在、没挂上、而且不是超时。超时是接触或供电问题，格式化解决不了，那种情况下
+// 说"格式化可能可以解决"会把用户带偏。
+// Needs formatting: the card is present, will not mount, and the failure is not a timeout. A
+// timeout is a contact or power problem that formatting cannot fix, so offering it there would
+// point the user at the wrong thing.
+static bool sd_needs_format(void) { return s_sd.present && !s_sd.mounted && s_sd.needs_format; }
 
 static void copy_utf8(char *dst, size_t cap, const char *src) {
     size_t n = strlen(src);
@@ -538,7 +558,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 648, 1057, 22, page, EPD_DRAW_ALIGN_RIGHT, false);
     } else {
         ui_text(fb, 36, 91, 52, "文件", EPD_DRAW_ALIGN_LEFT, false);
-        EpdRect storage = {36, 171, 612, 112};
+        EpdRect storage = storage_card_rect();
         ui_fill_round_rect(fb, storage, 24, UI_GRAY_WHITE);
         file_card_border(fb, storage, 24);
         ui_text(fb, 58, 188, 27, "存储卡", EPD_DRAW_ALIGN_LEFT, false);
@@ -548,6 +568,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             snprintf(usage, sizeof(usage), "已用 %.1f GB · 可用 %.1f GB",
                      (s_sd.capacity_bytes - s_sd.free_bytes) / 1073741824.0,
                      s_sd.free_bytes / 1073741824.0);
+        } else if (sd_needs_format()) {
+            // 卡在但读不了：说清是文件系统的问题，并给出可点的出路。
+            // Present but unreadable: say the filesystem is the problem and offer the way out.
+            snprintf(total, sizeof(total), "需要格式化");
+            snprintf(usage, sizeof(usage), "%s", s_sd_notice[0] ? s_sd_notice
+                     : (s_sd_format_confirm ? "再点一次确认格式化" : "格式化可能可以解决此问题"));
         } else {
             snprintf(total, sizeof(total), "未挂载");
             snprintf(usage, sizeof(usage), "请检查 TF 卡");
@@ -621,6 +647,8 @@ static void on_enter(app_ctx_t *ctx) {
     s_page = 0; s_scan_pending = true;
     read_pico_sd_start_probe();
     read_pico_sd_get_info(&s_sd);
+    s_sd_format_confirm = false;
+    s_sd_notice[0] = 0;
     for (int i = 0; i < 3; ++i) s_counts[i] = count_root(i);
     if (s_folder >= 0) scan_folder(s_folder);
     else scan_folder(3);
@@ -887,6 +915,33 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             return ctx->request_app ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
         }
         return APP_REDRAW_NONE;
+    }
+    // 存储卡卡片：只有"卡在但读不了"时响应，点第一次问、点第二次格。
+    // The storage card answers only when the card is present but unreadable: the first tap asks,
+    // the second one formats.
+    if (!long_press && sd_needs_format() && ui_rect_hit(storage_card_rect(), ev->x0, ev->y0)) {
+        if (!s_sd_format_confirm) {
+            s_sd_format_confirm = true;
+            s_sd_notice[0] = 0;
+        } else {
+            s_sd_format_confirm = false;
+            snprintf(s_sd_notice, sizeof(s_sd_notice), "正在格式化…");
+            esp_err_t err = read_pico_sd_format();
+            read_pico_sd_get_info(&s_sd);
+            if (err == ESP_OK) {
+                s_sd_notice[0] = 0;
+                s_scan_pending = true;
+            } else {
+                snprintf(s_sd_notice, sizeof(s_sd_notice), "格式化失败：%s", esp_err_to_name(err));
+            }
+        }
+        return APP_REDRAW_PAGE;
+    }
+    // 点别处就撤销确认，免得提示一直停在"再点一次"。
+    // A tap elsewhere cancels the confirmation, so the prompt does not stay armed.
+    if (!long_press && s_sd_format_confirm) {
+        s_sd_format_confirm = false;
+        s_sd_notice[0] = 0;
     }
     for (int i = 0; !long_press && i < 3; ++i) if (ui_rect_hit(home_transfer_rect(i), ev->x0, ev->y0)) {
         extern const app_desc_t app_transfer;
