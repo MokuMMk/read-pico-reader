@@ -4,10 +4,10 @@
  *
  * 基于 MindReset Read Pico 官方 E0470 波形与刷新路径实现。
  * Built on the MindReset Read Pico E0470 waveform and refresh path.
- * 错相揭页引擎实现。阅读保留原16带/GL16；主页可指定柔和序列和24带。差分只算一次，每拍只换对应相位的1K LUT。
- * Staggered page-turn engine: reading retains original 16 bands / GL16; main pages may supply a soft sequence and 24 bands. Calculate differences once and select per-band 1 KiB phase LUTs on each tick.
- * 用户要求移植PR17快档并替换阅读动画：阅读恢复每拍启动一带、37相共52拍，调用端选择14ms且不截短扫描；主页保留错开启动与原节拍。
- * User requests PR17 fast ripple as the reader replacement: launch one reader band each tick, retaining 37 phases over 52 ticks; the caller selects 14ms without truncating scans. Main pages retain spaced launches and their existing pacing.
+ * 错相揭页引擎实现。阅读保留原16带/GL16；主页可指定柔和序列和条带数。差分只算一次，每拍只换对应相位的1K LUT。
+ * Staggered page-turn engine: reading retains original 16 bands / GL16; main pages may supply a soft sequence and band count. Calculate differences once and select per-band 1 KiB phase LUTs on each tick.
+ * 用户要求阅读快档并进一步加快主页：阅读和主页均16带37相共52拍、一拍一带；保留各自原节拍与所有扫描相位，原错开启动接口仍可用。
+ * User requests fast reading and a further main ripple speedup: both use 16 bands/37 phases over 52 ticks, launching one band per tick; retain each caller's pacing and every scan phase, keeping the spaced-launch API available.
  */
 
 #include "e0470_page_turn.h"
@@ -271,8 +271,8 @@ static enum EpdDrawError page_turn_run(EpdiyHighlevelState* hl, EpdRect area,
 
     const int bands = (int)band_count;
     const int nphase = gl->phases;
-    // 阅读采用PR17一拍一带调度；主页仍在末带启动前完成首带，避免改变主页面的视觉效果。
-    // Reader uses PR17's one-band-per-tick scheduling; main pages still finish the first band before the last launch to preserve their appearance.
+    // 紧凑模式供阅读和快速主页共用；仅提前后续条带的启动，不跳过每个像素的任何相位。
+    // Reading and fast main pages share compact launches; start later bands sooner without skipping any pixel phase.
     const int launch_step = compact ? 1 : (nphase + bands - 2) / (bands - 1);
     const int ticks = (bands - 1) * launch_step + nphase;
     const int fb_w = epd_width();
@@ -399,4 +399,9 @@ enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_t
 enum EpdDrawError e0470_page_turn_with_waveform(EpdiyHighlevelState* hl, EpdRect area,
     e0470_turn_dir_t dir, const EpdWaveform* waveform, unsigned band_count) {
     return page_turn_run(hl, area, dir, waveform, band_count, false);
+}
+
+enum EpdDrawError e0470_page_turn_with_waveform_compact(EpdiyHighlevelState* hl, EpdRect area,
+    e0470_turn_dir_t dir, const EpdWaveform* waveform, unsigned band_count) {
+    return page_turn_run(hl, area, dir, waveform, band_count, true);
 }
