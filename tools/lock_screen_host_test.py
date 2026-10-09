@@ -49,7 +49,7 @@ typedef struct {uint32_t magic,rotation,checksum;} art_header_t;
 static const int xs[3]={158,342,526},ys[4]={544,703,862,1021},E0470_WAVEFORM=0,E0470_FOLLOW_WAVEFORM=1;
 const uint8_t lock_4bpp_bin_start[1]={0};
 static uint8_t framebuffer[FRAME_BYTES];
-static unsigned stage,idx,waits,verified,ready,held,pushes,fulls,wiped,stops;
+static unsigned stage,idx,waits,verified,ready,held,pushes,fulls,wiped,stops,entries,settles;
 static bool valid_storage=true,low_memory,boot_scenario,timeout_scenario,display_failure;
 static uint64_t now;
 static int power_pending;
@@ -82,9 +82,10 @@ static void pico_boot_ready(void){++ready;}
 static void pico_boot_hold_resume(void){++held;}
 static int cst836u_read(void *tp,cst836u_touch_t *t){(void)tp;if(idx>=sample_count){*t=(cst836u_touch_t){0};return 0;}typeof(samples[0]) s=samples[idx++];*t=(cst836u_touch_t){.touched=s.count!=0,.count=s.count,.x=s.x,.y=s.y};if(s.error<-1){power_pending=-s.error;return ESP_OK;}return s.error;}
 static void vTaskDelay(int ms){now+=ms;assert(now<35000||timeout_scenario||!valid_storage);}
-static void ui_pinpad_begin(ui_pinpad_t *p,const uint8_t *fb,const char *title){(void)fb;ui_pinpad_end(p);ui_pinpad_reset(p,title,"");}
+static void ui_pinpad_begin(ui_pinpad_t *p,const uint8_t *fb,const char *title){(void)fb;ui_pinpad_end(p);ui_pinpad_reset(p,title,"");if(!low_memory)p->background=malloc(1);}
 static void ui_pinpad_paint_input(uint8_t *f,const ui_pinpad_t *p){(void)p;f[0]=0xaa;}
-static void ui_pinpad_paint(uint8_t *fb,const ui_pinpad_t *p,EpdRect area){(void)p;(void)area;fb[0]=0xaa;}
+static void ui_pinpad_paint(uint8_t *fb,const ui_pinpad_t *p,EpdRect area){(void)p;if(area.y==470)++settles;fb[0]=0xaa;}
+void ui_pinpad_paint_entry(uint8_t *fb,const ui_pinpad_t *p,const uint8_t *original,uint8_t frost){assert(p->background&&original&&frost==144);++entries;fb[0]=0xbb;}
 enum EpdDrawError {EPD_GOOD=0,EPD_BAD=1};
 static enum EpdDrawError update_display_area_diff_with(void *h,const int *w,int m,EpdRect a){(void)h;(void)w;(void)a;assert(m==MODE_GL16||m==MODE_DU);++pushes;return display_failure?EPD_BAD:EPD_GOOD;}
 static enum EpdDrawError update_display_full(void *h){(void)h;++fulls;return EPD_GOOD;}
@@ -92,25 +93,29 @@ static void guard_draw_result(void *h,enum EpdDrawError result){(void)h;(void)re
 '''.replace('FOLDER',str(p))
  # Declarations precede the backdrop stub; state/hit logic comes from the production pad.
  unit=unit.replace('static void ui_pinpad_paint_input(', 'void ui_pinpad_paint_input(').replace('static void ui_pinpad_begin(', 'void ui_pinpad_begin(').replace('static void ui_pinpad_paint(', 'void ui_pinpad_paint(')
- for n in ('ui_pinpad_full','ui_pinpad_entry_area','ui_pinpad_end','ui_pinpad_reset','key_rect','joined','hit_test','ui_pinpad_handle'):
+ for n in ('ui_pinpad_full','ui_pinpad_entry_area','ui_pinpad_backdrop_area','ui_pinpad_end','ui_pinpad_reset','key_rect','joined','hit_test','ui_pinpad_handle'):
   unit+=function(n,ROOT/'main/ui/ui_pinpad.c')+'\n'
- for n in ('checksum','lock_screen_restore','save_art','restore_art','present','present_input','lock_screen_authenticate'):
+ for n in ('checksum','lock_screen_restore','save_art','restore_art','present','present_input','present_pin_entry','lock_screen_authenticate'):
   unit+=function(n,ROOT/'main/lock_screen.c')+'\n'
  unit+=r'''
-static void start(void){idx=sample_count=waits=verified=ready=held=pushes=fulls=0;now=0;power_pending=0;memset(framebuffer,0x37,sizeof(framebuffer));add(0,0,0,0);}
+static void start(void){idx=sample_count=waits=verified=ready=held=pushes=fulls=entries=settles=0;now=0;power_pending=0;memset(framebuffer,0x37,sizeof(framebuffer));add(0,0,0,0);}
 int main(void){
  EpdiyHighlevelState hl={0};
  // Wrong PIN, cancel, pickup, physical touch buttons, multitouch and read errors, then valid PIN.
  start();for(int i=0;i<4;++i)tap(342,1021);tap(144,1132);add(0,0,0,0);
  tap(342,1350);add(158,544,1,0);add(158,544,2,0);add(158,544,0,0);
  add(158,544,1,0);add(158,544,0,-1);add(0,0,0,0);correct();
- lock_screen_authenticate(&hl,(void*)1,(void*)2,false);assert(verified==2&&waits==2&&!ready&&!held&&wiped>2);
+ lock_screen_authenticate(&hl,(void*)1,(void*)2,false);assert(verified==2&&waits==2&&!ready&&!held&&wiped>2&&entries==2&&settles==2);
  // Cold boot authenticates immediately and marks startup ready while retaining resume.
- start();correct();lock_screen_authenticate(&hl,(void*)1,(void*)2,true);assert(verified==1&&!waits&&ready==1&&held==1);
+ start();correct();lock_screen_authenticate(&hl,(void*)1,(void*)2,true);assert(verified==1&&!waits&&ready==1&&held==1&&!entries&&!settles);
  // PMU short/long actions only return to the locked art, then demand authentication again.
  for(int action=2;action<=3;++action){start();add(0,0,0,-action);for(int i=0;i<10;++i)add(0,0,0,0);correct();lock_screen_authenticate(&hl,(void*)1,(void*)2,true);assert(verified==1&&waits==1);}
  // Low-memory/cache fallback and display errors still demand the correct credential.
  start();low_memory=display_failure=true;correct();lock_screen_authenticate(&hl,(void*)1,(void*)2,true);assert(verified==1&&fulls>0);low_memory=display_failure=false;
+ start();low_memory=true;correct();lock_screen_authenticate(&hl,(void*)1,(void*)2,false);assert(verified==1&&waits==1&&!entries&&!settles);low_memory=false;
+ // 中间帧失败不继续动画，而是重建最终密码画面；不能绕过验证。
+ // A failed intermediate frame rebuilds the final PIN view instead of continuing; verification remains mandatory.
+ start();display_failure=true;correct();lock_screen_authenticate(&hl,(void*)1,(void*)2,false);assert(verified==1&&entries==1&&!settles&&fulls>0);display_failure=false;
  // Cancel never releases the caller: deep sleep terminates the protected loop instead.
  start();tap(144,1132);timeout_scenario=true;if(!setjmp(deep)){lock_screen_authenticate(&hl,(void*)1,(void*)2,true);assert(0);}assert(!verified&&waits==1);timeout_scenario=false;
  // Corrupt credentials remain locked even with a valid-looking sequence.

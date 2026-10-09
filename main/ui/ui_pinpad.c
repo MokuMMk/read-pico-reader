@@ -23,6 +23,7 @@ static const int xs[3]={158,342,526};
 static const int ys[4]={544,703,862,1021};
 EpdRect ui_pinpad_full(void){return (EpdRect){0,0,PAD_W,PAD_H};}
 EpdRect ui_pinpad_entry_area(void){return (EpdRect){196,371,292,91};}
+EpdRect ui_pinpad_backdrop_area(void){return (EpdRect){0,470,PAD_W,PAD_H-470};}
 static uint8_t pixel(const uint8_t *frame,int x,int y){
     int px=x,py=y;
     switch(epd_get_rotation()){
@@ -54,13 +55,15 @@ void ui_pinpad_begin(ui_pinpad_t *pad,const uint8_t *frame,const char *title){
     uint8_t *blur=low+LOW_W*LOW_H;
     for(int y=0;y<LOW_H;++y)for(int x=0;x<LOW_W;++x){
         unsigned sum=0,n=0;
-        for(int j=0;j<9;++j)for(int i=0;i<9;++i){int xx=x*9+i,yy=y*9+j;if(xx<PAD_W&&yy<PAD_H){sum+=frame?pixel(frame,xx,yy):224;++n;}}
+        for(int j=0;j<9;++j)for(int i=0;i<9;++i){int xx=x*9+i,yy=y*9+j;if(xx<PAD_W&&yy<PAD_H){sum+=frame?(pixel(frame,xx,yy)>>4)*17u:224u;++n;}}
         low[y*LOW_W+x]=sum/n;
     }
     for(int y=0;y<LOW_H;++y)for(int x=0;x<LOW_W;++x){
         unsigned sum=0,n=0;
-        for(int j=-3;j<=3;++j)for(int i=-3;i<=3;++i){int xx=x+i,yy=y+j;if(xx>=0&&xx<LOW_W&&yy>=0&&yy<LOW_H){sum+=low[yy*LOW_W+xx];++n;}}
-        blur[y*LOW_W+x]=(sum/n*4+255*6)/10;
+        // 较小核保留封面结构，白色混入减至45%，保持圆键与底图的层次。
+        // A smaller kernel retains cover structure; 45% white lift separates the art from the circular keys.
+        for(int j=-2;j<=2;++j)for(int i=-2;i<=2;++i){int xx=x+i,yy=y+j;if(xx>=0&&xx<LOW_W&&yy>=0&&yy<LOW_H){sum+=low[yy*LOW_W+xx];++n;}}
+        blur[y*LOW_W+x]=(sum/n*11+255*9+10)/20;
     }
     memset(pad->background,255,PAD_W*PAD_H/2u);
     for(int y=0;y<PAD_H;++y)for(int x=0;x<PAD_W;++x){
@@ -100,14 +103,46 @@ static void text(uint8_t *fb,int cx,int cy,int em,const char *value,uint8_t colo
     }
     free(mask);
 }
-void ui_pinpad_paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area){
+static bool rounded_inside(float x,float y,float left,float top,float width,float height,float radius){
+    if(x<left||x>left+width||y<top||y>top+height)return false;
+    float cx=x<left+radius?left+radius:x>left+width-radius?left+width-radius:x;
+    float cy=y<top+radius?top+radius:y>top+height-radius?top+height-radius:y;
+    float dx=x-cx,dy=y-cy;return dx*dx+dy*dy<=radius*radius;
+}
+static void lock_icon(uint8_t *fb){
+    // 原生4×4覆盖采样：圆角锁身与圆拱锁梁，避免放大位图和尖方角。
+    // Native 4×4 coverage sampling rounds the body and shackle, with no scaled bitmap or sharp corners.
+    for(int y=136;y<195;++y)for(int x=319;x<365;++x){
+        unsigned coverage=0;
+        for(int j=0;j<4;++j)for(int i=0;i<4;++i){
+            float xx=x+(i+0.5f)/4,yy=y+(j+0.5f)/4,dx=xx-342,dy=yy-154;
+            float distance=dx*dx+dy*dy;
+            bool body=rounded_inside(xx,yy,320,160,44,34,9)&&!rounded_inside(xx,yy,323,163,38,28,6);
+            bool shackle=(yy<=154&&distance>=12*12&&distance<=16*16)||
+                (yy>154&&yy<163&&((xx>=326&&xx<330)||(xx>354&&xx<=358)));
+            coverage+=body||shackle;
+        }
+        if(coverage){unsigned gray=(pixel(fb,x,y)>>4)*17u;epd_draw_pixel(x,y,ui_image_dither_gray((gray*(16-coverage)+8)/16,x,y),fb);}
+    }
+}
+static void paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area,const uint8_t *original,uint8_t frost){
     int right=area.x+area.width,bottom=area.y+area.height;
     for(int y=area.y;y<bottom&&y<PAD_H;++y)for(int x=area.x;x<right&&x<PAD_W;++x)
-        if(x>=0&&y>=0)epd_draw_pixel(x,y,pad->background?pixel(pad->background,x,y):0xe0,fb);
+        if(x>=0&&y>=0){
+            uint8_t gray=pad->background?pixel(pad->background,x,y):0xe0;
+            if(original&&pad->background&&y>=470&&frost<255){
+                // 同一坐标的原锁图渐变到已缓存底图，抖动相位固定；上部控件始终清晰。
+                // Blend the original lock art into the cached frost at a stable dither phase; retain a crisp header.
+                unsigned source=(pixel(original,x,y)>>4)*17u,target=(gray>>4)*17u;
+                // 120px垂直衔接消除固定上部与渐变下部之间的横向接缝。
+                // A 120px vertical blend removes a horizontal seam between the fixed header and fading lower art.
+                unsigned amount=frost+(y<590?(255u-frost)*(590u-y)/120u:0);
+                gray=ui_image_dither_gray((source*(255-amount)+target*amount+127)/255,x,y);
+            }
+            epd_draw_pixel(x,y,gray,fb);
+        }
     if(intersects(area,(EpdRect){180,135,324,168})){
-        ui_draw_round_rect(fb,(EpdRect){322,160,40,34},3,0x00);ui_draw_round_rect(fb,(EpdRect){323,161,38,32},3,0x00);
-        // 圆弧只在上半部，开口处与锁身连接。/ Upper shackle joins the lock body.
-        for(int y=139;y<162;++y)for(int x=327;x<358;++x){int dx=x-342,dy=y-154;int d=dx*dx+dy*dy;if(d>=11*11&&d<=15*15&&y<=154)epd_draw_pixel(x,y,0,fb);if(y>=154&&(x<=331||x>=353))epd_draw_pixel(x,y,0,fb);}
+        lock_icon(fb);
         text(fb,342,260,48,pad->title,0,pad,-1);
     }
     if(intersects(area,ui_pinpad_entry_area())){
@@ -126,6 +161,8 @@ void ui_pinpad_paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area){
         }else text(fb,box.x+box.width/2,1132,27,hit==10?"取消":"删除",0,pad,hit);
     }
 }
+void ui_pinpad_paint(uint8_t *fb,const ui_pinpad_t *pad,EpdRect area){paint(fb,pad,area,NULL,255);}
+void ui_pinpad_paint_entry(uint8_t *fb,const ui_pinpad_t *pad,const uint8_t *original,uint8_t frost){paint(fb,pad,ui_pinpad_full(),original,frost);}
 void ui_pinpad_paint_input(uint8_t *fb,const ui_pinpad_t *pad){
     // 不生成TTF蒙版、不分配内存，只改黑白反馈；矩形内其余像素保持原样。
     // No glyph masks or allocations: change binary feedback only, retaining every surrounding pixel.

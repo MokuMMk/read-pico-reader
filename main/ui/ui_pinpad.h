@@ -21,6 +21,10 @@ void ui_pinpad_end(ui_pinpad_t *pad);
 void ui_pinpad_reset(ui_pinpad_t *pad, const char *title, const char *notice);
 /// 纯绘制；area只恢复并绘制指定区域。/ Pure painting; restore and paint only the requested area.
 void ui_pinpad_paint(uint8_t *frame, const ui_pinpad_t *pad, EpdRect area);
+/// 入场仅渐变键盘背后的锁图，控件保持清晰；不分配第二份帧。/ Fade the lock art behind the keypad on entry, retaining crisp controls without another frame.
+void ui_pinpad_paint_entry(uint8_t *frame, const ui_pinpad_t *pad, const uint8_t *original, uint8_t frost);
+/// 渐变收尾范围；顶部图标、标题和密码点不参与过渡。/ Entry settle bounds; keep the header and PIN dots out of the transition.
+EpdRect ui_pinpad_backdrop_area(void);
 /// 输入反馈只重画圆内环和密码圆点；不处理背景或字形。/ Input feedback repaints only inner rings and dots, never artwork or glyphs.
 void ui_pinpad_paint_input(uint8_t *frame, const ui_pinpad_t *pad);
 /// 单次有效释放提交一个数字；滑出、多指、错误或长按取消。/ A valid release commits one digit; outside, multitouch, errors and holds cancel.

@@ -15,6 +15,7 @@ User-visible changes by release; see [README](../README.md) for usage.
 - 密码键盘输入仅局部更新圆内反馈及密码圆点，不处理背景或字形，优化数字、删除与取消的响应速度。
 - 新增每页四本的列表书架：完整比例封面、作者、阅读进度、收藏标记及双行长标题，支持翻页、重启和配置恢复。
 - 拼贴封面新增柔和投影，白色文字描边减细；锁屏图像使用16级灰阶抖动表现256级输入亮度，保持有界工作内存。
+- 密码顶部锁图标改为平滑圆角，减轻背景模糊；电源唤醒时下部背景分两段灰阶渐变，输入不补刷背景，低内存与冷启动直接显示最终密码页。
 - 本地测试保持 rc89，尚未发布。
 
 Add a D-layout library collage lock with aspect-preserved real covers, native imported system typography, SD caching, bounded workspaces and safe memory fallback. Pale covers gain a fine rounded gray outline. An optional four-digit PIN verifies wake/cold starts, retains the saved page, confirms setup and requires the old PIN for changes. Cached frosted lock art and native system glyphs use local feedback; faults cannot bypass authentication. Salted credentials are excluded from ordinary backups. Retired pocket/spine settings migrate to acrylic. Local builds retain rc89 and are not published.

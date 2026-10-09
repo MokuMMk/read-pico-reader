@@ -71,11 +71,20 @@ void ui_font_draw_text_px(uint8_t *f,int x,int y,int n,const char *v,enum EpdFon
 static ui_pin_result_t event(ui_pinpad_t *p,ui_gesture_type_t type,int x,int y,EpdRect *area){ui_gesture_event_t e={.type=type,.x=x,.y=y,.x0=x,.y0=y};return ui_pinpad_handle(p,&e,area);}
 static void save(const char *path,uint8_t *frame){FILE *f=fopen(path,"wb");assert(f);for(int y=0;y<1216;++y)for(int x=0;x<684;++x){uint8_t v=pixel(frame,x,y);assert(fwrite(&v,1,1,f)==1);}assert(!fclose(f));}
 int main(int argc,char **argv){
- assert(argc==5);assert(ttf_font_open(argv[1])==ESP_OK);
+ assert(argc==6);assert(ttf_font_open(argv[1])==ESP_OK);
  uint8_t *fb=malloc(684*1216/2),*old=malloc(684*1216/2),*bg=malloc(684*1216/2);assert(fb&&old&&bg);
- memset(bg,255,684*1216/2);FILE *background=fopen(argv[2],"rb");if(background){for(int y=0;y<1216;++y)for(int x=0;x<684;++x){int v=fgetc(background);assert(v>=0);epd_draw_pixel(x,y,v,bg);}fclose(background);}
+ memset(bg,255,684*1216/2);FILE *background=fopen(argv[2],"rb");if(background){for(int y=0;y<1216;++y)for(int x=0;x<684;++x){int v=fgetc(background);assert(v>=0);epd_draw_pixel(x,y,v,bg);}fclose(background);}else for(int y=0;y<1216;++y)for(int x=0;x<684;++x)epd_draw_pixel(x,y,((x/52+y/48)&1)?240:32,bg);
  ui_pinpad_t pad={0};ui_pinpad_begin(&pad,bg,"输入密码");assert(pad.background&&pad.pressed==-1&&!pad.count);
  ui_pinpad_paint(fb,&pad,ui_pinpad_full());save(argv[3],fb);
+ // 入场仅改变下部底图；最终画面逐像素等于直接绘制，缓存及常驻内存不增长。
+ // Entry changes only lower artwork; its final pixels match direct painting, with no cache or resident memory growth.
+ memcpy(old,fb,684*1216/2);size_t before_entry=live;
+ ui_pinpad_paint_entry(fb,&pad,bg,144);save(argv[5],fb);assert(live==before_entry);
+ unsigned changes=0;for(int y=0;y<1216;++y)for(int x=0;x<684;++x){if(y<470)assert(pixel(old,x,y)==pixel(fb,x,y));else changes+=pixel(old,x,y)!=pixel(fb,x,y);}
+ assert(changes>0);assert(pixel(old,342,703)==pixel(fb,342,703));
+ ui_pinpad_paint(fb,&pad,ui_pinpad_backdrop_area());assert(!memcmp(old,fb,684*1216/2)&&live==before_entry);
+ ui_pinpad_paint_entry(fb,&pad,bg,255);assert(!memcmp(old,fb,684*1216/2));
+ ui_pinpad_paint_entry(fb,&pad,NULL,144);assert(!memcmp(old,fb,684*1216/2));
  uint8_t *back=malloc(684*1216/2);memcpy(back,pad.background,684*1216/2);size_t resident=live;
  EpdRect dirty;memcpy(old,fb,684*1216/2);assert(event(&pad,UI_GESTURE_PRESS,342,703,&dirty)==UI_PIN_CHANGED&&pad.pressed==5&&pad.count==0);
  ui_pinpad_paint_input(fb,&pad);save(argv[4],fb);assert(live==resident&&!memcmp(back,pad.background,684*1216/2));
@@ -114,10 +123,10 @@ int main(int argc,char **argv){
  if args.background:
   from PIL import Image
   b=Image.open(args.background).convert('L');assert b.size==(684,1216);(p/'bg.raw').write_bytes(b.tobytes())
- subprocess.run([str(p/'test'),str(args.font.resolve()),str(p/'bg.raw'),str(p/'idle.raw'),str(p/'pressed.raw')],check=True)
+ subprocess.run([str(p/'test'),str(args.font.resolve()),str(p/'bg.raw'),str(p/'idle.raw'),str(p/'pressed.raw'),str(p/'entry.raw')],check=True)
  if args.output:
   from PIL import Image
   args.output.mkdir(parents=True,exist_ok=True)
   # 原生帧读取值是灰阶编号<<4，PNG按编号*17显示真实白端点。
   # Native reads return level<<4; map PNG to level*17 for the actual white endpoint.
-  for state in ('idle','pressed'):Image.frombytes('L',(684,1216),(p/f'{state}.raw').read_bytes()).point(lambda v:(v>>4)*17).save(args.output/f'password-{state}.png')
+  for state in ('idle','pressed','entry'):Image.frombytes('L',(684,1216),(p/f'{state}.raw').read_bytes()).point(lambda v:(v>>4)*17).save(args.output/f'password-{state}.png')
