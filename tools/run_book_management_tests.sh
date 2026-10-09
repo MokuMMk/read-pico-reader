@@ -19,6 +19,7 @@ build/book-tests/book-history-backup
 python3 tools/book_ui_host_test.py
 python3 tools/reader_fullscreen_host_test.py
 python3 tools/lock_font_host_test.py
+python3 tools/lock_collage_host_test.py
 python3 tools/shelf_fast_cache_host_test.py
 python3 tools/home_cover_cache_host_test.py
 cc -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -fsanitize=address,undefined -Itools/settings_backup_stubs -Imain \

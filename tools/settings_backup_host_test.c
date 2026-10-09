@@ -70,13 +70,15 @@ static uint8_t loaded_hold=APP_READER_KEY_REFRESH;
 static bool has_hold;
 static uint8_t loaded_keys[3];
 static bool has_keys[3];
+static int loaded_shelf=-1, loaded_lock=-1;
+static bool loaded_shelf_v22;
 esp_err_t read_pico_sd_get_info(read_pico_sd_info_t *info) { info->mounted = card_mounted; return ESP_OK; }
 esp_err_t nvs_flash_init(void) { return ESP_OK; }
 esp_err_t nvs_flash_erase(void) { return ESP_OK; }
 esp_err_t nvs_open(const char *ns, int mode, nvs_handle_t *h) { (void)ns; (void)mode; *h = 1; return ESP_OK; }
 void nvs_close(nvs_handle_t h) { (void)h; }
-esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; if(!strcmp(key,NVS_KEY_HOLD_ACTION)&&has_hold){*value=loaded_hold;return ESP_OK;} for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])&&has_keys[i]){*value=loaded_keys[i];return ESP_OK;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH) && has_main_mode) { *value=loaded_main_mode;return ESP_OK; } if (!strcmp(key, "ui_fast")) { *value = test_loaded_fast; return ESP_OK; } if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } return ESP_FAIL; }
-esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) { (void)h; if(!strcmp(key,NVS_KEY_HOLD_ACTION)){loaded_hold=value;has_hold=true;} for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])){loaded_keys[i]=value;has_keys[i]=true;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH)) {has_main_mode=true;loaded_main_mode=value;} if (!strcmp(key, "ui_fast")) test_loaded_fast=value; return ESP_OK; }
+esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) { (void)h; if(!strcmp(key,NVS_KEY_SHELF_STYLE)&&loaded_shelf>=0){*value=(uint8_t)loaded_shelf;return ESP_OK;} if(!strcmp(key,NVS_KEY_SHELF_V22)&&loaded_shelf_v22){*value=1;return ESP_OK;} if(!strcmp(key,NVS_KEY_LOCK_STYLE)&&loaded_lock>=0){*value=(uint8_t)loaded_lock;return ESP_OK;} if(!strcmp(key,NVS_KEY_HOLD_ACTION)&&has_hold){*value=loaded_hold;return ESP_OK;} for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])&&has_keys[i]){*value=loaded_keys[i];return ESP_OK;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH) && has_main_mode) { *value=loaded_main_mode;return ESP_OK; } if (!strcmp(key, "ui_fast")) { *value = test_loaded_fast; return ESP_OK; } if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } return ESP_FAIL; }
+esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) { (void)h; if(!strcmp(key,NVS_KEY_SHELF_STYLE))loaded_shelf=value; if(!strcmp(key,NVS_KEY_SHELF_V22))loaded_shelf_v22=value==1; if(!strcmp(key,NVS_KEY_LOCK_STYLE))loaded_lock=value; if(!strcmp(key,NVS_KEY_HOLD_ACTION)){loaded_hold=value;has_hold=true;} for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])){loaded_keys[i]=value;has_keys[i]=true;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH)) {has_main_mode=true;loaded_main_mode=value;} if (!strcmp(key, "ui_fast")) test_loaded_fast=value; return ESP_OK; }
 esp_err_t nvs_get_str(nvs_handle_t h, const char *key, char *value, size_t *size) { (void)h; (void)key; (void)value; (void)size; return ESP_FAIL; }
 esp_err_t nvs_set_str(nvs_handle_t h, const char *key, const char *value) { (void)h; (void)key; (void)value; return ESP_OK; }
 esp_err_t nvs_erase_key(nvs_handle_t h, const char *key) { (void)h; (void)key; return ESP_OK; }
@@ -254,7 +256,7 @@ int main(void) {
            !strcmp(saved_wifi.password, "password123"));
     assert(s_book_px == 62 && s_book_tracking == 4 && s_book_indent == 3 &&
            s_book_rule_offset == 7 && s_reader_full_pages == 5);
-    assert(s_reader_turn_effect == 1 && s_reader_power_turn && s_reader_immersive && s_shelf_style == 3);
+    assert(s_reader_turn_effect == 1 && s_reader_power_turn && s_reader_immersive && s_shelf_style == 2);
     assert(s_staged_shutdown&&app_settings_auto_lock_minutes()==5);
     assert(s_ble_turner);
     assert(s_reader_hold_refresh);
@@ -442,6 +444,26 @@ int main(void) {
     app_settings_init(); assert(app_settings_system_font_size() == 200);
 
 
-    puts("settings backup host test passed (including 200% size persistence and restore)");
+    // 已删除的3/4样式在旧NVS与旧备份都回退到亚克力，1/2保持原选择。
+    // Retired styles 3/4 fall back from old NVS and backups; preserve retained choices 1/2.
+    for (int style=1;style<=4;++style) {
+        loaded_shelf=style;loaded_shelf_v22=true;s_shelf_style=1;
+        app_settings_init();assert(app_settings_shelf_style()==(style<=2?style:2));
+        assert(loaded_shelf==(style<=2?style:2));
+        s_shelf_style=(uint8_t)style;
+        assert(app_settings_backup_save()==ESP_OK);
+        s_shelf_style=1;assert(app_settings_backup_restore()==ESP_OK);
+        assert(app_settings_shelf_style()==(style<=2?style:2));
+    }
+    for (unsigned style=0;style<3;++style) {
+        app_settings_set_lock_style((uint8_t)style);
+        s_lock_style=99;app_settings_init();assert(app_settings_lock_style()==style);
+    }
+    app_settings_set_lock_style(2);s_wallpaper[0]=0;
+    assert(app_settings_backup_save()==ESP_OK);
+    s_lock_style=0;assert(app_settings_backup_restore()==ESP_OK&&app_settings_lock_style()==2);
+    assert(loaded_lock==2&&!s_wallpaper[0]);
+    assert(remove(BACKUP_FILE)==0);
+    puts("settings backup host test passed (200% sizes, retired shelf migration, collage persistence/restore without wallpaper)");
     return 0;
 }

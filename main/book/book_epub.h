@@ -45,6 +45,10 @@ uint32_t book_epub_total_bytes(const book_epub_t *book);
 uint32_t book_epub_chapter_byte_offset(const book_epub_t *book, size_t index);
 /// 从 OPF 封面声明读取 JPEG/PNG 原始数据；调用方 free。/ Read declared EPUB cover bytes; caller frees data.
 esp_err_t book_epub_cover(const char *path, uint8_t **data, size_t *size, bool *is_png);
+/// 在分配封面前检查调用方的内存预算；不改变阅读器原有封面接口。
+/// Check the caller's cover budget before allocating, preserving the reader's existing API.
+esp_err_t book_epub_cover_bounded(const char *path, uint8_t **data, size_t *size,
+                                  bool *is_png, size_t budget);
 /// 只读 OPF 的书名和作者；供书架显示。/ Read OPF title and creator for the shelf.
 esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, char *author, size_t author_cap);
 /// 只读取已有元数据缓存，锁屏路径不打开和解析 EPUB。

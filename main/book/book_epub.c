@@ -1544,7 +1544,8 @@ esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, ch
     return err;
 }
 
-esp_err_t book_epub_cover(const char *path, uint8_t **data, size_t *size, bool *is_png) {
+esp_err_t book_epub_cover_bounded(const char *path, uint8_t **data, size_t *size,
+                                  bool *is_png, size_t budget) {
     if (!path || !data || !size || !is_png) return ESP_ERR_INVALID_ARG;
     *data = NULL; *size = 0; *is_png = false;
     book_epub_t *book = psram(sizeof(*book));
@@ -1586,7 +1587,7 @@ esp_err_t book_epub_cover(const char *path, uint8_t **data, size_t *size, bool *
             int index = zip_find(book->zip, scratch->cover_path);
             size_t bytes = zip_entry_size(book->zip, index);
             if (index < 0) err = ESP_ERR_NOT_FOUND;
-            else if (!bytes || bytes > ZIP_OUTPUT_MAX) err = ESP_ERR_INVALID_SIZE;
+            else if (!bytes || bytes > ZIP_OUTPUT_MAX || bytes > budget) err = ESP_ERR_INVALID_SIZE;
             else {
                 uint8_t *image = psram(bytes);
                 if (!image) err = ESP_ERR_NO_MEM;
@@ -1599,6 +1600,10 @@ esp_err_t book_epub_cover(const char *path, uint8_t **data, size_t *size, bool *
         }
     }
     free(scratch); free(xml_text); book_epub_close(book); return err;
+}
+
+esp_err_t book_epub_cover(const char *path, uint8_t **data, size_t *size, bool *is_png) {
+    return book_epub_cover_bounded(path, data, size, is_png, ZIP_OUTPUT_MAX);
 }
 
 esp_err_t book_epub_image_dimensions(book_epub_t *book, size_t chapter, const char *src, unsigned *width, unsigned *height) {

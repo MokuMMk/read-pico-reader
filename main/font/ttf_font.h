@@ -64,6 +64,9 @@ bool ttf_font_ready(void);
 bool ttf_font_has_text(const char *text);
 int ttf_ascender(int size);
 int ttf_ascender_px(int pixel_height);
+/// 将设计的 em 字号换算为活动字体的原生栅格高度，不缩放字形位图。
+/// Convert a design em size to the active face's native raster height without bitmap scaling.
+int ttf_em_height_px(int em_size);
 
 void ttf_draw_text(
     uint8_t* framebuffer, int x, int y, int size, const char* text,
@@ -74,6 +77,10 @@ void ttf_draw_text_px(
     uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
     enum EpdFontFlags align, uint8_t fg, uint8_t bg
 );
+/// 将活动字体的原生字形写入有界覆盖率遮罩，复用现有字形缓存，不切换字库。
+/// Rasterize the active native face into a bounded coverage mask, reusing its glyph cache.
+bool ttf_text_mask_px(uint8_t *mask, unsigned width, unsigned height, int x,
+                      int baseline, int pixel_height, const char *text);
 /// 从左向右绘制，并在相邻字符之间加入固定像素间距。/ Draw left-aligned text with extra pixels between adjacent characters.
 void ttf_draw_text_px_spaced(
     uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,

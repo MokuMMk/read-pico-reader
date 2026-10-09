@@ -59,7 +59,9 @@ The board-specific flash and PSRAM timing is in `sdkconfig.defaults`. `sdkconfig
 
 On first mount, the firmware creates `books`, `fonts`, and `pictures` folders on the TF card if absent. No books are preloaded. The firmware embeds a subset of **Noto Sans SC Medium** for the system UI and distributes no additional font package. Users may place their own compatible fonts in `fonts` for reading. The embedded subset remains under the [SIL Open Font License](main/assets/OFL-Noto.txt).
 
-The “Covers and spines” bookshelf mode is labeled **experimental, not a formal release**. Other shelf styles remain available.
+Shelf styles retain “Dark rail” and “Acrylic shelf”, with nine books per page. Saved or restored pocket/spine choices fall back to acrylic.
+
+The local development build adds **Settings → Lock style → Library collage**. Real covers keep their source aspect ratios, rounded corners and a shared 15° tilt; recent books occupy the middle. The profile name appears at the upper left, with a large book count and smaller unit at the lower right. Text is rasterized from the selected system font, never the independent reading face; light-sleep wake restores the previous font context. The collage always uses 16 grays and stable dithering, regardless of the main refresh mode. SD caches under `.readpico/locks` rebuild when the profile, font or library changes. First-time cover preparation takes longer; low memory uses a safe lock fallback.
 
 TXT/EPUB books opened from any TF-card directory appear on the shelf after progress is saved, including on cached returns without a rescan. Bookshelf management → Remove from shelf hides selected books while keeping their files, progress, and favorites. Reading a removed book puts it back. Removal state persists and is included in configuration backups.
 

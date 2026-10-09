@@ -81,6 +81,7 @@ idf_component_register(
         "book/book_history_backup.c"
         "book/book_title.c"
         "book/book_ticket.c"
+        "book/book_lock_collage.c"
         "book/book_source.c"
         "book/book_index_cache.c"
         "book/book_txt.c"

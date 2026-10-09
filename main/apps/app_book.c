@@ -16,7 +16,7 @@
  * 用户修订：单本管理为书架弹窗；管理页用于批量操作。分页和排序保留勾选，筛选/应用搜索及重扫清除勾选。
  * 失败进度仅按变更路径失效；删除后的清理重试保留到本次开机结束，不随切页释放。
  * 卡失效时先保存进度并关闭阅读资源，再由主循环回退字体；禁止自动续读失效挂载。
- * 用户最新修订：常规书架每页九本、书脊样式十三本，收录导入及读过的书；移出仅隐藏，再读重新上架。
+ * 用户最新修订：书架只保留深色书轨与亚克力，每页九本；收录导入及读过的书，移出仅隐藏，再读重新上架。
  * 底栏保留首页/书架/文件/设置，设置直接进入设置页。
  * 用户修订：长按图书可用本机拼音输入编辑书名；阅读时长与翻页真实记录，供票根锁屏使用。
  * 用户最新修订：书名编辑可点选插入位置并用左右键微调，支持在文字中间插入和删除。
@@ -55,7 +55,7 @@
  * User revision: single-book actions use a shelf dialog; full management is for batches. Paging/sorting preserve selection; filtering/applied search and rescanning clear it.
  * Invalidate failed progress only for changed paths; retain deletion cleanup retries across page exits for this boot.
  * Lost media saves progress and closes reader resources before global font fallback; never auto-resume an invalid mount.
- * Latest user revision: regular shelf pages hold nine imported or read books and spine pages hold thirteen; removal hides until reread.
+ * Latest user revision: the two retained shelf styles hold nine imported or read books; retired styles restore as acrylic, and removal hides until reread.
  * The fourth tab opens Settings directly.
  * User revision: book details lead to an on-device Pinyin title editor; measured reading time and turns feed the ticket lock face.
  * Latest user revision: the title editor can place and move an insertion caret for edits in the middle of text.
@@ -433,7 +433,7 @@ static EpdRect progress_rect(void) {
     // The reader has no right-hand menu button; the footer spans the full content width.
     return (EpdRect){36, UI_BAR_TOP, UI_LOCK_WIDTH - 72, UI_BAR_H};
 }
-static int shelf_rows(void) { return app_settings_shelf_style() == 4 ? BOOK_ROWS : BOOK_GRID_ROWS; }
+static int shelf_rows(void) { return BOOK_GRID_ROWS; }
 #define SHELF_BOOK_LIFT_PX 16
 #define SHELF_FAST_COVER_WIDTH 164
 #define SHELF_FAST_COVER_HEIGHT 214
@@ -442,10 +442,6 @@ static int shelf_rows(void) { return app_settings_shelf_style() == 4 ? BOOK_ROWS
 #define SHELF_FAST_CACHE_RESERVE (512u * 1024u)
 static EpdRect row_rect(int row) {
     if (s_view != BULK) {
-        if (app_settings_shelf_style() == 4) {
-            if (row < 3) return (EpdRect){36 + row * 210, 224, 192, 260};
-            return (EpdRect){42 + (row - 3) * 60, 594, 54, 364};
-        }
         int col = row % 3, line = row / 3;
         int cell = (ui_content_width() - 2 * UI_GAP) / 3;
         return (EpdRect){UI_MARGIN + col * (cell + UI_GAP), 224 + line * 282, cell, 260};
@@ -539,7 +535,6 @@ static void prepare_covers(app_ctx_t* ctx) {
         s_covers[row].gray = NULL;
         s_covers[row].fast_bits = NULL;
         s_covers[row].index = index;
-        if (app_settings_shelf_style() == 4 && row >= 3) continue;
         if (index >= s_visible_count || index < 0 || s_shelf[index].removed) continue;
         bool pending = false;
         s_covers[row].gray = load_cover_gray(s_shelf[index].path, s_shelf[index].name,
@@ -638,54 +633,15 @@ static void draw_shelf_cover(uint8_t* fb, EpdRect card, int row, const char* nam
                    title, EPD_DRAW_ALIGN_CENTER, false);
     }
     ui_draw_round_rect(fb, image, 0, UI_GRAY_BLACK);
-    if (app_settings_shelf_style() == 4) {
-        // 正面书本右侧露出书页厚度。/ Expose a narrow page block beside face-out books.
-        epd_fill_rect((EpdRect){image.x + image.width + 1, image.y + 4, 8, image.height - 4}, 0xd0, fb);
-        for (int y = image.y + 9; y < image.y + image.height; y += 5)
-            ui_hairline(fb, y, image.x + image.width + 1, 8, 0x88);
-    }
     if (favorite) {
         draw_shelf_favorite_icon(fb, image.x + 10, image.y + 8, 24, 31,
                                  (app_settings_main_fast_refresh() && s_view == SHELF && fast_cover_matches(row, image))
                                      ? s_covers[row].fast_white_edge : cover_favorite_needs_white_edge(s_covers[row].gray, image));
     }
 }
-static void draw_shelf_spine(uint8_t *fb, EpdRect card, const char *name, bool favorite, int row) {
-    static const uint8_t shades[] = {0x48, 0x70, 0x98, 0x58, 0x88};
-    uint8_t shade = shades[row % 5];
-    epd_fill_rect(card, shade, fb);
-    ui_draw_round_rect(fb, card, 2, UI_GRAY_BLACK);
-    for (int y = card.y + 7; y < card.y + 31; y += 4)
-        ui_hairline(fb, y, card.x + 5, card.width - 10, 0xe0);
-    if (favorite) {
-        draw_shelf_favorite_icon(fb, card.x + 16, card.y + 38, 22, 29, shade < 0x90);
-    }
-    // 书脊文字逐字竖排，超出高度时截断；字形仍使用系统字体。
-    // Stack glyphs vertically on the spine, truncating at its foot while using the UI font.
-    const char *p = name;
-    int line = 0;
-    while (*p && line < 10) {
-        unsigned char head = (unsigned char)*p;
-        int bytes = head < 0x80 ? 1 : head < 0xe0 ? 2 : head < 0xf0 ? 3 : 4;
-        if (strlen(p) < (size_t)bytes) break;
-        char glyph[5] = {0};
-        memcpy(glyph, p, (size_t)bytes);
-        ui_text_vc(fb, card.x + card.width / 2, card.y + 92 + line * 26,
-                   21, glyph, EPD_DRAW_ALIGN_CENTER, shade < 0x80);
-        p += bytes;
-        ++line;
-    }
-}
 static void draw_shelf_furniture(uint8_t* fb) {
     uint8_t style = app_settings_shelf_style();
     if (!style) return;
-    if (style == 4) {
-        epd_fill_rect((EpdRect){36, 448, 612, 12}, 0x50, fb);
-        ui_hairline(fb, 448, 36, 612, 0x28);
-        epd_fill_rect((EpdRect){36, 960, 612, 14}, 0x48, fb);
-        ui_hairline(fb, 960, 36, 612, 0x20);
-        return;
-    }
     for (int row = 0; row < 3; ++row) {
         int top = 224 + row * 282;
         if (style == 1) {
@@ -697,14 +653,7 @@ static void draw_shelf_furniture(uint8_t* fb) {
             ui_draw_acrylic_guard(fb, acrylic);
             if (s_view == SHELF && app_settings_main_fast_refresh())
                 ui_acrylic_bw_rect(fb, acrylic);
-        } else if (style == 3) {
-            for (int col = 0; col < 3; ++col) {
-                int center = 130 + col * 205;
-                EpdRect pocket = {center - 90, top + 92, 180, 128};
-                ui_draw_frosted_pocket(fb, pocket);
-                if (s_view == SHELF && app_settings_main_fast_refresh())
-                    ui_acrylic_bw_rect(fb, pocket);
-            }
+
         }
     }
 }
@@ -2293,9 +2242,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         // 封面抽出只改变书本位置，层板及触摸目标保持原位。
         // Lifting changes the book position only; shelf furniture and touch targets stay put.
         if (s_pressed_control == row) r.y -= SHELF_BOOK_LIFT_PX;
-        if (app_settings_shelf_style() == 4 && row >= 3)
-            draw_shelf_spine(fb, r, name, s_shelf[i].favorite, row);
-        else draw_shelf_cover(fb, r, row, name, s_shelf[i].favorite);
+        draw_shelf_cover(fb, r, row, name, s_shelf[i].favorite);
     }
     draw_shelf_furniture(fb);
     draw_shelf_pager(fb, s_visible_count, ctx->leaf, leaves());

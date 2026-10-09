@@ -23,6 +23,7 @@
 #include "app.h"
 #include "app_font_context.h"
 #include "book_cover.h"
+#include "book_lock_collage.h"
 #include "book_ticket.h"
 #include "display.h"
 #include "driver/gpio.h"
@@ -361,14 +362,16 @@ void enter_lock_and_sleep(
     epd_poweron();
     epd_clear();
     epd_hl_set_all_white(hl);
-    bool ticket = app_settings_lock_style() == 0;
+    uint8_t lock_style = app_settings_lock_style();
+    bool ticket = lock_style == 0;
+    bool system_lock = ticket || lock_style == 2;
     app_lock_font_t lock_font = {0};
-    if (ticket) app_font_begin_lock(&lock_font);
+    if (system_lock) app_font_begin_lock(&lock_font);
     // 阅读票根独占锁屏画布：始终先画最近书籍封面，再叠票根；自定义壁纸只属于壁纸模式。
     // Ticket mode owns the lock canvas: book cover first, ticket on top. Custom wallpaper is wallpaper-only.
     bool lock_drawn = ticket
         ? book_ticket_draw(framebuffer, reader_background)
-        : draw_wallpaper(framebuffer);
+        : lock_style == 2 ? book_lock_collage_draw(framebuffer) : draw_wallpaper(framebuffer);
     if (!lock_drawn) {
         epd_hl_set_all_white(hl);
         ui_draw_full_image(framebuffer, lock_4bpp_bin_start);
@@ -387,7 +390,7 @@ void enter_lock_and_sleep(
         app_enter_host_sleep(APP_SLEEP_DEEP);
     }
     pico_boot_clear_resume();
-    if (ticket) app_font_end_lock(&lock_font);
+    if (system_lock) app_font_end_lock(&lock_font);
     read_pico_transfer_resume_after_sleep();
 
     // 参考帧和屏幕都归零，回到主循环后由当前页自己画一遍，不必知道是哪一页。

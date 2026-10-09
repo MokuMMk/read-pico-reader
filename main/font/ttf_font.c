@@ -1584,7 +1584,9 @@ static int size_to_px(int size) {
 
 static int clamp_px(int pixel_height) {
     if (pixel_height < 12) return 12;
-    if (pixel_height > 120) return 120;
+    // 锁屏91em需要更高的原生栅格高度；仍小于8位缓存键上限。
+    // The 91em lock count needs a taller native raster; stay below the byte-sized cache key limit.
+    if (pixel_height > 160) return 160;
     return pixel_height;
 }
 
@@ -1835,6 +1837,15 @@ int ttf_ascender_px(int pixel_height) {
     return (int)lroundf(
         raw_ascent_units * stbtt_ScaleForPixelHeight(&font_info, (float)pixel_height)
     );
+}
+
+int ttf_em_height_px(int em_size) {
+    if (!font_ready) return clamp_px(em_size);
+    if (em_size < 1) em_size = 1;
+    if (em_size > 120) em_size = 120;
+    float scale = stbtt_ScaleForPixelHeight(&font_info, 1.f);
+    float em = stbtt_ScaleForMappingEmToPixels(&font_info, (float)em_size);
+    return scale > 0 && isfinite(em / scale) ? clamp_px((int)lroundf(em / scale)) : clamp_px(em_size);
 }
 
 void ttf_font_cache_clear(void) {
@@ -2120,6 +2131,33 @@ void ttf_draw_text_px(
         }
         cursor_x += glyph->advance_x;
     }
+}
+
+bool ttf_text_mask_px(uint8_t *mask, unsigned width, unsigned height, int x,
+                      int baseline, int pixel_height, const char *text) {
+    if (!font_ready || !mask || !text || !width || !height ||
+        width > 684u || height > 180u) return false;
+    pixel_height = clamp_px(pixel_height);
+    ttf_cover_lut_init();
+    warm_text_io(pixel_height, text);
+    const char *cursor = text;
+    while (*cursor) {
+        const glyph_entry_t *glyph = get_glyph(decode_utf8(&cursor), pixel_height);
+        if (!glyph) return false;
+        for (int gy = 0; glyph->bitmap && gy < glyph->height; ++gy) {
+            int yy = baseline - glyph->top + gy;
+            if (yy < 0 || (unsigned)yy >= height) continue;
+            for (int gx = 0; gx < glyph->width; ++gx) {
+                int xx = x + glyph->left + gx;
+                if (xx < 0 || (unsigned)xx >= width) continue;
+                uint8_t alpha = s_cover[glyph->bitmap[gy * glyph->width + gx]];
+                uint8_t *pixel = &mask[(size_t)yy * width + (unsigned)xx];
+                if (alpha > *pixel) *pixel = alpha;
+            }
+        }
+        x += glyph->advance_x;
+    }
+    return true;
 }
 
 void ttf_draw_text_px_spaced(

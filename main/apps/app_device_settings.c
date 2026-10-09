@@ -30,6 +30,7 @@
 #include "app_registry.h"
 #include "app_transfer_mode.h"
 #include "settings.h"
+#include "book_lock_collage.h"
 #include "boot_state.h"
 #include "ble_page_turner.h"
 #include "read_pico_pmu.h"
@@ -70,6 +71,7 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_TEXT_EDIT } settings_page_t;
 static settings_page_t s_page;
 static int s_style_scroll, s_main_scroll;
+static bool s_collage_prepare_pending;
 static bool s_scroll_drag_consumed, s_scroll_present_pending;
 // 蓝牙翻页器子页：滚动位置、正在学习哪个动作（0 未学，1 上一页，2 下一页）、提示行。
 // Bluetooth sub-page: scroll offset, which action is being learned (0 idle, 1 prev, 2 next),
@@ -626,21 +628,6 @@ static void setting_toggle(uint8_t *fb, int y, const char *title, const char *de
 static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
     if (top < 242 || top + 170 >= UI_NAV_TOP) return;
     const int left = 99;
-    if (style == 4) {
-        for (int i = 0; i < 2; ++i) {
-            EpdRect cover = {left + 20 + i * 128, top + 3, 92, 135};
-            epd_fill_rect(cover, i ? 0x78 : 0x48, fb);
-            ui_draw_round_rect(fb, cover, 0, 0x28);
-            epd_fill_rect((EpdRect){cover.x + cover.width + 1, cover.y + 5, 6, 130}, 0xc8, fb);
-        }
-        for (int i = 0; i < 7; ++i) {
-            EpdRect spine = {left + 286 + i * 28, top + 29, 24, 109};
-            epd_fill_rect(spine, i % 2 ? 0x78 : 0x48, fb);
-            ui_draw_round_rect(fb, spine, 0, 0x28);
-        }
-        epd_fill_rect((EpdRect){left, top + 140, 486, 12}, 0x40, fb);
-        return;
-    }
     for (int i = 0; i < 3; ++i) {
         int x = left + 20 + i * 155;
         EpdRect cover = {x, top, 116, 145};
@@ -656,9 +643,7 @@ static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
         ui_hairline(fb, top + 143, left, 486, 0x80);
     } else if (style == 2) {
         ui_draw_acrylic_guard(fb, (EpdRect){left, top + 94, 486, 70});
-    } else {
-        for (int i = 0; i < 3; ++i)
-            ui_draw_frosted_pocket(fb, (EpdRect){left + 8 + i * 155, top + 65, 143, 100});
+
     }
 }
 
@@ -711,10 +696,10 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_page == SETTINGS_SHELF_STYLE) {
         ui_nav_back(fb, 36, 79);
         ui_text_vc(fb, 342, 107, 34, "书架样式", EPD_DRAW_ALIGN_CENTER, false);
-        ui_text(fb, 36, 207, 23, "常规每页 9 本 · 书脊模式为测试版", EPD_DRAW_ALIGN_LEFT, false);
-        static const char *const styles[] = {"深色书轨", "亚克力书架", "半透明书袋", "封面与书脊 · 测试版"};
-        static const char *const descriptions[] = {"封面落在书轨上", "透明亚克力挡板", "每本独立透明书袋", "非正式版本"};
-        for (int i = 0; i < 4; ++i) {
+        ui_text(fb, 36, 207, 23, "每页 9 本 · 选择书架外观", EPD_DRAW_ALIGN_LEFT, false);
+        static const char *const styles[] = {"深色书轨", "亚克力书架"};
+        static const char *const descriptions[] = {"封面落在书轨上", "透明亚克力挡板"};
+        for (int i = 0; i < 2; ++i) {
             int y = 263 + i * 253 - s_style_scroll;
             if (y + 230 < 242 || y > 1095) continue;
             EpdRect card = {36, y, 612, 230};
@@ -848,10 +833,10 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_page == SETTINGS_LOCK_STYLE) {
         back_header(fb, "锁屏样式");
         section(fb, 248, "选择电源键锁屏后的画面");
-        const char *labels[] = {"壁纸锁屏", "阅读票根"};
-        const char *details[] = {"使用 TF 卡中的 JPG / PNG 图片", "书封、进度和阅读记录"};
-        const uint8_t values[] = {1, 0};
-        for (int i = 0; i < 2; ++i) {
+        const char *labels[] = {"壁纸锁屏", "阅读票根", "书架拼贴"};
+        const char *details[] = {"使用 TF 卡中的 JPG / PNG 图片", "书封、进度和阅读记录", "真实封面 · 名称与数量 · 系统字体"};
+        const uint8_t values[] = {1, 0, 2};
+        for (int i = 0; i < 3; ++i) {
             EpdRect box = {36, 300 + i * 154, 612, 132};
             bool active = app_settings_lock_style() == values[i];
             settings_card(fb, box, 22, active ? 0xd0 : UI_GRAY_WHITE, 0x70);
@@ -859,9 +844,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text(fb, 64, box.y + 79, 20, details[i], EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(609, box.y + 66, 8, UI_GRAY_BLACK, fb);
         }
-        ui_text(fb, 54, 659, 22, "选择壁纸后，可继续从 TF 卡更换图片", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 54, 813, 22, "选择壁纸后，可继续从 TF 卡更换图片", EPD_DRAW_ALIGN_LEFT, false);
         if (app_settings_wallpaper_path()[0])
-            row(fb, 710, "当前壁纸", strrchr(app_settings_wallpaper_path(), '/') + 1);
+            row(fb, 862, "当前壁纸", strrchr(app_settings_wallpaper_path(), '/') + 1);
         ui_nav_draw(fb, 3);
         return;
     }
@@ -1202,12 +1187,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     fit_value(font, 235);
     char size[32]; snprintf(size, sizeof(size), "%u%%  ›", app_settings_system_font_size());
     char contrast[32]; snprintf(contrast, sizeof(contrast), "%u%%  ›", app_settings_system_contrast());
-    static const char *const styles[] = {"深色书轨  ›", "深色书轨  ›", "亚克力书架  ›", "半透明书袋  ›", "书脊测试版  ›"};
+    static const char *const styles[] = {"亚克力书架  ›", "深色书轨  ›", "亚克力书架  ›"};
     char signature_value[96];
     snprintf(signature_value, sizeof(signature_value), "%s  ›",
              app_settings_status_signature()[0] ? app_settings_status_signature() : "未设置");
     fit_value(signature_value, 235);
-    const char *reading_values[] = {font, size, contrast, styles[app_settings_shelf_style()],
+    const char *reading_values[] = {font, size, contrast, styles[app_settings_shelf_style() <= 2 ? app_settings_shelf_style() : 0],
                                     signature_value, app_settings_home_full_refresh() ? "开启  ›" : "关闭  ›",
                                     app_settings_main_refresh_mode() == APP_MAIN_REFRESH_FAST ? "快刷  ›" :
                                     app_settings_main_refresh_mode() == APP_MAIN_REFRESH_WATER ? "水波纹  ›" : "普通  ›"};
@@ -1219,7 +1204,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (idle_minutes) snprintf(idle_value, sizeof(idle_value), "%u 分钟  ›", idle_minutes);
     else strcpy(idle_value, "关闭  ›");
     const char *display_labels[] = {"锁屏样式", "关机睡眠", "日期与时间", "自动休眠锁屏"};
-    const char *display_values[] = {app_settings_lock_style() ? "壁纸  ›" : "阅读票根  ›",
+    const char *display_values[] = {app_settings_lock_style() == 2 ? "书架拼贴  ›" : app_settings_lock_style() == 1 ? "壁纸  ›" : "阅读票根  ›",
                                     app_settings_staged_shutdown() ? "先浅后深  ›" : "彻底断电  ›",
                                     "设置  ›", idle_value};
     static const int display_icons[] = {5, 9, 6, 14};
@@ -1245,6 +1230,7 @@ static void on_enter(app_ctx_t *ctx) {
     s_ble_feedback[0] = 0;
     s_page = SETTINGS_MAIN;
     s_style_scroll = s_main_scroll = s_font_page = s_wallpaper_page = 0;
+    s_collage_prepare_pending = false;
     s_scroll_drag_consumed = s_scroll_present_pending = false;
     s_wallpaper_selected = -1;
     s_wallpaper_confirm = s_wallpaper_preview_ok = false;
@@ -1286,6 +1272,24 @@ static bool ble_receive_feedback(void) {
 
 static app_redraw_t profile_editor_paint(app_ctx_t *ctx, bool field);
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    if (s_collage_prepare_pending && s_page == SETTINGS_LOCK_STYLE) {
+        s_collage_prepare_pending = false;
+        // 先让选中反馈可见，再生成卡上缓存；render 本身只绘图。
+        // Show selection feedback first, then prepare the SD cache; render stays paint-only.
+        const size_t bytes = UI_LOCK_WIDTH * UI_LOCK_HEIGHT / 2u;
+        size_t available = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        uint8_t *preview = available > bytes + 1024u * 1024u
+            ? heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;
+        if (preview) {
+            app_lock_font_t saved;
+            app_font_begin_lock(&saved);
+            (void)book_lock_collage_draw(preview);
+            app_font_end_lock(&saved);
+            free(preview);
+        }
+        return APP_REDRAW_NONE;
+    }
+
     if (s_page == SETTINGS_TEXT_EDIT) {
         if (ctx->consumed) return APP_REDRAW_NONE;
         bool held = !ctx->released && ctx->touch && ctx->touch->touched && ctx->touch->count == 1;
@@ -1549,15 +1553,6 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         s_wallpaper_page = next / 8;
         return APP_REDRAW_PAGE;
     }
-    if (s_page == SETTINGS_SHELF_STYLE && (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
-        int next = s_style_scroll + (ev->type == UI_GESTURE_SWIPE_U ? 253 : -253);
-        if (next < 0) next = 0;
-        if (next > 253) next = 253;
-        if (next == s_style_scroll) return APP_REDRAW_NONE;
-        s_style_scroll = next;
-        s_scroll_present_pending = true;
-        return APP_REDRAW_AREA;
-    }
     if ((s_page == SETTINGS_SYSTEM_FONT || s_page == SETTINGS_WALLPAPER) &&
         (ev->type == UI_GESTURE_SWIPE_U || ev->type == UI_GESTURE_SWIPE_D)) {
         int *page = s_page == SETTINGS_SYSTEM_FONT ? &s_font_page : &s_wallpaper_page;
@@ -1634,7 +1629,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
     if (s_page == SETTINGS_SHELF_STYLE) {
         if (y < 190) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 2; ++i) {
             if (y >= 263 + i * 253 - s_style_scroll && y < 493 + i * 253 - s_style_scroll && y < 1096) {
                 app_settings_set_shelf_style((uint8_t)(i + 1));
                 s_page = SETTINGS_MAIN;
@@ -1708,7 +1703,12 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             app_settings_set_lock_style(0);
             return APP_REDRAW_PAGE;
         }
-        if (y >= 710 && app_settings_wallpaper_path()[0]) {
+        if (y >= 608 && y < 740) {
+            app_settings_set_lock_style(2);
+            s_collage_prepare_pending = true;
+            return APP_REDRAW_PAGE;
+        }
+        if (y >= 862 && app_settings_wallpaper_path()[0]) {
             wallpaper_scan();
             s_page = SETTINGS_WALLPAPER;
             return APP_REDRAW_PAGE;
@@ -1990,6 +1990,7 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 static void settings_exit(app_ctx_t *ctx) {
+    s_collage_prepare_pending = false;
     s_upgrade_job = UPGRADE_JOB_NONE;
     (void)ctx; ui_keyboard_end(); pico_online_cancel_join(); ble_pt_scan_stop(); s_ble_learning = 0;
 }

@@ -65,6 +65,7 @@ void app_settings_set_system_font_size(uint8_t percent);
 uint8_t app_settings_system_contrast(void);
 void app_settings_set_system_contrast(uint8_t percent);
 /// 锁屏样式和壁纸路径。/ Lock style and wallpaper image path.
+/// 锁屏：0阅读票根、1壁纸、2书架拼贴。/ Lock: ticket (0), wallpaper (1), library collage (2).
 uint8_t app_settings_lock_style(void);
 void app_settings_set_lock_style(uint8_t style);
 const char* app_settings_wallpaper_path(void);
@@ -159,7 +160,7 @@ void app_settings_set_book_margin(uint8_t px);
 /// 段后距离百分比，0/25/50/75。/ Paragraph-gap percentage: 0/25/50/75.
 uint8_t app_settings_book_paragraph_spacing(void);
 void app_settings_set_book_paragraph_spacing(uint8_t percent);
-/// 书架样式：1 深色书轨、2 亚克力挡板、3 半透明书袋、4 封面与书脊。/ Shelf style: rail, acrylic, pocket, or covers and spines.
+/// 书架样式：1 深色书轨、2 亚克力；旧3/4安全回退2。/ Shelf style: rail (1), acrylic (2); retired IDs 3/4 fall back to 2.
 uint8_t app_settings_shelf_style(void);
 void app_settings_set_shelf_style(uint8_t style);
 /// 当前 TF 卡书籍目录和字体目录；默认分别为 /sdcard/books、/sdcard/fonts。

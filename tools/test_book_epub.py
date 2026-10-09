@@ -80,6 +80,12 @@ def main():
             return lambda files: files.__setitem__('OPS/pkg/book.opf', files['OPS/pkg/book.opf'].replace(old, new))
 
         case('good_paths')
+        def bounded_cover(files):
+            files['OPS/pkg/book.opf'] = files['OPS/pkg/book.opf'].replace(
+                '</manifest>', '<item id="image-cover" href="../covers/test.png" '
+                'media-type="image/png" properties="cover-image"/></manifest>')
+            files['OPS/covers/test.png'] = bytes(range(128))
+        case('good_bounded_cover', bounded_cover)
         case('good_no_cover', lambda f: f.__setitem__(
             'OPS/pkg/book.opf', f['OPS/pkg/book.opf'].replace('properties="cover nav"', 'properties="nav"')))
         case('good_navfallback', lambda f: f.__setitem__('OPS/toc/book.ncx', '<ncx><broken></ncx>'))

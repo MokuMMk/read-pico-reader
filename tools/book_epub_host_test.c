@@ -19,6 +19,20 @@ int main(int argc, char **argv) {
             printf("epub rejection passed: %s\n", argv[a]); continue;
         }
         assert(book_epub_open(argv[a], &book) == ESP_OK && book);
+        if (strstr(argv[a], "good_bounded_cover")) {
+            book_epub_close(book);
+            uint8_t *cover = NULL; size_t size = 0; bool png = false;
+            for (size_t budget = 0; budget < 128; budget += 127) {
+                assert(book_epub_cover_bounded(argv[a], &cover, &size, &png, budget) == ESP_ERR_INVALID_SIZE);
+                assert(!cover && !size && !png);
+            }
+            assert(book_epub_cover_bounded(argv[a], &cover, &size, &png, 128) == ESP_OK);
+            assert(cover && size == 128 && png);
+            for (unsigned i = 0; i < 128; ++i) assert(cover[i] == i);
+            free(cover);
+            printf("epub cover budget/cleanup fixture passed: %s\n", argv[a]);
+            continue;
+        }
         if (strstr(argv[a], "good_chapter_breaks_")) {
             bool auxiliary = strstr(argv[a], "auxiliary") != NULL;
             bool named = strstr(argv[a], "named") != NULL;
