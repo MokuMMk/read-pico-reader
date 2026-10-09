@@ -10,9 +10,12 @@
  * User continues fast responsiveness tuning: normalize eight pixels per 32-bit word when no gray bands exist and avoid rewriting binary PSRAM words; retain phases, cleanup and navigation bounds without extra caches.
  * 用户修订：三种主页刷新模式均固定底栏，仅局部移动横条；普通保留原灰阶及内容区清理周期。快刷棋盘格亚克力与封面合并黑白输出。首次进入、解锁及手动全刷仍重建完整底栏，不得伪造back。
  * User revision: all main-screen modes retain navigation and move only its marker locally; ordinary retains original grays and body cleanup cadence. Fast checkerboard acrylic and covers share one BW target. Initial entry, unlock and explicit full refresh rebuild complete navigation; never fabricate back.
+ * 用户修订：所有推屏及欠载恢复与 OTA 擦写共用递归锁；无升级任务时保持原波形、范围和节奏。
+ * User revision: serialize all display output and underrun recovery with OTA flash operations; keep existing waveforms, bounds and cadence outside updates.
  */
 
 #include "display.h"
+#include "ota_online.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -400,7 +403,7 @@ static enum EpdDrawError hl_update(
     return protected_area && result != EPD_DRAW_SUCCESS ? main_recover(hl, result) : result;
 }
 
-enum EpdDrawError update_display_mode(
+static enum EpdDrawError update_display_mode_unlocked(
     EpdiyHighlevelState* hl, enum EpdDrawMode mode
 ) {
     epd_poweron();
@@ -409,7 +412,7 @@ enum EpdDrawError update_display_mode(
     return result;
 }
 
-enum EpdDrawError update_display_mode_diff(
+static enum EpdDrawError update_display_mode_diff_unlocked(
     EpdiyHighlevelState* hl, enum EpdDrawMode mode
 ) {
     epd_poweron();
@@ -418,7 +421,7 @@ enum EpdDrawError update_display_mode_diff(
     return result;
 }
 
-enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl) {
+static enum EpdDrawError update_display_fast_page_unlocked(EpdiyHighlevelState* hl) {
     enum EpdDrawError navigation;
     if (main_begin(hl, &navigation)) return navigation;
     enum EpdDrawError intercepted;
@@ -447,7 +450,7 @@ enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl) {
     return result;
 }
 
-enum EpdDrawError update_display_from_white_with(
+static enum EpdDrawError update_display_from_white_with_unlocked(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 ) {
     enum EpdDrawError intercepted;
@@ -463,11 +466,11 @@ enum EpdDrawError update_display_from_white_with(
     return result;
 }
 
-enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl) {
+static enum EpdDrawError update_display_from_white_unlocked(EpdiyHighlevelState* hl) {
     return update_display_from_white_with(hl, &E0470_WAVEFORM, MODE_GC16);
 }
 
-enum EpdDrawError update_display_white(EpdiyHighlevelState* hl) {
+static enum EpdDrawError update_display_white_unlocked(EpdiyHighlevelState* hl) {
     epd_hl_set_all_white(hl);
     return update_display_full(hl);
 }
@@ -484,14 +487,14 @@ bool display_take_white_exit(void) {
     return hold;
 }
 
-enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
+static enum EpdDrawError update_display_full_unlocked(EpdiyHighlevelState* hl) {
     epd_poweron();
     enum EpdDrawError result = hl_update(hl, &E0470_WAVEFORM, MODE_GC16, true, NULL, false);
     rails_keepalive();
     return result;
 }
 
-enum EpdDrawError update_display_image_gray(EpdiyHighlevelState* hl) {
+static enum EpdDrawError update_display_image_gray_unlocked(EpdiyHighlevelState* hl) {
     enum EpdDrawError intercepted;
     if (main_before_update(hl, &intercepted)) return intercepted;
     // 图片保留十六级原始灰阶；白底和完整 48 相波形稳定呈现层次。
@@ -510,7 +513,7 @@ enum EpdDrawError update_display_image_gray(EpdiyHighlevelState* hl) {
 
 // 指定波形整屏刷一次，刷完把默认波形装回去。用来 A/B 两条灰阶表。
 // Present the whole screen with a given waveform, then restore the default. Used to A/B two gray tables.
-enum EpdDrawError update_display_with(
+static enum EpdDrawError update_display_with_unlocked(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 ) {
     epd_poweron();
@@ -521,7 +524,7 @@ enum EpdDrawError update_display_with(
     return result;
 }
 
-enum EpdDrawError update_display_area_with(
+static enum EpdDrawError update_display_area_with_unlocked(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 ) {
@@ -533,7 +536,7 @@ enum EpdDrawError update_display_area_with(
     return result;
 }
 
-enum EpdDrawError update_display_area_diff_with(
+static enum EpdDrawError update_display_area_diff_with_unlocked(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 ) {
@@ -545,7 +548,7 @@ enum EpdDrawError update_display_area_diff_with(
     return result;
 }
 
-enum EpdDrawError update_display_area_full_with(
+static enum EpdDrawError update_display_area_full_with_unlocked(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 ) {
@@ -557,7 +560,7 @@ enum EpdDrawError update_display_area_full_with(
     return result;
 }
 
-enum EpdDrawError update_display_water_turn(EpdiyHighlevelState* hl, EpdRect area,
+static enum EpdDrawError update_display_water_turn_unlocked(EpdiyHighlevelState* hl, EpdRect area,
                                              e0470_turn_dir_t dir) {
     enum EpdDrawError intercepted;
     if (main_before_update(hl, &intercepted)) return intercepted;
@@ -594,7 +597,7 @@ enum EpdDrawError update_display_water_turn(EpdiyHighlevelState* hl, EpdRect are
 // Underrun fallback: drop to the safe clock and wipe the panel white so later differentials have a clean reference.
 int display_pclk_mhz(void) { return s_pclk_mhz; }
 
-void guard_draw_result(EpdiyHighlevelState* hl, enum EpdDrawError result) {
+static void guard_draw_result_unlocked(EpdiyHighlevelState* hl, enum EpdDrawError result) {
     if (!(result & EPD_DRAW_EMPTY_LINE_QUEUE)) return;
     display_main_transition_cancel();
     s_pclk_mhz = DISPLAY_PCLK_SAFE_MHZ;
@@ -612,4 +615,120 @@ void guard_draw_result(EpdiyHighlevelState* hl, enum EpdDrawError result) {
     s_page_refreshes = 0;
     rails_keepalive();
     ESP_LOGW(TAG, "line queue underrun, pclk back to %d MHz, recovery=%d", DISPLAY_PCLK_SAFE_MHZ, recovered);
+}
+
+// 统一硬件出口，递归调用也必须覆盖整个扫描过程。/ Guard complete scans, including recursive fallback paths.
+enum EpdDrawError update_display_mode(
+    EpdiyHighlevelState* hl, enum EpdDrawMode mode
+) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_mode_unlocked(hl, mode);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_mode_diff(
+    EpdiyHighlevelState* hl, enum EpdDrawMode mode
+) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_mode_diff_unlocked(hl, mode);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_fast_page(EpdiyHighlevelState* hl) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_fast_page_unlocked(hl);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_from_white_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
+) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_from_white_with_unlocked(hl, waveform, mode);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_from_white(EpdiyHighlevelState* hl) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_from_white_unlocked(hl);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_white(EpdiyHighlevelState* hl) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_white_unlocked(hl);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_full_unlocked(hl);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_image_gray(EpdiyHighlevelState* hl) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_image_gray_unlocked(hl);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
+) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_with_unlocked(hl, waveform, mode);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_area_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
+    EpdRect area
+) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_area_with_unlocked(hl, waveform, mode, area);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_area_diff_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
+    EpdRect area
+) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_area_diff_with_unlocked(hl, waveform, mode, area);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_area_full_with(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
+    EpdRect area
+) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_area_full_with_unlocked(hl, waveform, mode, area);
+    pico_online_display_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_water_turn(EpdiyHighlevelState* hl, EpdRect area,
+                                             e0470_turn_dir_t dir) {
+    bool held = pico_online_display_begin();
+    enum EpdDrawError result = update_display_water_turn_unlocked(hl, area, dir);
+    pico_online_display_end(held);
+    return result;
+}
+
+void guard_draw_result(EpdiyHighlevelState* hl, enum EpdDrawError result) {
+    bool held = pico_online_display_begin();
+    guard_draw_result_unlocked(hl, result);
+    pico_online_display_end(held);
 }

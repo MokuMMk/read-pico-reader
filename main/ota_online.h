@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  * 中文：联网更新的版本清单与可取消后台任务。/ English: release metadata and cancellable online update jobs.
  * 冻结：只写空闲应用槽，完整校验后由 UI 确认启动。/ Frozen: only write the inactive app slot; UI commits boot after verification.
+ * 用户修订：固件擦写与屏幕推送互斥，进度只追加变化像素；不并行驱动 PSRAM 画面和闪存擦写。
+ * User revision: serialize firmware flash operations with display output; append progress changes without concurrent PSRAM scans and flash writes.
  */
 #pragma once
 #include <stdbool.h>
@@ -41,5 +43,8 @@ esp_err_t pico_online_download(void);
 bool pico_online_busy(void);
 void pico_online_get_status(pico_update_status_t *status);
 void pico_online_cancel_join(void);
+/// 刷屏与 OTA 擦写共用递归锁；未初始化 OTA 时不分配内存。/ Recursive display/OTA exclusion; no allocation before OTA initialization.
+bool pico_online_display_begin(void);
+void pico_online_display_end(bool held);
 /// 已验证镜像切换启动槽；失败不切换。/ Select a verified image; failures keep the existing boot slot.
 esp_err_t pico_online_commit(void);

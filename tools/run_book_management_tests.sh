@@ -77,7 +77,7 @@ for test in ota_release ota_online; do
     cc -std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations -fsanitize=address,undefined \
         -Itools/ota_stubs -Imain -Imanaged_components/espressif__cjson/cJSON \
         "tools/${test}_host_test.c" main/ota_release.c managed_components/espressif__cjson/cJSON/cJSON.c \
-        -lm -o "build/book-tests/${test}"
+        -lm -pthread -o "build/book-tests/${test}"
     "build/book-tests/${test}"
 done
 python3 tools/ota_ui_host_test.py

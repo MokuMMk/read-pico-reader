@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  * 中文：HTTPS 分块下载、完整性校验和可取消升级任务。/ English: streamed HTTPS updates, integrity checks and cancellable workers.
  * 冻结：禁止覆盖当前槽；离页或锁屏先等待任务结束。/ Frozen: never overwrite the running slot; join before leaving or locking.
+ * 用户修订：分段擦除并串行化闪存与屏幕推送，启动前检查连续内存，低内存安全失败。
+ * User revision: erase incrementally and serialize flash with display output; require memory headroom and fail safely on shortage.
  */
 #include "ota_online.h"
 #include "esp_app_desc.h"
@@ -24,7 +26,7 @@
 #include <strings.h>
 #include <time.h>
 
-static SemaphoreHandle_t s_mutex, s_done;
+static SemaphoreHandle_t s_mutex, s_done, s_flash_display;
 static pico_update_status_t *s_status;
 static atomic_bool s_cancel;
 static bool s_joinable, s_download;
@@ -34,7 +36,42 @@ static bool initialize(void) {
     if (!s_status) s_status = heap_caps_calloc(1, sizeof(*s_status), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_mutex) s_mutex = xSemaphoreCreateMutex();
     if (!s_done) s_done = xSemaphoreCreateBinary();
-    return s_status && s_mutex && s_done;
+    if (!s_flash_display) s_flash_display = xSemaphoreCreateRecursiveMutex();
+    return s_status && s_mutex && s_done && s_flash_display;
+}
+bool pico_online_display_begin(void) {
+    return s_flash_display && xSemaphoreTakeRecursive(s_flash_display, portMAX_DELAY) == pdTRUE;
+}
+void pico_online_display_end(bool held) {
+    if (held) xSemaphoreGiveRecursive(s_flash_display);
+}
+static bool memory_available(size_t internal_min, size_t internal_block, size_t external_min) {
+    const unsigned internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const unsigned external = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    return heap_caps_get_free_size(internal) >= internal_min &&
+        heap_caps_get_largest_free_block(internal) >= internal_block &&
+        heap_caps_get_free_size(external) >= external_min &&
+        heap_caps_get_largest_free_block(external) >= 32768;
+}
+// 锁只覆盖闪存操作，不覆盖网络等待、状态互斥锁或任务收尾，避免取消/刷屏互相等待。
+// Lock flash operations only, excluding network waits, status locks and joins to avoid cancellation/display deadlocks.
+static esp_err_t flash_begin(const esp_partition_t *target, esp_ota_handle_t *handle) {
+    bool held = pico_online_display_begin();
+    esp_err_t error = esp_ota_begin(target, OTA_WITH_SEQUENTIAL_WRITES, handle);
+    pico_online_display_end(held);
+    return error;
+}
+static esp_err_t flash_write(esp_ota_handle_t handle, const void *data, size_t size) {
+    bool held = pico_online_display_begin();
+    esp_err_t error = esp_ota_write(handle, data, size);
+    pico_online_display_end(held);
+    return error;
+}
+static esp_err_t flash_finish(esp_ota_handle_t handle, bool aborting) {
+    bool held = pico_online_display_begin();
+    esp_err_t error = aborting ? esp_ota_abort(handle) : esp_ota_end(handle);
+    pico_online_display_end(held);
+    return error;
 }
 static void state(pico_update_state_t value, const char *message) {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -282,12 +319,12 @@ static bool download(void) {
             memcpy(header + header_size, buffer, used); header_size += used;
             if (header_size == 288) {
                 if (!header_valid(header, release)) { error = ESP_ERR_INVALID_RESPONSE; break; }
-                error = esp_ota_begin(target, release->size, &handle);
+                error = flash_begin(target, &handle);
                 begun = error == ESP_OK;
-                if (begun) error = esp_ota_write(handle, header, header_size);
+                if (begun) error = flash_write(handle, header, header_size);
             }
         }
-        if (error == ESP_OK && begun && (size_t)n > used) error = esp_ota_write(handle, buffer + used, n - used);
+        if (error == ESP_OK && begun && (size_t)n > used) error = flash_write(handle, buffer + used, n - used);
         if (error != ESP_OK || psa_hash_update(&hash, buffer, n) != PSA_SUCCESS) { error = ESP_FAIL; break; }
         total += n;
         xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -305,10 +342,10 @@ static bool download(void) {
         if (digest_size != 32 || strcasecmp(hex, release->sha256)) error = ESP_ERR_INVALID_RESPONSE;
     }
     if (error != ESP_OK) {
-        if (begun) esp_ota_abort(handle);
+        if (begun) flash_finish(handle, true);
         state(PICO_UPDATE_FAILED, "下载中断或校验失败，当前版本保持不变"); goto failed;
     }
-    error = esp_ota_end(handle);
+    error = flash_finish(handle, false);
     if (error != ESP_OK) { state(PICO_UPDATE_FAILED, "固件校验失败，当前版本保持不变"); goto failed; }
     // 后台仅验证镜像；主线程处理最终启动切换，取消时不影响当前槽。
     // The worker verifies only; the main task commits boot, so cancellation cannot change the running slot.
@@ -329,7 +366,9 @@ static void worker(void *unused) {
         // 更新期间关闭无线省电；完成、取消和失败均恢复原策略。
         // Disable radio power saving for updates, then restore it on success, cancellation or failure.
         restore_ps = esp_wifi_get_ps(&previous_ps) == ESP_OK && esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK;
-        if (s_download) (void)download(); else (void)check_feed();
+        if (!memory_available(32768, 8192, 262144))
+            state(PICO_UPDATE_FAILED, "内存不足，请退出传书后重试");
+        else if (s_download) (void)download(); else (void)check_feed();
     }
     if (restore_ps) (void)esp_wifi_set_ps(previous_ps);
     if (owned) read_pico_transfer_stop();
@@ -346,6 +385,10 @@ static esp_err_t start(bool downloading) {
     xSemaphoreGive(s_mutex);
     if (busy || (downloading && !available)) return ESP_ERR_INVALID_STATE;
     if (s_joinable) { xSemaphoreTake(s_done, portMAX_DELAY); s_joinable = false; }
+    if (!memory_available(49152, 16384, 524288)) {
+        state(PICO_UPDATE_FAILED, "内存不足，请退出传书后重试");
+        return ESP_ERR_NO_MEM;
+    }
     atomic_store(&s_cancel, false);
     s_download = downloading; s_verified = NULL;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -373,7 +416,9 @@ void pico_online_cancel_join(void) {
 esp_err_t pico_online_commit(void) {
     if (s_joinable) { xSemaphoreTake(s_done, portMAX_DELAY); s_joinable = false; }
     if (!s_verified || atomic_load(&s_cancel)) return ESP_ERR_INVALID_STATE;
+    bool held = pico_online_display_begin();
     esp_err_t error = esp_ota_set_boot_partition(s_verified);
+    pico_online_display_end(held);
     s_verified = NULL;
     if (error != ESP_OK) state(PICO_UPDATE_FAILED, "启动切换失败，当前版本保持不变");
     return error;

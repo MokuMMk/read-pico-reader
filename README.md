@@ -36,6 +36,8 @@ The release manifest is [`flash/manifest.json`](flash/manifest.json); it flashes
 
 Open **Settings → Upgrade & restore → System update → Check for updates** after connecting Wi-Fi. From rc84 onward, the update offer displays short release notes with Later and Start update buttons. Older versions can read the notes on the web flasher before updating to rc84.
 
+The local fix releases off-screen cover caches before online updates and reports insufficient memory safely. Display scans and incremental flash writes are serialized. After at least five seconds and five percentage points of growth, progress appends only newly completed black pixels and updates the percentage, without erasing completed segments or triggering periodic page wipes. Exiting, locking and cancellation still join the worker; failed validation keeps the current boot slot.
+
 ## Local TF-card updates
 
 Local updates require one complete computer installation of an OTA base build so the bootloader and dual-slot partition table are present. That migration keeps the existing settings, reading records, internal-storage addresses, and TF-card contents. Later, copy the application image to the TF-card root as `Pico-update.bin`, then open **Settings → Upgrade & restore → System update → TF-card update**.

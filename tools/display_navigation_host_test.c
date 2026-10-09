@@ -45,6 +45,11 @@ static char owner_a, owner_b;
 static enum EpdRotation rotation = EPD_ROT_INVERTED_PORTRAIT;
 static int nav_draws, water_calls, water_fails;
 static int clean_calls;
+// 所有真实推屏和欠载恢复都必须持有 OTA 互斥锁，包括递归兜底。
+// Every physical scan and underrun recovery must hold OTA exclusion, including recursive fallback.
+static unsigned ota_display_depth;
+bool pico_online_display_begin(void) { ++ota_display_depth; return true; }
+void pico_online_display_end(bool held) { assert(held && ota_display_depth); --ota_display_depth; }
 void e0470_page_turn_release(void) {}
 
 void* heap_caps_aligned_alloc(size_t alignment, size_t bytes, unsigned caps) {
@@ -64,10 +69,11 @@ void read_pico_epd_use_scan(read_pico_epd_scan_t mode) {scan = mode;}
 void epd_lcd_set_prefill_lines(int lines) {prefill = lines;}
 void epd_poweron(void) {}
 void epd_poweroff(void) {}
-void epd_clear(void) {++clears; memset(panel, 255, BYTES);}
+void epd_clear(void) { assert(ota_display_depth);++clears; memset(panel, 255, BYTES);}
 void epd_hl_set_all_white(EpdiyHighlevelState* state) {memset(state->front_fb, 255, BYTES);}
 void epd_hl_waveform(EpdiyHighlevelState* state, const EpdWaveform* waveform) {state->waveform = waveform;}
 enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* state, EpdRect area, e0470_turn_dir_t dir) {
+    assert(ota_display_depth);
     (void)dir; ++water_calls;
     assert(area.y==0 && area.height==UI_NAV_REFRESH_END && scan==READ_PICO_EPD_SCAN_FAST);
     if(water_fails)return (enum EpdDrawError)water_fails;
@@ -84,6 +90,7 @@ enum EpdDrawError e0470_page_turn_with_waveform(EpdiyHighlevelState* state, EpdR
 // panel 独立于 back；失败只改变物理屏，绝不假装回写已经成功。
 // Keep panel independent from back; failed output changes only the panel, never a falsely successful baseline.
 static enum EpdDrawError draw(EpdiyHighlevelState* state, enum EpdDrawMode mode, bool full, const EpdRect* area) {
+    assert(ota_display_depth);
     assert(!memcmp(panel, state->back_fb, BYTES));
     // 模拟 highlevel 的倒置竖屏及32列对齐，包含相邻半字节与固定底栏边界。
     // Model highlevel's inverted portrait and 32-column expansion, including neighboring nibbles and fixed navigation.
@@ -371,7 +378,7 @@ int main(void) {
     // Explicit full, image, from-white and lock-related outputs retain their whole targets; cancel never replays a deferred frame.
     for (int view = 0; view < 4; ++view) {
         reset(); target(0); begin(&owner_a); target(6);
-        if (view == 2) epd_clear(); // from-white 需要物理白底。/ From-white requires a physically white baseline.
+        if (view == 2) {bool held=pico_online_display_begin();epd_clear();pico_online_display_end(held);} // from-white 需要物理白底。/ From-white requires a physically white baseline.
         enum EpdDrawError result = view == 0 ? update_display_full(&hl)
             : view == 1 ? update_display_image_gray(&hl)
             : view == 2 ? update_display_from_white_with(&hl, &E0470_WAVEFORM, MODE_GL16)
@@ -550,6 +557,7 @@ int main(void) {
     assert(water_calls==1 && gray_calls==1 && !bw_calls && !clears);
     reset();main_mode=APP_MAIN_REFRESH_WATER;gray_target(2);display_main_transition_arm(&owner_a,false,false);
     assert(update_display_fast_page(&hl)==EPD_DRAW_SUCCESS);assert_final();assert(!water_calls && gray_calls==1 && !bw_calls);
+    assert(!ota_display_depth);
     puts("main navigation: 200 complete BW transitions; calibrated gray bands, empty shelf slots, identical-target skips, allocation failure and three output-failure recoveries; moving markers, nibble/32-column boundaries and default outputs passed");
     return 0;
 }

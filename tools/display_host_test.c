@@ -15,6 +15,11 @@
 #include "settings.h"
 #include "e0470_epaper_waveform.h"
 app_main_refresh_mode_t app_settings_main_refresh_mode(void) {return APP_MAIN_REFRESH_NORMAL;}
+// 所有真实推屏和欠载恢复都必须持有 OTA 互斥锁，包括递归兜底。
+// Every physical scan and underrun recovery must hold OTA exclusion, including recursive fallback.
+static unsigned ota_display_depth;
+bool pico_online_display_begin(void) { ++ota_display_depth; return true; }
+void pico_online_display_end(bool held) { assert(held && ota_display_depth); --ota_display_depth; }
 void e0470_page_turn_release(void) {}
 bool app_settings_main_fast_refresh(void) {return false;}
 int epd_width(void) {return 1216;}
@@ -42,6 +47,7 @@ static int water_calls;
 static EpdRect last_area;
 
 enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl, EpdRect area, e0470_turn_dir_t dir) {
+    assert(ota_display_depth);
     assert(hl && area.width > 0 && dir == E0470_TURN_RTL);
     ++water_calls;
     assert(last_scan == READ_PICO_EPD_SCAN_FAST);
@@ -58,7 +64,7 @@ void read_pico_epd_use_scan(read_pico_epd_scan_t scan) { last_scan = scan; }
 void epd_lcd_set_prefill_lines(int lines) { prefill = lines; }
 void epd_poweron(void) { ++powerons; }
 void epd_poweroff(void) {}
-void epd_clear(void) { assert(powerons > 0); ++clears; }
+void epd_clear(void) { assert(ota_display_depth); assert(powerons > 0); ++clears; }
 int64_t esp_timer_get_time(void) { return 1000000; }
 
 // 与 highlevel.c:307 相同：该 API 清前缓冲，而不是参考后缓冲。
@@ -66,6 +72,7 @@ int64_t esp_timer_get_time(void) { return 1000000; }
 void epd_hl_set_all_white(EpdiyHighlevelState* hl) { memset(hl->front_fb, 255, FB_BYTES); }
 void epd_hl_waveform(EpdiyHighlevelState* hl, const EpdWaveform* waveform) { hl->waveform = waveform; }
 static enum EpdDrawError draw(EpdiyHighlevelState* hl, enum EpdDrawMode mode, int temperature, bool full) {
+    assert(ota_display_depth);
     assert((mode == MODE_DU || mode == MODE_GL16 || mode == MODE_GC16) && temperature == 25);
     ++draws;
     full_draws += full;
@@ -190,5 +197,6 @@ int main(void) {
     assert(update_display_water_turn(&hl, (EpdRect){0, 0, 16, 16}, E0470_TURN_RTL) == EPD_DRAW_SUCCESS);
     assert(water_calls == 2 && clears == 1 && white_baseline && correct_target_at_draw);
     assert(last_mode == MODE_GC16 && !memcmp(back, target, FB_BYTES));
+    assert(!ota_display_depth);
     puts("display underrun: front retained, white back baseline, full GC16 recovery and bulk prefill passed");
 }
