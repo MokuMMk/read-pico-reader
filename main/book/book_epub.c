@@ -1389,7 +1389,7 @@ esp_err_t book_epub_load_target(book_epub_t *book, size_t i, const char *anchor,
     if (err != ESP_OK) return err;
     size_t css_len = 0;
     char *css = chapter_css(book, zip_entry_name(book->zip, book->chapters[i].zip_index), text, len, &css_len);
-    err = html_to_blocks_with_css_target(text, len, css, css_len,
+    err = html_to_blocks_with_css_target(text, len, css, css_len, NULL,
                                          anchor, source_offset, anchor_offset, out);
     if (err == ESP_OK) chapter_breaks_prepare(book, i, out);
     free(css); free(text); return err;
