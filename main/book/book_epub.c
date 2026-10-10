@@ -34,7 +34,10 @@
 #define EPUB_ID_CAP 128
 #define EPUB_TITLE_CAP 160
 #define EPUB_ENTRY_MAX (4u * 1024u * 1024u)
-#define EPUB_CACHE_VERSION 12u
+// 索引载荷格式随标题/锚点池化而变：旧缓存里的定长字段读不出指针，必须整体失效。
+// The index payload changed with the title/anchor pooling: fixed fields in an old cache cannot be
+// turned back into pointers, so every older cache has to lapse.
+#define EPUB_CACHE_VERSION 13u
 #define EPUB_META_CACHE_VERSION 1u
 #define EPUB_CSS_MAX (256u * 1024u)
 #define EPUB_CSS_FILE_MAX (128u * 1024u)
@@ -56,10 +59,24 @@ typedef struct {
     bool failed; ///< 装过且失败，不再重试 / Tried and failed, never retried
 } epub_face_t;
 
+// 标题与锚点原先各占 160/128 字节的定长数组：3884 章加约 3000 条目录就是 1.5 MB 常驻，
+// 而真实标题平均只有三十来字节。现在它们按实际长度放进一个块链表池，条目里只留指针。
+// 用块链表而不是一段可 realloc 的缓冲，是因为池一旦搬家，已经发出去的指针就全废了。
+// Titles and anchors used to be fixed 160/128-byte arrays: 3884 chapters plus ~3000 TOC entries
+// is 1.5 MB resident, while a real title averages about thirty bytes. They now live in a pool of
+// fixed blocks, sized to their real length, with entries holding pointers.
+// A block chain rather than one realloc-able buffer, because moving the pool would invalidate
+// every pointer already handed out.
+typedef struct text_block {
+    struct text_block* next;
+    size_t used, cap;
+    char data[];
+} text_block_t;
+
 typedef struct {
     int zip_index; ///< ZIP 条目 / ZIP entry
     uint32_t offset; ///< spine 累计原始字节 / Cumulative source bytes in spine
-    char title[EPUB_TITLE_CAP]; ///< UTF-8 目录标题 / UTF-8 navigation title
+    const char* title; ///< 池内标题 / Title inside the pool
     bool titled; ///< 已从目录命名 / Named from navigation
     bool nav_titled; ///< 正式 NCX/NAV 指向本章 / Linked by the authored navigation
     bool heading_checked; ///< 缺目录标题时已检查正文 / Body checked for a missing navigation label
@@ -69,8 +86,8 @@ typedef struct {
     uint16_t chapter;
     bool valid, visible;
     uint32_t source_offset; ///< XHTML 起始标签偏移；没有时为 UINT32_MAX / Source tag offset or UINT32_MAX
-    char title[EPUB_TITLE_CAP];
-    char anchor[EPUB_ID_CAP];
+    const char* title;
+    const char* anchor;
 } nav_entry_t;
 struct book_epub {
     zip_reader_t *zip; ///< ZIP 所有权 / ZIP ownership
@@ -91,6 +108,8 @@ struct book_epub {
     size_t face_count, face_capacity;
     bool fonts_scanned; ///< 已按文件名扫过包里的字体 / Font files already scanned by name
     bool fonts_enabled; ///< 用户开关，默认开 / User toggle, on by default
+    text_block_t* text_blocks; ///< 标题与锚点池 / Pool for titles and anchors
+    text_block_t* text_last; ///< 池的尾块 / Tail block of the pool
 };
 typedef struct {
     uint32_t count;
@@ -124,6 +143,86 @@ typedef struct {
 } xml_t;
 static void *psram(size_t n);
 
+/* ---- 标题与锚点池 / Title and anchor pool ---- */
+
+#define TEXT_BLOCK_MIN 4096u
+
+static const char* text_blocks_intern(text_block_t** head, text_block_t** last,
+                                      const char* text, size_t len) {
+    if (text == NULL) return NULL;
+    text_block_t* blk = *last;
+    if (blk == NULL || blk->cap - blk->used < len + 1) {
+        size_t cap = len + 1 > TEXT_BLOCK_MIN ? len + 1 : TEXT_BLOCK_MIN;
+        text_block_t* next = psram(sizeof(*next) + cap);
+        if (next == NULL) return NULL;
+        next->next = NULL;
+        next->used = 0;
+        next->cap = cap;
+        if (blk != NULL) blk->next = next;
+        else *head = next;
+        *last = next;
+        blk = next;
+    }
+    char* at = blk->data + blk->used;
+    memcpy(at, text, len);
+    at[len] = 0;
+    blk->used += len + 1;
+    return at;
+}
+
+static void text_blocks_free(text_block_t** head, text_block_t** last) {
+    text_block_t* blk = *head;
+    while (blk != NULL) {
+        text_block_t* next = blk->next;
+        free(blk);
+        blk = next;
+    }
+    *head = NULL;
+    *last = NULL;
+}
+
+static const char* text_intern(book_epub_t* book, const char* text, size_t len) {
+    const char* at = text_blocks_intern(&book->text_blocks, &book->text_last, text, len);
+    // 池分配失败时退回一个静态空串：标题在几十处被 strlen/strcmp 直接读，不能是空指针。
+    // Falls back to a static empty string if the pool cannot grow: titles are read with
+    // strlen/strcmp in dozens of places and must never be null.
+    return at != NULL ? at : "";
+}
+
+// 定长字段变成指针之后，原先靠 sizeof 兜住的长度要显式截断。
+// With fixed fields turned into pointers, the length those sizeof expressions used to bound has
+// to be applied explicitly.
+static const char* text_intern_cap(book_epub_t* book, const char* text, size_t cap) {
+    size_t len = strlen(text);
+    if (len > cap - 1) len = cap - 1;
+    return text_intern(book, text, len);
+}
+
+static void text_pool_free(book_epub_t* book) {
+    text_blocks_free(&book->text_blocks, &book->text_last);
+}
+
+// 池里的字符串按 uint16 长度加字节写盘；上限就是它替下来的那个定长缓冲。
+// A pooled string is written as a uint16 length plus its bytes; the cap is the fixed buffer it
+// replaced.
+static bool cache_write_text(FILE* cache, const char* text) {
+    size_t len = text != NULL ? strlen(text) : 0;
+    if (len > EPUB_TITLE_CAP) len = EPUB_TITLE_CAP;
+    uint16_t n = (uint16_t)len;
+    return fwrite(&n, sizeof(n), 1, cache) == 1 &&
+           (len == 0 || fwrite(text, 1, len, cache) == len);
+}
+
+static bool cache_read_text(book_epub_t* book, FILE* cache, const char** out) {
+    uint16_t n = 0;
+    if (fread(&n, sizeof(n), 1, cache) != 1 || n > EPUB_TITLE_CAP) return false;
+    char buf[EPUB_TITLE_CAP];
+    if (n != 0 && fread(buf, 1, n, cache) != n) return false;
+    buf[n] = 0;
+    *out = text_intern(book, buf, n);
+    return *out != NULL;
+}
+
 static bool epub_cache_load(const char* source, book_epub_t* book) {
     char path[112]; book_index_cache_header_t key;
     if (!book_index_cache_prepare(source, "epub", EPUB_CACHE_VERSION, path, sizeof(path), &key)) return false;
@@ -133,16 +232,35 @@ static bool epub_cache_load(const char* source, book_epub_t* book) {
     bool ok = fread(&payload, 1, sizeof(payload), cache) == sizeof(payload) &&
         payload.count > 0 && payload.count <= EPUB_CHAPTER_MAX &&
         payload.authored_count <= EPUB_NAV_MAX && payload.body_scanned <= 1;
+    // 结构体里的标题现在是指针，不能整块落盘：先读元数据，再按同样的顺序把字符串接回池里。
+    // The entry's title is a pointer now and cannot be dumped as a block: read the metadata, then
+    // rebind each string into the pool in the same order.
     if (ok) {
         book->chapters = psram(payload.count * sizeof(*book->chapters));
-        ok = book->chapters &&
-             fread(book->chapters, sizeof(*book->chapters), payload.count, cache) == payload.count;
+        ok = book->chapters != NULL;
         if (ok) book->chapter_capacity = payload.count;
+    }
+    for (size_t i = 0; ok && i < payload.count; ++i) {
+        chapter_t entry;
+        ok = fread(&entry, sizeof(entry), 1, cache) == 1;
+        if (!ok) break;
+        entry.title = NULL;
+        book->chapters[i] = entry;
+        ok = cache_read_text(book, cache, &book->chapters[i].title);
     }
     if (ok && payload.authored_count) {
         book->navigation = psram(payload.authored_count * sizeof(*book->navigation));
-        ok = book->navigation &&
-             fread(book->navigation, sizeof(*book->navigation), payload.authored_count, cache) == payload.authored_count;
+        ok = book->navigation != NULL;
+    }
+    for (size_t i = 0; ok && i < payload.authored_count; ++i) {
+        nav_entry_t entry;
+        ok = fread(&entry, sizeof(entry), 1, cache) == 1;
+        if (!ok) break;
+        entry.title = NULL;
+        entry.anchor = NULL;
+        book->navigation[i] = entry;
+        ok = cache_read_text(book, cache, &book->navigation[i].title) &&
+             cache_read_text(book, cache, &book->navigation[i].anchor);
     }
     if (ok) ok = fgetc(cache) == EOF;
     fclose(cache);
@@ -151,7 +269,7 @@ static bool epub_cache_load(const char* source, book_epub_t* book) {
         chapter_t* chapter = &book->chapters[i];
         ok = chapter->zip_index >= 0 && zip_entry_name(book->zip, chapter->zip_index) &&
             chapter->offset >= previous && chapter->offset <= payload.total &&
-            memchr(chapter->title, 0, sizeof(chapter->title)) != NULL;
+            chapter->title != NULL;
         previous = chapter->offset;
     }
     for (size_t i = 0; ok && i < payload.authored_count; ++i) {
@@ -159,14 +277,14 @@ static bool epub_cache_load(const char* source, book_epub_t* book) {
         ok = entry->chapter < payload.count &&
              (entry->source_offset == UINT32_MAX ||
               entry->source_offset < zip_entry_size(book->zip, book->chapters[entry->chapter].zip_index)) &&
-             memchr(entry->title, 0, sizeof(entry->title)) != NULL &&
-             memchr(entry->anchor, 0, sizeof(entry->anchor)) != NULL;
+             entry->title != NULL && entry->anchor != NULL;
     }
     if (!ok) {
         // 损坏或写入中断的索引必须释放两张表；随后才重建正文目录。
         // Release both partially loaded tables before rebuilding a damaged index.
         free(book->navigation); book->navigation = NULL; book->navigation_capacity = 0;
         free(book->chapters); book->chapters = NULL; book->chapter_capacity = 0;
+        text_pool_free(book);
         return false;
     }
     book->count = payload.count; book->total = payload.total; book->authored_count = payload.authored_count;
@@ -183,10 +301,21 @@ static void epub_cache_save(const char* source, const book_epub_t* book) {
     epub_cache_payload_t payload = {.count = (uint32_t)book->count, .total = book->total,
                                     .authored_count = (uint32_t)book->authored_count,
                                     .body_scanned = book->body_scanned ? 1 : 0};
-    bool ok = fwrite(&payload, 1, sizeof(payload), cache) == sizeof(payload) &&
-        fwrite(book->chapters, sizeof(book->chapters[0]), book->count, cache) == book->count &&
-        (!book->authored_count ||
-         fwrite(book->navigation, sizeof(*book->navigation), book->authored_count, cache) == book->authored_count);
+    bool ok = fwrite(&payload, 1, sizeof(payload), cache) == sizeof(payload);
+    for (size_t i = 0; ok && i < book->count; ++i) {
+        chapter_t entry = book->chapters[i];
+        entry.title = NULL;
+        ok = fwrite(&entry, sizeof(entry), 1, cache) == 1 &&
+             cache_write_text(cache, book->chapters[i].title);
+    }
+    for (size_t i = 0; ok && i < book->authored_count; ++i) {
+        nav_entry_t entry = book->navigation[i];
+        entry.title = NULL;
+        entry.anchor = NULL;
+        ok = fwrite(&entry, sizeof(entry), 1, cache) == 1 &&
+             cache_write_text(cache, book->navigation[i].title) &&
+             cache_write_text(cache, book->navigation[i].anchor);
+    }
     (void)book_index_cache_finish_write(cache, temp, path, ok);
 }
 
@@ -560,7 +689,9 @@ static esp_err_t package_parse(book_epub_t *book, const char *opf, char ncx[EPUB
             size_t bytes = zip_entry_size(book->zip, entry);
             if (bytes > EPUB_ENTRY_MAX || bytes > UINT32_MAX - book->total) { err = ESP_ERR_INVALID_SIZE; break; }
             chapter_t *chapter = &book->chapters[book->count]; chapter->zip_index = entry; chapter->offset = book->total;
-            snprintf(chapter->title, sizeof(chapter->title), "第 %u 节", (unsigned)book->count + 1);
+            char fallback[EPUB_TITLE_CAP];
+            snprintf(fallback, sizeof(fallback), "第 %u 节", (unsigned)book->count + 1);
+            chapter->title = text_intern_cap(book, fallback, sizeof(fallback));
             book->total += (uint32_t)bytes; ++book->count;
         }
         if (xml.failed || !book->count) err = ESP_ERR_INVALID_ARG;
@@ -582,24 +713,31 @@ static void assign_title(book_epub_t *book, const int16_t *chapter_by_zip,
         (chapter_by_zip[index] >= 0 ? (size_t)chapter_by_zip[index] : book->count) : 0;
     for (size_t i = first; i < book->count; ++i) if (book->chapters[i].zip_index == index) {
         nav_entry_t *entry = &book->navigation[slot];
+        // href 不带 # 时锚点不会被写；指针字段必须先清空，否则留下的是野指针。
+        // An href without a # leaves the anchor unwritten; a pointer field has to start null or
+        // it stays wild.
+        entry->title = NULL;
+        entry->anchor = "";
         const char *fragment = strchr(href, '#');
         entry->chapter = (uint16_t)i;
-        strcpy(entry->title, title);
+        entry->title = text_intern_cap(book, title, EPUB_TITLE_CAP);
         if (fragment && fragment[1]) {
+            char anchor[EPUB_ID_CAP];
             size_t used = 0;
-            for (const char *p = fragment + 1; *p && used + 1 < sizeof(entry->anchor); ++p) {
+            for (const char *p = fragment + 1; *p && used + 1 < sizeof(anchor); ++p) {
                 if (*p == '%' && p[1] && p[2]) {
                     int a = hex(p[1]), b = hex(p[2]);
-                    if (a >= 0 && b >= 0) { entry->anchor[used++] = (char)((a << 4) | b); p += 2; continue; }
+                    if (a >= 0 && b >= 0) { anchor[used++] = (char)((a << 4) | b); p += 2; continue; }
                 }
-                entry->anchor[used++] = *p;
+                anchor[used++] = *p;
             }
-            entry->anchor[used] = 0;
+            anchor[used] = 0;
+            entry->anchor = text_intern_cap(book, anchor, sizeof(anchor));
         }
         entry->valid = true;
         if (!book->chapters[i].titled ||
             (front_matter_title(book->chapters[i].title) && !front_matter_title(title))) {
-            strcpy(book->chapters[i].title, title);
+            book->chapters[i].title = text_intern_cap(book, title, EPUB_TITLE_CAP);
             book->chapters[i].titled = true;
             book->chapters[i].nav_titled = true;
         }
@@ -633,7 +771,13 @@ static esp_err_t navigation_parse(book_epub_t *book, const char *path, bool ncx)
             if (node.kind == XML_OPEN && local_name(node.name, "navPoint") && ++expected > EPUB_NAV_MAX) break;
         if (!scan.failed && expected && expected <= EPUB_NAV_MAX) {
             book->navigation = psram(expected * sizeof(*book->navigation));
-            if (book->navigation) book->navigation_capacity = expected;
+            if (book->navigation) {
+                book->navigation_capacity = expected;
+                // 标题和锚点现在是指针：没被显式写过的条目必须是空指针而不是野指针。
+                // Titles and anchors are pointers now, so entries that never get written must be
+                // null rather than wild.
+                memset(book->navigation, 0, expected * sizeof(*book->navigation));
+            }
         }
     }
     bool explicit_toc = false;
@@ -707,7 +851,9 @@ static esp_err_t navigation_parse(book_epub_t *book, const char *path, bool ncx)
         for (size_t i = 0; i < book->count; ++i) if (!(previously_titled[i / 8] & (1u << (i % 8)))) {
             book->chapters[i].titled = false;
             book->chapters[i].nav_titled = false;
-            snprintf(book->chapters[i].title, sizeof(book->chapters[i].title), "第 %u 节", (unsigned)i + 1);
+            char fallback[EPUB_TITLE_CAP];
+            snprintf(fallback, sizeof(fallback), "第 %u 节", (unsigned)i + 1);
+            book->chapters[i].title = text_intern_cap(book, fallback, sizeof(fallback));
         }
     }
     if (err == ESP_OK) {
@@ -840,9 +986,18 @@ esp_err_t book_epub_open(const char *path, book_epub_t **out) {
                 nav_book->zip = book->zip;
                 nav_book->chapters = book->chapters;
                 nav_book->count = book->count;
+                // 标题要写进主书的池：nav_book 合并之后就被丢掉，它自己池里的字符串会跟着悬空。
+                // Titles go into the main book's pool: nav_book is dropped right after the merge
+                // and strings in a pool of its own would dangle with it.
+                nav_book->text_blocks = book->text_blocks;
+                nav_book->text_last = book->text_last;
                 esp_err_t nav_err = navigation_parse(nav_book, nav, false);
                 if (nav_err == ESP_OK && nav_book->authored_count)
                     navigation_merge(book, nav_book);
+                // 解析可能推进了池的尾块，两个指针都要还回主书。
+                // Parsing may have advanced the pool's tail, so both pointers go back.
+                book->text_blocks = nav_book->text_blocks;
+                book->text_last = nav_book->text_last;
                 free(nav_book->navigation);
                 free(nav_book);
             }
@@ -868,6 +1023,7 @@ void book_epub_close(book_epub_t *book) {
     // Embedded faces live in global slots: closing the book must hand them back, or the next
     // book would read the previous one's glyphs.
     if (book->face_count) ttf_font_close_embedded();
+    text_pool_free(book);
     zip_close(book->zip); free(book->visible_index); free(book->navigation);
     free(book->chapters); free(book->faces); free(book);
 }
@@ -905,7 +1061,7 @@ static void chapter_heading(book_epub_t *book, size_t i) {
                 if (end - tag >= 4 && tag[1] == '/' && (tag[2] == 'h' || tag[2] == 'H') && tag[3] == open[2]) {
                     size_t n = strlen(title);
                     while (n && title[n - 1] == ' ') title[--n] = 0;
-                    if (n) { strcpy(chapter->title, title); chapter->titled = true; book->headings_dirty = true; }
+                    if (n) { chapter->title = text_intern_cap(book, title, EPUB_TITLE_CAP); chapter->titled = true; book->headings_dirty = true; }
                     break;
                 }
                 cursor = memchr(tag, '>', (size_t)(end - tag));
@@ -920,6 +1076,9 @@ static void chapter_heading(book_epub_t *book, size_t i) {
 }
 
 static bool front_matter_title(const char *title) {
+    // 标题字段是指针：目录里没被写过的条目留的是空指针，这里先兜住。
+    // The title field is a pointer now, and entries the parser never touched keep a null one.
+    if (title == NULL) return false;
     static const char *const chinese[] = {
         "封面", "扉页", "书名页", "版权", "出版信息", "出版社", "作者信息",
         "作者简介", "关于作者", "图书信息", "书籍信息", "制作信息", NULL
@@ -961,6 +1120,10 @@ static bool numbered_chapter_title(const char *title) {
 typedef struct {
     nav_entry_t *items;
     size_t count, capacity;
+    // 正文标题扫描是临时的，它的字符串用一块自己的池，扫完随表一起释放。
+    // The body-heading scan is temporary, so its strings get a pool of their own that is
+    // released with the table.
+    text_block_t *text_blocks, *text_last;
 } body_headings_t;
 
 static bool chinese_number(uint32_t cp) {
@@ -1137,7 +1300,9 @@ static bool body_heading_add(body_headings_t *found, size_t chapter, size_t sour
     entry->chapter = (uint16_t)chapter;
     entry->source_offset = (uint32_t)source_offset;
     entry->valid = true;
-    strcpy(entry->title, title);
+    entry->title = text_blocks_intern(&found->text_blocks, &found->text_last,
+                                      title, strlen(title));
+    if (entry->title == NULL) { --found->count; return false; }
     return true;
 }
 
@@ -1228,12 +1393,16 @@ static void body_headings_prepare(book_epub_t *book) {
     // With a large authored TOC, do not inflate thousands of chapters before the first page.
     if (book->count > 256 && book->authored_count) return;
     body_headings_t found = {0};
-    if (!body_headings_scan(book, &found)) { free(found.items); return; }
+    if (!body_headings_scan(book, &found)) {
+        free(found.items);
+        text_blocks_free(&found.text_blocks, &found.text_last);
+        return;
+    }
     for (size_t i = 0; i < found.count; ++i) {
         nav_entry_t *entry = &found.items[i];
         chapter_t *chapter = &book->chapters[entry->chapter];
         if (i && found.items[i - 1].chapter == entry->chapter) continue;
-        strcpy(chapter->title, entry->title);
+        chapter->title = text_intern_cap(book, entry->title, EPUB_TITLE_CAP);
         chapter->titled = true;
         chapter->heading_checked = true;
     }
@@ -1259,6 +1428,16 @@ static void body_headings_prepare(book_epub_t *book) {
         book->authored_count = found.count;
         book->navigation_capacity = found.capacity;
         found.items = NULL;
+        // 池跟着条目一起交给主书：条目的标题指着这些块，池留在这里被释放就全悬空了。
+        // The pool goes with the entries: their titles point into these blocks, and freeing the
+        // pool here would dangle every one of them.
+        if (found.text_blocks != NULL) {
+            if (book->text_last != NULL) book->text_last->next = found.text_blocks;
+            else book->text_blocks = found.text_blocks;
+            book->text_last = found.text_last;
+            found.text_blocks = NULL;
+            found.text_last = NULL;
+        }
     } else if (book->authored_count && found.count) {
         unsigned char used[EPUB_NAV_MAX / 8] = {0};
         for (size_t j = 0; j < found.count; ++j) {
@@ -1267,9 +1446,9 @@ static void body_headings_prepare(book_epub_t *book) {
                 if (entry->chapter != found.items[j].chapter ||
                     front_matter_title(entry->title) || used[i / 8] & (1u << (i % 8))) continue;
                 if (strcmp(entry->title, found.items[j].title)) {
-                    strcpy(entry->title, found.items[j].title);
+                    entry->title = text_intern_cap(book, found.items[j].title, EPUB_TITLE_CAP);
                     entry->source_offset = found.items[j].source_offset;
-                    entry->anchor[0] = 0;
+                    entry->anchor = text_intern_cap(book, "", EPUB_ID_CAP);
                 }
                 used[i / 8] |= (unsigned char)(1u << (i % 8));
                 break;
@@ -1277,6 +1456,7 @@ static void body_headings_prepare(book_epub_t *book) {
         }
     }
     free(found.items);
+    text_blocks_free(&found.text_blocks, &found.text_last);
     book->body_scanned = true;
     if (book->source_path[0]) epub_cache_save(book->source_path, book);
 }
@@ -1453,9 +1633,22 @@ static void epub_scan_faces(book_epub_t* book) {
 // 真正把字体装进槽：解压到 PSRAM 后交给字体引擎，引擎接管这块内存。
 // Load a face into a slot: inflate into PSRAM and hand it to the font engine, which takes
 // ownership of the bytes.
+// 装载字体前要留出来的 PSRAM。这是实测出来的：一章排完版、插图解码完之后仍有 2.1 MB 以上
+// 富余，所以留 1.6 MB 就够，再多只会把本来装得下的字体也挡在门外。
+// PSRAM held back before loading a face. Measured, not guessed: after a chapter is laid out and
+// its illustrations decoded there is still over 2.1 MB spare, so 1.6 MB is enough -- anything
+// larger only locks out faces that would have fitted.
+#define EPUB_FACE_RESERVE (1600u * 1024u)
+
 static uint8_t epub_load_face(book_epub_t* book, epub_face_t* face) {
     size_t size = zip_entry_size(book->zip, face->zip_index);
     if (size < 64 || size > EPUB_FACE_SIZE_MAX) return 0;
+    if (size + EPUB_FACE_RESERVE >
+        heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) {
+        ESP_LOGW(TAG, "face %s needs %u KB; PSRAM left is short of the reserve",
+                 face->family, (unsigned)(size / 1024));
+        return 0;
+    }
     uint8_t* data = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (data == NULL) return 0;
     if (zip_extract(book->zip, face->zip_index, data, size) != ESP_OK) {
@@ -1535,11 +1728,25 @@ static bool css_first_url(const char* src, char* out, size_t cap) {
     return false;
 }
 
+// @font-face 的解析缓冲。四个数组加起来 1.4 KB，而 chapter_css 自己的 1.2 KB 还压在同一个
+// 栈帧下面，两条一起就把开书路径的栈吃掉一大截；放 PSRAM。
+// Parse buffers for @font-face. The four arrays are 1.4 KB, and chapter_css's own 1.2 KB sits
+// below them in the same stack, so the pair eats a large slice of the open path's stack; they
+// live in PSRAM instead.
+typedef struct {
+    char family[EPUB_FACE_NAME_CAP];
+    char src[EPUB_FACE_SRC_CAP];
+    char url[EPUB_PATH_CAP];
+    char path[EPUB_PATH_CAP];
+} face_scratch_t;
+
 // 从一份样式表里挑出 @font-face 的名字与来源。url 相对样式表自身解析，所以每份文件
 // 都要在拼接前单独处理，不能等合并成一大块再找。
 // Pick the family name and source out of each @font-face. A url resolves against its own
 // stylesheet, so every file is handled before the CSS is concatenated.
 static void css_add_faces(book_epub_t* book, const char* css_path, const char* css, size_t len) {
+    face_scratch_t* sc = heap_caps_malloc(sizeof(*sc), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (sc == NULL) return;
     const char* end = css + len;
     for (const char* at = css; at + 10 <= end;) {
         const char* face = NULL;
@@ -1553,18 +1760,128 @@ static void css_add_faces(book_epub_t* book, const char* css_path, const char* c
         if (shut == NULL) break;
         at = shut + 1;
 
-        char family[EPUB_FACE_NAME_CAP] = "";
-        char src[EPUB_FACE_SRC_CAP] = "";
-        char url[EPUB_PATH_CAP] = "";
-        char path[EPUB_PATH_CAP];
-        if (!css_declaration(open + 1, shut, "font-family", family, sizeof(family))) continue;
-        if (!css_declaration(open + 1, shut, "src", src, sizeof(src))) continue;
-        if (!css_first_url(src, url, sizeof(url))) continue;   // 只有 local(...)，不是内嵌字体
-        if (!resolve_path(css_path, url, path)) continue;
-        int index = zip_find(book->zip, path);
-        if (index >= 0) face_add(book, family, path, index);
+        sc->family[0] = sc->src[0] = sc->url[0] = 0;
+        if (!css_declaration(open + 1, shut, "font-family", sc->family, sizeof(sc->family))) continue;
+        if (!css_declaration(open + 1, shut, "src", sc->src, sizeof(sc->src))) continue;
+        if (!css_first_url(sc->src, sc->url, sizeof(sc->url))) continue;   // 只有 local(...)，不是内嵌字体
+        if (!resolve_path(css_path, sc->url, sc->path)) continue;
+        int index = zip_find(book->zip, sc->path);
+        if (index >= 0) face_add(book, sc->family, sc->path, index);
+    }
+    free(sc);
+}
+
+// 一个待装载的候选：字体表下标和它的字节数，用来按大小排序。
+// One load candidate: index into the face table plus its byte size, for size ordering.
+typedef struct {
+    size_t face;
+    size_t size;
+} face_pick_t;
+
+// CSS 的 font-family 是候选列表，第一个认得出来的才有意义；这里只挑出还没装载的名字，
+// 交给调用方排序后再装。
+// A CSS font-family is a candidate list and only the first known name counts. This picks the
+// names that are not loaded yet and leaves the ordered loading to the caller.
+static void epub_collect_picks(book_epub_t* book, const char* value, const char* end,
+                               face_pick_t* picks, size_t* pick_n) {
+    for (const char* p = value; p < end;) {
+        while (p < end && (space(*p) || *p == ',')) ++p;
+        const char* name = p;
+        while (p < end && *p != ',') ++p;
+        const char* name_end = p;
+        while (name_end > name && space(name_end[-1])) --name_end;
+        if (name_end > name && (*name == '"' || *name == '\'')) {
+            char quote = *name++;
+            if (name_end > name && name_end[-1] == quote) --name_end;
+        }
+        if (name_end <= name) continue;
+        size_t len = (size_t)(name_end - name);
+        for (size_t i = 0; i < book->face_count; ++i) {
+            epub_face_t* face = &book->faces[i];
+            if (face->failed || strlen(face->family) != len) continue;
+            if (strncasecmp(face->family, name, len)) continue;
+            if (!face->slot) {
+                bool known = false;
+                for (size_t k = 0; k < *pick_n; ++k) {
+                    if (picks[k].face == i) { known = true; break; }
+                }
+                if (!known && *pick_n < EPUB_FACE_MAX) {
+                    picks[*pick_n].face = i;
+                    picks[*pick_n].size = zip_entry_size(book->zip, face->zip_index);
+                    ++*pick_n;
+                }
+            }
+            break;
+        }
     }
 }
+
+// 样式表里真正“选字体”的 font-family 在这里一次装完；@font-face 块跳过——那是在给字体
+// 本身命名，装它只会白占槽位。
+// 装载必须走这条浅栈路径：挂在解析回调上的话，它压在 html_text 的规则表与解析器帧之上，
+// 再叠一次 inflate 就把主任务的 8 KB 栈顶穿了（实测溢出点）。
+// Pre-load every face the stylesheet actually selects, skipping @font-face blocks, which name a
+// face rather than select one and would only waste a slot.
+// Loading has to happen on this shallow stack: driven from the parse callback it sits on top of
+// html_text's rule table and parser frames, and one more inflate overruns the 8 KB main stack --
+// which is exactly where the overflow was measured.
+static void epub_preload_faces(book_epub_t* book, const char* css, size_t len) {
+    if (!book->fonts_enabled || css == NULL || len == 0 || book->face_count == 0) return;
+    face_pick_t picks[EPUB_FACE_MAX];
+    size_t pick_n = 0;
+    const char* end = css + len;
+    for (const char* at = css; at < end;) {
+        const char* open = memchr(at, '{', (size_t)(end - at));
+        if (open == NULL) break;
+        const char* shut = memchr(open + 1, '}', (size_t)(end - open - 1));
+        if (shut == NULL) break;
+        bool at_rule = false;
+        for (const char* p = at; p < open; ++p) {
+            if (space(*p)) continue;
+            at_rule = *p == '@';
+            break;
+        }
+        if (!at_rule) {
+            const char* value = css_find_key(at, open, "font-family");
+            if (value != NULL) {
+                const char* stop = value;
+                while (stop < open && *stop != ';') ++stop;
+                epub_collect_picks(book, value, stop, picks, &pick_n);
+            }
+        }
+        at = shut + 1;
+    }
+    // 小字体先装：它们才是正文里反复用的那些，大字体只影响少数标题字。这样预算不够时
+    // 被跳过的总是那个最贵的。
+    // Smallest first: those are the ones body text keeps using, while a big face only covers a
+    // handful of heading glyphs. When the budget runs out it is then always the priciest face
+    // that gets skipped.
+    for (size_t i = 0; i + 1 < pick_n; ++i) {
+        for (size_t j = i + 1; j < pick_n; ++j) {
+            if (picks[j].size < picks[i].size) {
+                face_pick_t swap = picks[i];
+                picks[i] = picks[j];
+                picks[j] = swap;
+            }
+        }
+    }
+    for (size_t i = 0; i < pick_n; ++i) {
+        epub_face_t* face = &book->faces[picks[i].face];
+        uint8_t slot = epub_face_slot(book, face->family, strlen(face->family));
+        if (slot == 0) face->failed = true;
+    }
+}
+
+// <link> 的解析缓冲。1.2 KB 压在解析循环的每一轮上，而 css_add_faces 就在下面被调用，
+// 两条叠加正是开书路径的栈大头；放 PSRAM。
+// Parse buffers for <link>. 1.2 KB rides on every loop iteration and css_add_faces is called
+// right below it, so the pair is the open path's stack hog; they live in PSRAM.
+typedef struct {
+    char rel[80];
+    char href[EPUB_PATH_CAP];
+    char type[80];
+    char path[EPUB_PATH_CAP];
+} css_link_scratch_t;
 
 // 仅提取章节引用的本地样式，超过预算的 CSS 忽略但不阻断正文。顺便把 @font-face
 // 记进字体表：样式表已经解压到手上，再单独读一遍是浪费。
@@ -1575,6 +1892,8 @@ static char *chapter_css(book_epub_t *book, const char *chapter_path,
                          const char *html, size_t len, size_t *css_len) {
     char *css = NULL; *css_len = 0;
     if (!book->fonts_scanned) epub_scan_faces(book);
+    css_link_scratch_t* sc = heap_caps_malloc(sizeof(*sc), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (sc == NULL) return NULL;
     const char *at = html, *end = html + len;
     while (at < end) {
         const char *tag = at;
@@ -1586,13 +1905,12 @@ static char *chapter_css(book_epub_t *book, const char *chapter_path,
         while (attrs_end > tag + 5 && space(attrs_end[-1])) --attrs_end;
         if (attrs_end > tag + 5 && attrs_end[-1] == '/') --attrs_end;
         token_t t = {.attrs = {tag + 5, (size_t)(attrs_end - tag - 5)}};
-        char rel[80], href[EPUB_PATH_CAP], type[80];
-        if (attribute(t, "rel", rel, sizeof(rel)) && attribute(t, "href", href, sizeof(href)) &&
-            attribute(t, "type", type, sizeof(type)) && href[0] &&
-            (word(rel, "stylesheet") || !strcasecmp(type, "text/css"))) {
-            char path[EPUB_PATH_CAP];
-            if (resolve_path(chapter_path, href, path)) {
-                int index = zip_find(book->zip, path);
+        if (attribute(t, "rel", sc->rel, sizeof(sc->rel)) &&
+            attribute(t, "href", sc->href, sizeof(sc->href)) &&
+            attribute(t, "type", sc->type, sizeof(sc->type)) && sc->href[0] &&
+            (word(sc->rel, "stylesheet") || !strcasecmp(sc->type, "text/css"))) {
+            if (resolve_path(chapter_path, sc->href, sc->path)) {
+                int index = zip_find(book->zip, sc->path);
                 size_t n = index >= 0 ? zip_entry_size(book->zip, index) : 0;
                 if (n && n <= EPUB_CSS_FILE_MAX && *css_len < EPUB_CSS_MAX &&
                     n < EPUB_CSS_MAX - *css_len) {
@@ -1600,7 +1918,7 @@ static char *chapter_css(book_epub_t *book, const char *chapter_path,
                     if (next) {
                         css = next;
                         if (zip_extract(book->zip, index, css + *css_len, n) == ESP_OK) {
-                            css_add_faces(book, path, css + *css_len, n);
+                            css_add_faces(book, sc->path, css + *css_len, n);
                             *css_len += n; css[(*css_len)++] = '\n';
                         }
                     }
@@ -1609,6 +1927,7 @@ static char *chapter_css(book_epub_t *book, const char *chapter_path,
         }
         at = close + 1;
     }
+    free(sc);
     return css;
 }
 
@@ -1620,6 +1939,12 @@ esp_err_t book_epub_load_target(book_epub_t *book, size_t i, const char *anchor,
     if (err != ESP_OK) return err;
     size_t css_len = 0;
     char *css = chapter_css(book, zip_entry_name(book->zip, book->chapters[i].zip_index), text, len, &css_len);
+    // 先装字体再解析：装载挂在解析回调上，inflate 会压在 html_text 的解析器帧之上，
+    // 主任务栈就是那样被顶穿的。内联 style 里的写法仍由回调兜底。
+    // Load the faces before parsing: driven from the parse callback the inflate sits on top of
+    // html_text's parser frames, which is how the main stack got overrun. Inline styles still
+    // fall back to the callback.
+    epub_preload_faces(book, css, css_len);
     html_font_map_t fonts = {0};
     if (book->fonts_enabled && book->face_count) {
         fonts.resolve = epub_face_slot;
