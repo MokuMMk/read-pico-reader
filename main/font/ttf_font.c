@@ -2600,7 +2600,7 @@ bool ttf_text_mask_px(uint8_t *mask, unsigned width, unsigned height, int x,
         width > 684u || height > 180u) return false;
     pixel_height = clamp_px(pixel_height);
     ttf_cover_lut_init();
-    warm_text_io(pixel_height, text);
+    warm_runs(pixel_height, text);
     const char *cursor = text;
     while (*cursor) {
         const glyph_entry_t *glyph = get_glyph(decode_utf8(&cursor), pixel_height);
