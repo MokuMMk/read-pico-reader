@@ -271,6 +271,10 @@ static size_t s_run_count;
 // The embedded-face setting the current layout was built with: after the font page changes
 // it, the reader must re-typeset the chapter before the change is visible.
 static bool s_book_fonts_applied;
+// 字体开关改了之后要重排当前章，但那次重排不能在触摸回调里做：栈太深。
+// The font switch needs the current chapter re-typeset, but not from the touch callback: the
+// stack there is too deep.
+static bool s_fonts_reload_pending;
 static char** s_images;
 static size_t s_image_count;
 // PR #7 的当前页图片集合：只保留显示页的灰阶，不限制为八张。
@@ -1614,16 +1618,20 @@ static void draw_font_name_with_current_face(uint8_t* fb, int x, int y, const ch
 }
 
 // Same-height setting rows; these rectangles also define the touch targets.
-static const EpdRect s_font_card = {36, 840, 294, 92};
-static const EpdRect s_shake_card = {354, 840, 294, 92};
-static const EpdRect s_layout_card = {36, 950, 612, 92};
-static const EpdRect s_rule_card = {36, 1060, 612, 92};
+static const EpdRect s_font_card = {36, 770, 294, 92};
+static const EpdRect s_shake_card = {354, 770, 294, 92};
+static const EpdRect s_layout_card = {36, 880, 612, 92};
+static const EpdRect s_rule_card = {36, 990, 612, 92};
+// 书内自带字体开关：字体设置的最后一项，正文字体由书里样式表说了算还是只听阅读设置。
+// Embedded-face switch: the last item on the font sheet -- whether the book's own stylesheet
+// picks the body faces or the reader setting alone does.
+static const EpdRect s_bookfont_card = {36, 1100, 612, 92};
 static const EpdRect s_rule_offset_up = {36, 980, 190, 88};
 static const EpdRect s_rule_offset_reset = {246, 980, 192, 88};
 static const EpdRect s_rule_offset_down = {458, 980, 190, 88};
 
 static void draw_font_settings(uint8_t* fb) {
-    const int top = 640;
+    const int top = 580;
     draw_sheet(fb, top, "字体设置");
     int shown_px = s_reader_slider >= 0 ? s_reader_preview_px : s_px;
     char value[16]; snprintf(value, sizeof(value), "%d", shown_px);
@@ -1667,6 +1675,21 @@ static void draw_font_settings(uint8_t* fb) {
             epd_fill_rect((EpdRect){x, line_y, width, 2}, 0x50, fb);
         }
     }
+    // 书内自带字体：开则按书里样式表逐段换字体，关则整本书回到系统字体。
+    // Embedded book faces: on follows the book's stylesheet span by span, off puts the whole
+    // book back on the system face.
+    EpdRect bookfont_card = s_bookfont_card;
+    const bool book_fonts = app_settings_book_fonts();
+    ui_fill_round_rect(fb, bookfont_card, 20, 0xd8);
+    ui_draw_round_rect(fb, bookfont_card, 20, 0x70);
+    ui_text(fb, 58, bookfont_card.y + 13, 17, "书内自带字体", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 58, bookfont_card.y + 49, 20,
+            book_fonts ? "按书内样式使用" : "关闭 · 全部用系统字体", EPD_DRAW_ALIGN_LEFT, false);
+    EpdRect bookfont_toggle = {565, bookfont_card.y + 29, 62, 34};
+    ui_fill_round_rect(fb, bookfont_toggle, 17, book_fonts ? 0x50 : 0xd0);
+    int bookfont_knob = book_fonts ? bookfont_toggle.x + 45 : bookfont_toggle.x + 17;
+    epd_fill_circle(bookfont_knob, bookfont_toggle.y + 17, 13, UI_GRAY_WHITE, fb);
+    epd_draw_circle(bookfont_knob, bookfont_toggle.y + 17, 13, 0x90, fb);
 }
 
 static EpdRect rule_style_rect(int index) {
@@ -1674,7 +1697,7 @@ static EpdRect rule_style_rect(int index) {
 }
 
 static void draw_rule_settings(uint8_t *fb) {
-    const int top = 640;
+    const int top = 580;
     draw_sheet(fb, top, "阅读线");
     draw_sheet_back(fb, top);
     ui_text(fb, 42, 741, 21, "选择样式", EPD_DRAW_ALIGN_LEFT, false);
@@ -2734,6 +2757,15 @@ static bool load_chapter_at(app_ctx_t* ctx, size_t chapter, size_t offset,
     s_message[0] = 0;
     unlock_draw();
     prepare_inline_image();
+    // 开书这条链上有解析、解压和字体装载，栈曾经在这里溢出过；留一个可观测的水位。
+    // 顺带量一下章节排完后的 PSRAM 余量：书内字体的装载预算要靠这个数来定，不能靠估。
+    // Parsing, inflate and face loading all ride this chain, and it overflowed once before;
+    // keep the headroom observable. The PSRAM left after a chapter is laid out is also the
+    // number the face budget should be derived from rather than guessed.
+    ESP_LOGI(TAG, "chapter %u stack free %u psram free %u largest %u", (unsigned)chapter,
+             (unsigned)uxTaskGetStackHighWaterMark(NULL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     return true;
 }
 static bool load_chapter(app_ctx_t* ctx, size_t chapter, size_t offset, bool last_page) {
@@ -2788,11 +2820,22 @@ static bool open_book_impl(app_ctx_t* ctx, const char* path) {
     s_next_fb = NULL;
     unlock_draw();
     if (network.network_ready) ttf_font_cache_clear();
-    ESP_LOGI(TAG, "open start wifi=%d internal=%u/%u psram=%u/%u", network.network_ready,
+    // 开书前把字形缓存全还回去并量一下能腾多少：书内字体要的正是这块 PSRAM，而系统字体
+    // 的缓存是里面最容易回收的。字体本身保持装载，翻页时按需重新缓存。
+    // Hand every glyph cache back before opening and measure what that was worth: embedded
+    // faces need exactly this PSRAM, and the system face's cache is the easiest part to
+    // reclaim. The faces stay loaded and re-cache on demand.
+    size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    size_t reclaimed = ttf_font_cache_clear_all();
+    size_t psram_after = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ESP_LOGI(TAG, "open start wifi=%d internal=%u/%u psram=%u/%u cache=%uK freed=%uK",
+             network.network_ready,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+             (unsigned)psram_after,
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)(reclaimed / 1024),
+             (unsigned)((psram_after - psram_before) / 1024));
     if (!pending_reserve(path)) {
         copy_text(s_message, sizeof(s_message), "内存不足，无法保留待保存进度");
         return false;
@@ -3610,7 +3653,11 @@ static int reader_margin_input(EpdRect rect, int x, int current, int px, int tra
 }
 
 static EpdRect reader_slider_rect(int slider) {
-    if (slider == 0) return (EpdRect){36, 746, 612, 66};
+    // 字号滑块必须跟着字体设置面板的卡片一起上移：卡片顶在 770，滑块原来落在 746..812，
+    // 会和第一行卡片重叠。
+    // The size slider moves with the font sheet's cards: the first card starts at 770, and the
+    // slider used to sit at 746..812, overlapping it.
+    if (slider == 0) return (EpdRect){36, 686, 612, 66};
     if (slider == 1) return (EpdRect){36, 700, 294, 66};
     if (slider == 2) return (EpdRect){354, 700, 294, 66};
     if (slider == 3) return (EpdRect){36, 819, 612, 66};
@@ -3871,12 +3918,13 @@ static app_redraw_t reader_panel_action(app_ctx_t* ctx, uint16_t x, uint16_t y) 
         return APP_REDRAW_PAGE;
     }
     if (s_reader_panel == READER_PANEL_FONT_SETTINGS) {
-        const int top = 640;
+        const int top = 580;
         EpdRect size = reader_slider_rect(0);
         EpdRect font = s_font_card;
         EpdRect shake = s_shake_card;
         EpdRect layout = s_layout_card;
         EpdRect rule = s_rule_card;
+        EpdRect bookfont = s_bookfont_card;
         if (ui_rect_hit(size, x, y)) {
             int px = BOOK_PX_MIN + slider_index(size, x, BOOK_PX_MAX - BOOK_PX_MIN + 1);
             return apply_reader_layout(ctx, px, s_margin, app_settings_book_line_spacing(),
@@ -3907,6 +3955,20 @@ static app_redraw_t reader_panel_action(app_ctx_t* ctx, uint16_t x, uint16_t y) 
         }
         if (ui_rect_hit(rule, x, y)) {
             s_reader_panel = READER_PANEL_RULE_SETTINGS;
+            return APP_REDRAW_PAGE;
+        }
+        if (ui_rect_hit(bookfont, x, y)) {
+            // 触摸回调的栈比 on_tick 深得多：在这里直接重排一章会把主任务栈顶穿（实测溢出过一次）。
+            // 只记下意愿，交给下一轮 on_tick 在浅栈上做。
+            // The touch callback runs far deeper than on_tick, and laying a chapter out from here
+            // overran the main task stack (measured once). Record the intent and let the next
+            // on_tick do it on a shallow stack.
+            bool on = !app_settings_book_fonts();
+            app_settings_set_book_fonts(on);
+            s_book_fonts_applied = on;
+            book_set_embedded_fonts(on);
+            s_fonts_reload_pending = true;
+            invalidate_prep();
             return APP_REDRAW_PAGE;
         }
         s_reader_panel = y < top ? READER_PANEL_NONE : READER_PANEL_TOOLS;
@@ -4967,6 +5029,15 @@ static int book_remote_direction(void) {
     return direction;
 }
 static app_redraw_t on_tick(app_ctx_t* ctx) {
+    // 字体开关留下的重排在这里做：触摸回调的栈太深，一章排下来会把主任务栈顶穿（实测溢出过）。
+    // The font switch's re-typeset happens here: the touch callback runs too deep, and laying out a
+    // chapter from there overran the main task stack (measured).
+    if (s_fonts_reload_pending) {
+        s_fonts_reload_pending = false;
+        if (s_text && book_kind() == BOOK_KIND_EPUB)
+            (void)load_chapter(ctx, s_chapter, book_layout_page_start_offset(s_page), false);
+        return APP_REDRAW_PAGE;
+    }
     if (s_view != READING || (s_toolbar && s_reader_panel != READER_PANEL_TOOLS) || s_clear_confirm || ctx->consumed) s_reader_tap.pending = false;
     else {
         int tap = book_reader_tap_tick(&s_reader_tap, ctx->now_ms, ctx->touch && ctx->touch->touched);
