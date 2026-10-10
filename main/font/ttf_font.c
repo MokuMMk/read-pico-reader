@@ -51,12 +51,16 @@ static void ttf_free(void* ptr, void* userdata) {
 
 /* ---- 调参 / Tunables ---- */
 // 光栅化位图 LRU 上限，PSRAM。/ Raster bitmap LRU cap, PSRAM.
-// 字形缓存的每槽上限。多槽之后这里必须跟着降：四个槽各自 1.5 MB 就是 6 MB，
-// 而字体字节、loca 和字形表本身已经吃掉好几 MB，抽干 PSRAM 的表现就是缺字和章节加载失败。
-// Per-slot glyph cache cap. With several slots this had to come down: 1.5 MB each is 6 MB
-// across four slots, on top of the face bytes, loca and the outline tables, and draining
-// PSRAM shows up as missing glyphs and chapters that fail to load.
-#define TTF_CACHE_LIMIT (512 * 1024)
+// 字形缓存的总预算。TTF_CACHE_LIMIT 原来是每槽的，多槽之后那是 4 × 512 KB，而字体字节、
+// loca 和字形表本身已经吃掉好几 MB；抽干 PSRAM 的症状不是文字出问题，而是插图解码拿不到
+// 连续内存——翻几页之后图片就没了（诊断实测：图要 384 KB，只剩 269 KB）。
+// 320 KB 够一页正文重新光栅化，代价只是翻页时多算几个字。
+// One budget for all glyph caches. TTF_CACHE_LIMIT used to be per slot, which across four slots
+// is 4 x 512 KB, on top of the face bytes, loca and the outline tables. Draining PSRAM does not
+// show up as broken text but as illustration decoding that cannot get a contiguous block: images
+// vanish after a few page turns (measured: an image wanted 384 KB with 269 KB left).
+// 320 KB still re-rasterizes a page of body text; the cost is a few extra glyphs per turn.
+#define TTF_CACHE_LIMIT (320 * 1024)
 // 哈希桶数。/ Hash buckets.
 #define TTF_CACHE_BUCKETS 256
 // 两档字号的像素高，对齐 ui_kit 正文/标题。/ Small/large px, matches ui_kit body/title.
@@ -1751,6 +1755,15 @@ static void lru_touch(glyph_entry_t* entry) {
     if (lru_tail == NULL) lru_tail = entry;
 }
 
+// 字形缓存的总预算。TTF_CACHE_LIMIT 原来是每槽的，多槽之后那是 4 × 512 KB，而字体字节、
+// loca 和字形表本身已经吃掉好几 MB；抽干 PSRAM 的症状不是文字出问题，而是插图解码拿不到
+// 连续内存——翻几页之后图片就没了。所以这里按所有槽合起来算。
+// One budget for all glyph caches. TTF_CACHE_LIMIT used to be per slot, which across four slots
+// is 4 x 512 KB, on top of the face bytes, loca and the outline tables. Draining PSRAM does not
+// show up as broken text but as illustration decoding that cannot get a contiguous block:
+// images disappear after a few page turns. So the budget is now shared.
+static size_t s_cache_total;
+
 static void cache_reset(void) {
     size_t n = 0;
     for (unsigned i = 0; i < TTF_CACHE_BUCKETS; i++) {
@@ -1766,10 +1779,27 @@ static void cache_reset(void) {
     }
     lru_head = NULL;
     lru_tail = NULL;
+    s_cache_total -= cache_bytes;
     cache_bytes = 0;
     if (n > 0) {
         ESP_LOGI(TAG, "glyph cache dropped %u entries", (unsigned)n);
     }
+}
+
+// 本槽已经淘汰干净还是超预算，说明份额被别的槽占着；整体清一次。
+// 让缓存反复回填，好过让整页插图解码失败。
+// This slot is empty and we are still over budget, so another slot is holding it: drop them
+// all. Refilling caches beats a page of illustrations that cannot be decoded.
+static void cache_clear_all(void) {
+    int keep = s_cur_index;
+    for (int i = 0; i < TTF_FONT_SLOTS; i++) {
+        if (!s_slots[i].f_ready || i == keep) continue;
+        s_cur_index = i;
+        s_cur = &s_slots[i];
+        cache_reset();
+    }
+    s_cur_index = keep;
+    s_cur = &s_slots[keep];
 }
 
 static void cache_evict_one(void) {
@@ -1788,14 +1818,16 @@ static void cache_evict_one(void) {
     }
 
     cache_bytes -= victim->bitmap_bytes + sizeof(*victim);
+    s_cache_total -= victim->bitmap_bytes + sizeof(*victim);
     heap_caps_free(victim->bitmap);
     heap_caps_free(victim);
 }
 
 static void cache_reserve(size_t extra) {
-    while (lru_tail != NULL && cache_bytes + extra > TTF_CACHE_LIMIT) {
+    while (lru_tail != NULL && s_cache_total + extra > TTF_CACHE_LIMIT) {
         cache_evict_one();
     }
+    if (s_cache_total + extra > TTF_CACHE_LIMIT) cache_clear_all();
 }
 
 static glyph_entry_t* cache_lookup(uint32_t codepoint, int size) {
@@ -1862,6 +1894,7 @@ static glyph_entry_t* rasterize_glyph(uint32_t codepoint, int pixel_height) {
     entry->hash_next = cache_buckets[bucket];
     cache_buckets[bucket] = entry;
     cache_bytes += bitmap_bytes + sizeof(*entry);
+    s_cache_total += bitmap_bytes + sizeof(*entry);
     lru_touch(entry);
     return entry;
 }

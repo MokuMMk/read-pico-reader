@@ -2291,10 +2291,19 @@ static void prep_task(void* arg) {
         xSemaphoreGive(s_prep_done);
     }
 }
+// 预渲染下一页只是加速功能，不该跟插图抢内存：留出解码一张插图和加载一章正文的量之后
+// 还有富余，才去占这一整页缓冲。实测这一页是 326 KB，正好是插图解码差的那一口。
+// Prefetching the next page is only a speed-up and must not compete with illustrations: the whole
+// framebuffer is taken only when there is room left after a page's illustration and a chapter of
+// text. Measured at 326 KB -- exactly the shortfall that starved image decoding.
+#define BOOK_PREP_RESERVE (1024u * 1024u)
+
 static void ensure_prep(void) {
     if (!s_draw_lock) s_draw_lock = xSemaphoreCreateMutex();
     if (!s_prep_done) s_prep_done = xSemaphoreCreateBinary();
-    if (!s_next_fb) s_next_fb = heap_caps_aligned_alloc(16, fb_bytes(), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const size_t need = fb_bytes();
+    if (!s_next_fb && heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) > need + BOOK_PREP_RESERVE)
+        s_next_fb = heap_caps_aligned_alloc(16, need, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_prep_task && s_draw_lock && s_prep_done && s_next_fb) {
         if (xTaskCreatePinnedToCore(prep_task, "book_prep", 12 * 1024, NULL, 3, &s_prep_task, 1) != pdPASS)
             s_prep_task = NULL;
@@ -2611,21 +2620,43 @@ static void prepare_inline_image(void) {
     invalidate_prep();
     release_page_images();
     s_page_images_for = s_page; s_page_images_generation = generation;
+    // 插图不显示没有别的症状，每条失败路径以前都是静默 continue；这里把结局记下来，
+    // 免得继续靠猜。
+    // A missing illustration has no other symptom and every failure path used to be a silent
+    // continue; record the outcome instead of guessing.
     int count = reader_image_slots(s_page);
-    if (!count || count > (int)HTML_TEXT_MAX_BLOCKS) return;
+    size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!count || count > (int)HTML_TEXT_MAX_BLOCKS) {
+        ESP_LOGI(TAG, "inline page %u: %d image slots", (unsigned)s_page, count);
+        return;
+    }
     s_page_images = heap_caps_calloc((size_t)count, sizeof(*s_page_images), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_page_images) return;
+    if (!s_page_images) {
+        // 分配失败时计数必须跟着归零：release_page_images 会按计数遍历这张表。
+        // The count has to follow the table to zero: release_page_images walks it by count.
+        s_page_image_count = 0;
+        ESP_LOGW(TAG, "inline page %u: no PSRAM for %d slots", (unsigned)s_page, count);
+        return;
+    }
     s_page_image_count = count;
     // 逐张解码并立即释放压缩数据；全页灰阶位图的总面积不超过正文区域。
     // Decode serially and release each encoded buffer; the page's bitmap area stays within its body.
     size_t pixels_left = (size_t)body_rect().width * body_rect().height;
+    int decoded = 0;
     for (int i = 0; i < count; ++i) {
         int index = -1, width = 0, height = 0;
         if (!reader_image_slot(s_page, i, &index, NULL, &width, &height) ||
-            index < 0 || (size_t)index >= s_image_count || width <= 0 || height <= 0) continue;
+            index < 0 || (size_t)index >= s_image_count || width <= 0 || height <= 0) {
+            ESP_LOGW(TAG, "inline %d: slot i=%d width=%d height=%d", i, index, width, height);
+            continue;
+        }
         uint8_t *encoded = NULL; size_t size = 0; bool png = false;
         esp_err_t err = book_chapter_image(s_chapter, s_images[index], &encoded, &size, &png);
-        if (err != ESP_OK) { free(encoded); continue; }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "inline %d %s: read %s", i, s_images[index], esp_err_to_name(err));
+            free(encoded);
+            continue;
+        }
         unsigned source_w = 0, source_h = 0;
         if (book_image_dimensions(encoded, size, png, &source_w, &source_h) && source_w && source_h) {
             // 回退槽也使用真实宽高等比缩小，避免尺寸探测失败时拉伸图片。
@@ -2635,14 +2666,41 @@ static void prepare_inline_image(void) {
             if (h > (unsigned)height) { w = w * height / h; h = height; }
             width = w ? (int)w : 1; height = h ? (int)h : 1;
             size_t pixels = (size_t)width * height;
-            uint8_t *gray = pixels <= pixels_left ? heap_caps_malloc(pixels, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;
-            if (gray && book_image_grayscale(encoded, size, png, width, height, gray)) {
+            if (pixels > pixels_left) {
+                ESP_LOGW(TAG, "inline %d: %ux%u over %u px budget",
+                         i, (unsigned)width, (unsigned)height, (unsigned)pixels_left);
+                free(encoded);
+                continue;
+            }
+            uint8_t *gray = heap_caps_malloc(pixels, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (gray == NULL) {
+                ESP_LOGW(TAG, "inline %d: no PSRAM for %u px (free %u)",
+                         i, (unsigned)pixels,
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+                free(encoded);
+                continue;
+            }
+            if (book_image_grayscale(encoded, size, png, width, height, gray)) {
                 s_page_images[i] = (reader_image_t){gray, width, height};
                 pixels_left -= pixels;
-            } else free(gray);
+                ++decoded;
+            } else {
+                ESP_LOGW(TAG, "inline %d: grayscale decode failed", i);
+                free(gray);
+            }
+        } else {
+            ESP_LOGW(TAG, "inline %d: unknown dimensions (%u bytes, png=%d)", i, (unsigned)size, (int)png);
         }
         free(encoded);
         vTaskDelay(1);
+    }
+    // 只在有图没画出来时汇总：插图缺失没有别的症状，而每次都打会把日志淹掉。
+    // Summary only when something did not make it: a missing illustration has no other symptom,
+    // and logging every page would drown the console.
+    if (decoded < count) {
+        ESP_LOGW(TAG, "inline page %u: %d/%d decoded, psram %u->%u KB", (unsigned)s_page, decoded, count,
+                 (unsigned)(psram_before / 1024),
+                 (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) / 1024));
     }
 }
 static bool load_chapter_at(app_ctx_t* ctx, size_t chapter, size_t offset,

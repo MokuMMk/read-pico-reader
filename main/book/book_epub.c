@@ -1633,11 +1633,13 @@ static void epub_scan_faces(book_epub_t* book) {
 // 真正把字体装进槽：解压到 PSRAM 后交给字体引擎，引擎接管这块内存。
 // Load a face into a slot: inflate into PSRAM and hand it to the font engine, which takes
 // ownership of the bytes.
-// 装载字体前要留出来的 PSRAM。这是实测出来的：一章排完版、插图解码完之后仍有 2.1 MB 以上
-// 富余，所以留 1.6 MB 就够，再多只会把本来装得下的字体也挡在门外。
-// PSRAM held back before loading a face. Measured, not guessed: after a chapter is laid out and
-// its illustrations decoded there is still over 2.1 MB spare, so 1.6 MB is enough -- anything
-// larger only locks out faces that would have fitted.
+// 装载字体前要留出来的 PSRAM。实测：插图解码单张要 384–414 KB，章节文本约 500 KB，
+// 字形缓存 320 KB，再留一点周转。留不够的症状不是字体差，而是翻几页之后插图整页消失
+// （诊断日志：`no PSRAM for 393408 px (free 269720)`）。
+// PSRAM held back before loading a face. Measured: one illustration needs 384-414 KB to decode,
+// chapter text about 500 KB, the glyph cache 320 KB, plus some slack. Being short does not show
+// up as a worse face but as illustrations vanishing after a few page turns (diagnostics:
+// `no PSRAM for 393408 px (free 269720)`).
 #define EPUB_FACE_RESERVE (1600u * 1024u)
 
 static uint8_t epub_load_face(book_epub_t* book, epub_face_t* face) {
