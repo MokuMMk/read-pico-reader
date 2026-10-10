@@ -3,6 +3,11 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
+## 未发布 / Unreleased
+
+- 正文插图去掉左右边距，按整屏宽等比缩放并居中，页首插图贴到阅读区顶端、全屏沉浸时铺满整页；正文仍按阅读边距排版，插图页两侧的点击同样能翻页。整页位图放不下时按最大空闲块缩一档，不再整页消失。
+  Body illustrations drop the side margins and scale into a panel-wide band: a page-start one reaches the top of the reading area and fills the page in immersive full screen. Text keeps its reading margins and taps on an illustration page's side strips still turn the page. A page bitmap that no longer fits the largest free block shrinks instead of vanishing.
+
 ## 官网说明书 / 2026-10-10
 
 - 上线 21 章、135 项操作、30 幅界面图解的详细说明书和 69 页 PDF；新增「问说明书」，支持关键词、口语问句与模糊检索，直接定位到操作步骤。保留旧说明书链接及 PDF 下载地址，固件仍为 rc90。

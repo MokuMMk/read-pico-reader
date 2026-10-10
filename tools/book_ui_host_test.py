@@ -298,6 +298,7 @@ static void book_layout_set_first_line_indent_adjust(int px){(void)px;}
 static void book_layout_set_reading_line(int style){(void)style;}
 static void book_layout_set_reading_line_offset(int offset){(void)offset;}
 static void book_layout_set_images_visible(bool visible){test_images_visible=visible;}
+static void book_layout_set_image_bleed_width(int screen_width){(void)screen_width;}
 static bool app_settings_book_shake(void){return false;}
 static void read_pico_sd_start_probe(void){}
 typedef struct {bool present,mounted;} read_pico_sd_info_t;
