@@ -125,56 +125,8 @@ typedef struct {
 // several milliseconds. 32×4KB PSRAM slots keep recent sectors. Before a
 // line is drawn, needed blocks are sorted and merged. If glyf/gvar fit,
 // they are streamed into PSRAM at open so a cold start does not touch the card.
-static int font_fd = -1;
-static const uint8_t* font_mem;
-static uint32_t font_mem_len;
-static uint32_t font_file_pos = UINT32_MAX;
-static char font_path[TTF_FONT_PATH_MAX];
-
 extern const uint8_t builtin_ttf_start[] asm("_binary_builtin_ttf_start");
 extern const uint8_t builtin_ttf_end[] asm("_binary_builtin_ttf_end");
-static int packed_root = -1;
-static int packed_weight = -1;
-static uint32_t file_glyf_off;
-static uint32_t file_glyf_len;
-static uint8_t* file_loca;
-static uint32_t file_loca_len;
-static bool loca_long;
-static int num_glyphs;
-static uint8_t* glyf_ram;
-static uint32_t glyf_ram_off;
-static uint32_t glyf_ram_len;
-static uint8_t* gvar_ram;
-static uint32_t gvar_ram_off;
-static uint32_t gvar_ram_len;
-static uint8_t* io_data;
-static uint8_t* io_run_buf;
-static uint32_t io_base[TTF_IO_SLOTS];
-static uint16_t io_fill[TTF_IO_SLOTS];
-static uint16_t io_age[TTF_IO_SLOTS];
-static uint16_t io_clock;
-static uint32_t touch_blocks[TTF_PREFETCH_MAX];
-static int touch_n;
-
-static uint8_t* font_data;
-static uint32_t work_loca_off;
-static uint32_t work_glyf_off;
-static stbtt_fontinfo font_info;
-static bool font_ready;
-static ttf_size_metrics_t size_metrics[2];
-static int raw_ascent_units;
-static int current_weight = TTF_WGHT_DEF;
-static int wght_min = TTF_WGHT_MIN;
-static int wght_def = TTF_WGHT_DEF;
-static int wght_max = TTF_WGHT_MAX;
-static uint32_t file_gvar_off;
-static uint32_t file_gvar_len;
-static uint32_t gvar_data_array_off;
-static uint32_t* gvar_glyph_off;
-static int16_t shared_tuple_f2dot14[8];
-static int shared_tuple_count;
-static int gvar_axis_count;
-static bool gvar_ready;
 typedef struct {
     uint8_t slice[TTF_GVAR_SLICE_MAX];
     int16_t x[TTF_MAX_PTS];
@@ -194,11 +146,130 @@ typedef struct {
     uint16_t shared_pts[TTF_MAX_VAR_PTS];
 } ttf_work_t;
 
+// 每套字体一份的状态。字段一律加 f_ 前缀，是刻意的：下面那组同名宏把旧的全局名映射到
+// “当前槽”，字段若与宏同名，`s->name` 与 struct 内的字段声明都会被展开成语法错误。
+// Per-face state. The f_ prefix is deliberate: the same-name macros below map the old
+// globals onto the current slot, so a same-named field would be macro-expanded both in
+// `s->name` accesses and inside this struct body.
+typedef struct {
+    int f_fd;
+    const uint8_t* f_mem;
+    uint32_t f_mem_len;
+    bool f_mem_owned;      ///< f_mem 在堆上、关闭槽位时释放 / f_mem is heap, freed on close
+    uint32_t f_file_pos;
+    char f_path[TTF_FONT_PATH_MAX];
+    int f_packed_root;
+    int f_packed_weight;
+    uint32_t f_file_glyf_off;
+    uint32_t f_file_glyf_len;
+    uint8_t* f_file_loca;
+    uint32_t f_file_loca_len;
+    bool f_loca_long;
+    int f_num_glyphs;
+    uint8_t* f_glyf_ram;
+    uint32_t f_glyf_ram_off;
+    uint32_t f_glyf_ram_len;
+    uint8_t* f_gvar_ram;
+    uint32_t f_gvar_ram_off;
+    uint32_t f_gvar_ram_len;
+    uint8_t* f_io_data;
+    uint8_t* f_io_run_buf;
+    uint32_t f_io_base[TTF_IO_SLOTS];
+    uint16_t f_io_fill[TTF_IO_SLOTS];
+    uint16_t f_io_age[TTF_IO_SLOTS];
+    uint16_t f_io_clock;
+    uint32_t f_touch_blocks[TTF_PREFETCH_MAX];
+    int f_touch_n;
+    uint8_t* f_font_data;
+    uint32_t f_work_loca_off;
+    uint32_t f_work_glyf_off;
+    stbtt_fontinfo f_font_info;
+    bool f_ready;
+    ttf_size_metrics_t f_size_metrics[2];
+    int f_raw_ascent_units;
+    int f_weight;
+    int f_wght_min;
+    int f_wght_def;
+    int f_wght_max;
+    uint32_t f_file_gvar_off;
+    uint32_t f_file_gvar_len;
+    uint32_t f_gvar_data_array_off;
+    uint32_t* f_gvar_glyph_off;
+    int16_t f_shared_tuple[8];
+    int f_shared_tuple_count;
+    int f_gvar_axis_count;
+    bool f_gvar_ready;
+    glyph_entry_t* f_cache_buckets[TTF_CACHE_BUCKETS];
+    glyph_entry_t* f_lru_head;
+    glyph_entry_t* f_lru_tail;
+    size_t f_cache_bytes;
+    bool f_used;           ///< 槽位已被占用 / the slot is in use
+} ttf_slot_t;
+
+static ttf_slot_t s_slots[TTF_FONT_SLOTS];
+static ttf_slot_t* s_cur = &s_slots[TTF_FONT_SLOT_SYSTEM];
+static int s_cur_index = TTF_FONT_SLOT_SYSTEM;
+
+// 下面这组宏让 2000 多行现有函数体一行不改地作用在“当前槽”上。新增代码请直接写
+// `s_cur->f_xxx`，不要用宏名，免得以后再加字段时又撞上。
+// These macros keep the existing function bodies acting on the current slot with no
+// source change. New code should use `s_cur->f_xxx` directly, not the macro names.
+#define font_fd (s_cur->f_fd)
+#define font_mem (s_cur->f_mem)
+#define font_mem_len (s_cur->f_mem_len)
+#define font_mem_owned (s_cur->f_mem_owned)
+#define font_file_pos (s_cur->f_file_pos)
+#define font_path (s_cur->f_path)
+#define packed_root (s_cur->f_packed_root)
+#define packed_weight (s_cur->f_packed_weight)
+#define file_glyf_off (s_cur->f_file_glyf_off)
+#define file_glyf_len (s_cur->f_file_glyf_len)
+#define file_loca (s_cur->f_file_loca)
+#define file_loca_len (s_cur->f_file_loca_len)
+#define loca_long (s_cur->f_loca_long)
+#define num_glyphs (s_cur->f_num_glyphs)
+#define glyf_ram (s_cur->f_glyf_ram)
+#define glyf_ram_off (s_cur->f_glyf_ram_off)
+#define glyf_ram_len (s_cur->f_glyf_ram_len)
+#define gvar_ram (s_cur->f_gvar_ram)
+#define gvar_ram_off (s_cur->f_gvar_ram_off)
+#define gvar_ram_len (s_cur->f_gvar_ram_len)
+#define io_data (s_cur->f_io_data)
+#define io_run_buf (s_cur->f_io_run_buf)
+#define io_base (s_cur->f_io_base)
+#define io_fill (s_cur->f_io_fill)
+#define io_age (s_cur->f_io_age)
+#define io_clock (s_cur->f_io_clock)
+#define touch_blocks (s_cur->f_touch_blocks)
+#define touch_n (s_cur->f_touch_n)
+#define font_data (s_cur->f_font_data)
+#define work_loca_off (s_cur->f_work_loca_off)
+#define work_glyf_off (s_cur->f_work_glyf_off)
+#define font_info (s_cur->f_font_info)
+#define font_ready (s_cur->f_ready)
+#define size_metrics (s_cur->f_size_metrics)
+#define raw_ascent_units (s_cur->f_raw_ascent_units)
+#define current_weight (s_cur->f_weight)
+#define wght_min (s_cur->f_wght_min)
+#define wght_def (s_cur->f_wght_def)
+#define wght_max (s_cur->f_wght_max)
+#define file_gvar_off (s_cur->f_file_gvar_off)
+#define file_gvar_len (s_cur->f_file_gvar_len)
+#define gvar_data_array_off (s_cur->f_gvar_data_array_off)
+#define gvar_glyph_off (s_cur->f_gvar_glyph_off)
+#define shared_tuple_f2dot14 (s_cur->f_shared_tuple)
+#define shared_tuple_count (s_cur->f_shared_tuple_count)
+#define gvar_axis_count (s_cur->f_gvar_axis_count)
+#define gvar_ready (s_cur->f_gvar_ready)
+#define cache_buckets (s_cur->f_cache_buckets)
+#define lru_head (s_cur->f_lru_head)
+#define lru_tail (s_cur->f_lru_tail)
+#define cache_bytes (s_cur->f_cache_bytes)
+
+// gvar 的暂存缓冲不进槽：一次只光栅化一个字，共享安全，也省下每槽十几 KB。
+// The gvar scratch does not move into a slot: one glyph is rasterized at a time, so it
+// is safe to share and saves a dozen KB per slot.
 static ttf_work_t* work;
-static glyph_entry_t* cache_buckets[TTF_CACHE_BUCKETS];
-static glyph_entry_t* lru_head;
-static glyph_entry_t* lru_tail;
-static size_t cache_bytes;
 static bool bench_on;
 static ttf_bench_stats_t bench;
 static int64_t bench_start_us;
@@ -618,7 +689,10 @@ static int open_font_file(const char* preferred) {
 }
 
 const char* ttf_font_path(void) {
-    return font_path;
+    // 系统字体的路径永远取自 0 号槽：内嵌字体可能占着游标，设置页问的仍是系统字体。
+    // The system path always comes from slot 0: an embedded face may own the cursor,
+    // but the settings page is still asking about the system face.
+    return s_slots[TTF_FONT_SLOT_SYSTEM].f_path;
 }
 
 bool ttf_font_path_is_builtin(const char* path) {
@@ -626,14 +700,16 @@ bool ttf_font_path_is_builtin(const char* path) {
 }
 
 bool ttf_font_is_builtin(void) {
-    return font_ready && font_mem != NULL;
+    const ttf_slot_t* sys = &s_slots[TTF_FONT_SLOT_SYSTEM];
+    return sys->f_ready && sys->f_mem != NULL;
 }
 
 const char* ttf_font_display_name(void) {
     static char name[TTF_FONT_NAME_MAX];
-    if (ttf_font_is_builtin() || ttf_font_path_is_builtin(font_path)) return "思源黑体（内建）";
-    if (font_path[0] == '\0') return "";
-    font_stem(font_path, name, sizeof(name));
+    const char* path = s_slots[TTF_FONT_SLOT_SYSTEM].f_path;
+    if (ttf_font_is_builtin() || ttf_font_path_is_builtin(path)) return "思源黑体（内建）";
+    if (path[0] == '\0') return "";
+    font_stem(path, name, sizeof(name));
     return ttf_font_localized_name(name);
 }
 
@@ -1807,24 +1883,36 @@ static int measure_width(int pixel_height, const char* text) {
     return width;
 }
 
+// 这两个查询问的是“系统字体”：主循环、设置页和书架都靠它们判断当前字体能否排这本书。
+// 内嵌字体把游标借走时，这里必须仍然看 0 号槽。
+// These two answer for the system face: the loop, settings and shelf ask whether the
+// active face can set this book. While an embedded face owns the cursor, slot 0 is
+// still the answer.
 bool ttf_font_ready(void) {
-    return font_ready;
+    return s_slots[TTF_FONT_SLOT_SYSTEM].f_ready;
 }
 
 bool ttf_font_has_text(const char *text) {
-    if (!font_ready || !text) return false;
+    const ttf_slot_t* sys = &s_slots[TTF_FONT_SLOT_SYSTEM];
+    if (!sys->f_ready || !text) return false;
     while (*text) {
-        if (!stbtt_FindGlyphIndex(&font_info, (int)decode_utf8(&text))) return false;
+        if (!stbtt_FindGlyphIndex(&sys->f_font_info, (int)decode_utf8(&text))) return false;
     }
     return true;
 }
 
+// 字重是用户级设置，对每一套驻留字体都成立；写在当前槽上会让内嵌字体漏掉。
+// Weight is a user-level setting that holds for every resident face; writing it on the
+// current slot alone would miss the embedded ones.
 void ttf_set_weight(int wght) {
-    current_weight = clamp_weight(wght);
+    int w = clamp_weight(wght);
+    for (int i = 0; i < TTF_FONT_SLOTS; i++) {
+        s_slots[i].f_weight = w;
+    }
 }
 
 int ttf_get_weight(void) {
-    return current_weight;
+    return s_slots[TTF_FONT_SLOT_SYSTEM].f_weight;
 }
 
 int ttf_ascender(int size) {
@@ -1872,11 +1960,20 @@ static void abandon_font_source(void) {
         close(font_fd);
         font_fd = -1;
     }
+    // 内嵌字体的字节由槽位自己分配，关槽时要连它一起还回去。
+    // An embedded face owns heap bytes; closing the slot must hand them back too.
+    if (font_mem_owned && font_mem != NULL) {
+        heap_caps_free((void*)font_mem);
+    }
+    font_mem_owned = false;
     font_mem = NULL;
     font_mem_len = 0;
 }
 
-void ttf_font_unload(void) {
+// 只清“当前槽”。对外入口 ttf_font_unload() 永远作用于 0 号槽，见文件后半的字体槽一节。
+// Clears the current slot only. The public ttf_font_unload() always acts on slot 0; see
+// the font-slot section further down.
+static void unload_here(void) {
     font_ready = false;
     cache_reset();
     io_unmap();
@@ -1965,19 +2062,170 @@ static esp_err_t load_opened_font(void) {
     return ESP_OK;
 }
 
-esp_err_t ttf_font_open_builtin(void) {
-    ttf_font_unload();
+/* ---- 字体槽 / Font slots ---- */
+
+// 槽 0 是系统字体，只由 ttf_font_open* 重载；1..N 装书籍内嵌字体，按需打开。
+// Slot 0 is the system face, reloaded only through ttf_font_open*; slots 1..N hold
+// embedded book faces opened on demand.
+
+// 这里清的是槽结构本身，包括只在装载时赋初值的文件游标、packed 记忆和字重。
+// This clears the slot struct itself, including the file cursor, the packed-glyph memo
+// and the weight that only get their initial values at load time.
+static void slot_init(ttf_slot_t* s) {
+    memset(s, 0, sizeof(*s));
+    s->f_fd = -1;
+    s->f_file_pos = UINT32_MAX;
+    s->f_packed_root = -1;
+    s->f_packed_weight = -1;
+    s->f_weight = TTF_WGHT_DEF;
+    s->f_wght_min = TTF_WGHT_MIN;
+    s->f_wght_def = TTF_WGHT_DEF;
+    s->f_wght_max = TTF_WGHT_MAX;
+}
+
+static bool s_slots_ready;
+
+static void slot_restore(int index) {
+    s_cur_index = index;
+    s_cur = &s_slots[index];
+}
+
+void ttf_font_slots_init(void) {
+    if (s_slots_ready) return;
+    for (int i = 0; i < TTF_FONT_SLOTS; i++) {
+        slot_init(&s_slots[i]);
+    }
+    s_slots_ready = true;
+    slot_restore(TTF_FONT_SLOT_SYSTEM);
+}
+
+// 借游标去指定槽干活；返回原槽号，调用方负责还原。
+// Lend the cursor to one slot; returns the previous index for the caller to restore.
+static int slot_lend(int slot) {
+    int keep = s_cur_index;
+    s_cur_index = slot;
+    s_cur = &s_slots[slot];
+    return keep;
+}
+
+int ttf_font_select(int slot) {
+    ttf_font_slots_init();
+    int keep = s_cur_index;
+    if (slot >= 0 && slot < TTF_FONT_SLOTS) {
+        s_cur_index = slot;
+        s_cur = &s_slots[slot];
+    }
+    return keep;
+}
+
+int ttf_font_selected(void) {
+    return s_cur_index;
+}
+
+bool ttf_font_slot_ready(int slot) {
+    return slot >= 0 && slot < TTF_FONT_SLOTS && s_slots[slot].f_ready;
+}
+
+bool ttf_font_slot_has_text(int slot, const char* text) {
+    if (slot < 0 || slot >= TTF_FONT_SLOTS || text == NULL) return false;
+    const ttf_slot_t* s = &s_slots[slot];
+    if (!s->f_ready) return false;
+    while (*text) {
+        if (!stbtt_FindGlyphIndex(&s->f_font_info, (int)decode_utf8(&text))) return false;
+    }
+    return true;
+}
+
+// 对外入口永远拆系统字体：主循环和存储卡页说的都是“把当前字体放掉”，
+// 不能让游标停在内嵌槽上时误伤书籍字体。
+// The public entry always drops the system face: the loop and the card page mean the
+// active face, and must not hit a book face just because the cursor sits there.
+void ttf_font_unload(void) {
+    ttf_font_slots_init();
+    int keep = slot_lend(TTF_FONT_SLOT_SYSTEM);
+    unload_here();
+    s_cur_index = keep;
+    s_cur = &s_slots[keep];
+}
+
+void ttf_font_close_embedded(void) {
+    ttf_font_slots_init();
+    int keep = s_cur_index;
+    for (int i = TTF_FONT_SLOT_SYSTEM + 1; i < TTF_FONT_SLOTS; i++) {
+        if (!s_slots[i].f_used) continue;
+        s_cur_index = i;
+        s_cur = &s_slots[i];
+        unload_here();
+        s_slots[i].f_used = false;
+    }
+    if (keep <= TTF_FONT_SLOT_SYSTEM || !s_slots[keep].f_used) {
+        keep = TTF_FONT_SLOT_SYSTEM;
+    }
+    s_cur_index = keep;
+    s_cur = &s_slots[keep];
+}
+
+int ttf_font_open_mem(uint8_t* data, size_t len, const char* label) {
+    ttf_font_slots_init();
+    if (data == NULL || len < 64) {
+        if (data != NULL) heap_caps_free(data);
+        return -1;
+    }
+
+    int slot = -1;
+    for (int i = TTF_FONT_SLOT_SYSTEM + 1; i < TTF_FONT_SLOTS; i++) {
+        if (!s_slots[i].f_used) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        heap_caps_free(data);
+        return -1;
+    }
+
+    int keep = slot_lend(slot);
+    unload_here();   // 槽里可能还留着上一本书的字形 / the slot may hold a previous book
+    s_slots[slot].f_used = true;
+    font_fd = -1;
+    font_mem = data;
+    font_mem_len = (uint32_t)len;
+    font_mem_owned = true;
+    if (label != NULL) {
+        strlcpy(font_path, label, sizeof(font_path));
+    }
+
+    esp_err_t err = ensure_work() ? load_opened_font() : ESP_ERR_NO_MEM;
+    if (err != ESP_OK) {
+        // 顺带把 data 还掉，失败后调用方不必再管这块内存。
+        // This also hands back data, so the caller owns nothing after a failure.
+        unload_here();
+        s_slots[slot].f_used = false;
+        slot = -1;
+    }
+    s_cur_index = keep;
+    s_cur = &s_slots[keep];
+    return slot;
+}
+
+// 系统字体永远住在 0 号槽。这两个入口把游标借过去再还回来，免得设置页换系统字体
+// 时踩掉正在用的内嵌槽。
+// The system face always lives in slot 0. These entries lend the cursor and restore it,
+// so reloading the system face never clobbers a live embedded slot.
+static esp_err_t open_builtin_here(void) {
+    unload_here();
     if (!ensure_work()) return ESP_ERR_NO_MEM;
 
     font_mem = builtin_ttf_start;
     font_mem_len = (uint32_t)(builtin_ttf_end - builtin_ttf_start);
+    font_mem_owned = false;
     font_fd = -1;
     strlcpy(font_path, TTF_FONT_BUILTIN, sizeof(font_path));
     ESP_LOGI(TAG, "using builtin (%u KB)", (unsigned)(font_mem_len / 1024));
     return load_opened_font();
 }
 
-esp_err_t ttf_font_open(const char* path) {
+static esp_err_t open_path_here(const char* path) {
     if (ttf_font_path_is_builtin(path)) {
         return ttf_font_open_builtin();
     }
@@ -1987,7 +2235,7 @@ esp_err_t ttf_font_open(const char* path) {
     bool had = font_ready;
     bool prev_file = had && !ttf_font_path_is_builtin(prev);
 
-    ttf_font_unload();
+    unload_here();
     if (!ensure_work()) return ESP_ERR_NO_MEM;
 
     font_fd = open_font_file(path);
@@ -2003,7 +2251,7 @@ esp_err_t ttf_font_open(const char* path) {
     esp_err_t err = load_opened_font();
     if (err != ESP_OK) {
         if (prev_file && strcmp(prev, path) != 0) {
-            ttf_font_unload();
+            unload_here();
             font_fd = try_open_path(prev);
             if (font_fd >= 0 && load_opened_font() == ESP_OK) return err;
         }
@@ -2012,8 +2260,27 @@ esp_err_t ttf_font_open(const char* path) {
     return ESP_OK;
 }
 
+esp_err_t ttf_font_open_builtin(void) {
+    ttf_font_slots_init();
+    int keep = slot_lend(TTF_FONT_SLOT_SYSTEM);
+    esp_err_t err = open_builtin_here();
+    s_cur_index = keep;
+    s_cur = &s_slots[keep];
+    return err;
+}
+
+esp_err_t ttf_font_open(const char* path) {
+    ttf_font_slots_init();
+    int keep = slot_lend(TTF_FONT_SLOT_SYSTEM);
+    esp_err_t err = open_path_here(path);
+    s_cur_index = keep;
+    s_cur = &s_slots[keep];
+    return err;
+}
+
 esp_err_t ttf_font_init(void) {
-    if (font_ready) return ESP_OK;
+    ttf_font_slots_init();
+    if (ttf_font_ready()) return ESP_OK;
     const char* path = app_settings_font_path();
     if (ttf_font_path_is_builtin(path)) {
         return ttf_font_open_builtin();
