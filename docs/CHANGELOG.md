@@ -17,6 +17,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 - 官网品牌改为 kiikoread，采用纯白界面；增加可切换放大的界面展示、功能介绍、统一版本的刷机/下载/日期/日志，以及同源在线和 PDF 使用说明。保留原发布包、历史版本与升级网址。
   Rebrand the bright-white website as kiikoread, with selectable enlarged screen previews, features, consistent release flashing/download/date/notes and shared HTML/PDF documentation. Preserve published binaries, archives and upgrade URLs.
+- GitHub 刷机首页跳转至 kiikoread.com，保留版本选择与页面位置；原固件下载、使用说明和联网更新地址继续可用。
+  Redirect the GitHub flasher homepage to kiikoread.com with the selected version and page anchor preserved; existing firmware, manual and OTA URLs remain available.
 
 - 应用确认的较小列表封面120×156，保持原中心点、右侧书名/作者/进度及局部弹动，等比例填充并居中裁切。
   Apply the approved 120×156 list covers, preserving their center, text/progress positions and local bounce with aspect fill and centered cropping.
@@ -40,9 +42,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 - 密码顶部锁图标改为平滑圆角，减轻背景模糊；密码入场一次显示完整画面，不补刷第二段背景，低内存与冷启动直接显示最终密码页。
 - 列表书架外框和分隔线加深至双像素，常用按钮、设置卡片边框同步加强，快刷与水波纹模式保持可读。列表封面统一120×156像素，等比放大后居中裁切。
 - 首行缩进新增1像素微调（-20～+20，默认0）、数值点击复位及重启/配置备份恢复，正文标题与对齐块保持原位。
-- 本地测试保持 rc89，尚未发布。
 
-Add a D-layout library collage lock with aspect-preserved real covers, native imported system typography, SD caching, bounded workspaces and safe memory fallback. Pale covers gain a fine rounded gray outline. An optional four-digit PIN verifies wake/cold starts, retains the saved page, confirms setup and requires the old PIN for changes. Cached frosted lock art and native system glyphs use local feedback; faults cannot bypass authentication. Salted credentials are excluded from ordinary backups. Retired pocket/spine settings migrate to acrylic. Local builds retain rc89 and are not published.
+Add a D-layout library collage lock with aspect-preserved real covers, native imported system typography, SD caching, bounded workspaces and safe memory fallback. Pale covers gain a fine rounded gray outline. An optional four-digit PIN verifies wake/cold starts, retains the saved page, confirms setup and requires the old PIN for changes. Cached frosted lock art and native system glyphs use local feedback; faults cannot bypass authentication. Salted credentials are excluded from ordinary backups. Retired pocket/spine settings migrate to acrylic.
 
 - 文件页的存储卡卡片在“卡在但文件系统读不了”时改为显示“需要格式化 / 格式化可能可以解决此问题”，点一次询问、再点一次才格式化，点别处取消。此前这种情况与“卡没插”显示同一句话，把用户指向了错误的排查方向。
   The storage card on the files page now reads "needs formatting / formatting may fix this" when a card is present but its filesystem cannot be read, with one tap to ask and a second to format (a tap elsewhere cancels). It used to show the same line as an absent card, which pointed at the wrong problem.
