@@ -125,6 +125,20 @@ void ttf_draw_text_px_bw(
 void ttf_measure_line(int size, const char* text, int* above, int* below);
 void ttf_measure_line_px(int pixel_height, const char* text, int* above, int* below);
 int ttf_text_width_px(int pixel_height, const char* text);
+
+/// 绘制期的字体切换点：从 offset 起改用 slot，直到下一个切换点。
+/// A face switch while drawing: bytes from `offset` use `slot` until the next switch.
+typedef struct {
+    uint32_t offset; ///< text 内的字节偏移，首项必须为 0 / byte offset in text, first must be 0
+    uint8_t slot; ///< 对应字体槽 / matching font slot
+} ttf_run_t;
+
+/// 指定下一次绘制按 run 换字体。runs 借用，须在整个绘制调用期间存活；
+/// 传 NULL 或 0 恢复单字体。不改变行宽、字距与两端对齐的算法。
+/// Set per-run faces for the next draw. runs are borrowed and must stay alive for the whole
+/// call; NULL or 0 restores single-face drawing. Width, tracking and justification math is
+/// unchanged.
+void ttf_draw_set_runs(const ttf_run_t* runs, size_t count);
 /// 首字符左侧留白，不生成位图；用于段首开标点的视觉对齐。
 /// First-glyph left bearing without rasterizing; used for paragraph-opening punctuation alignment.
 int ttf_text_left_bearing_px(int pixel_height, const char* text);

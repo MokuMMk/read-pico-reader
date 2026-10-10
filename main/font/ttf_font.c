@@ -1829,14 +1829,78 @@ static const glyph_entry_t* get_glyph(uint32_t codepoint, int pixel_height) {
     return entry;
 }
 
-static void warm_text_io(int pixel_height, const char* text) {
+/* ---- 绘制期的字体切换 / Faces during a draw ---- */
+
+// 一行里可能混着几种字体：正文用书内字体，行内数字/引文用另一种。调用方在绘制前
+// 交出这一行的切换点，绘制循环走到哪个字节就换哪套字体；行宽、字距、两端对齐的
+// 算法一个字都不动，只有取字形的槽跟着变。
+// A line may mix faces: body text in a book face, inline digits or quotes in another. The
+// caller hands over this line's switch points before drawing; the glyph loop follows them.
+// Line width, tracking and justification math are untouched -- only the slot changes.
+static const ttf_run_t* s_draw_runs;
+static size_t s_draw_run_count;
+
+void ttf_draw_set_runs(const ttf_run_t* runs, size_t count) {
+    s_draw_runs = (runs != NULL && count > 0) ? runs : NULL;
+    s_draw_run_count = s_draw_runs != NULL ? count : 0;
+    // 先站到首段的字体上：各绘制函数开头的 font_ready 判断看的就是当前槽。
+    // Stand on the first run's face: the font_ready test at the top of each draw entry
+    // checks the current slot.
+    if (s_draw_runs != NULL) ttf_font_select(s_draw_runs[0].slot);
+}
+
+// 一行里的 run 很少（通常只有一个），线性看过去比二分更快也更好读。
+// A line has few runs, usually one, so a linear walk beats a binary search.
+static uint8_t run_slot_at(size_t offset) {
+    uint8_t slot = s_draw_runs[0].slot;
+    for (size_t i = 1; i < s_draw_run_count; ++i) {
+        if (s_draw_runs[i].offset > offset) break;
+        slot = s_draw_runs[i].slot;
+    }
+    return slot;
+}
+
+// 绘制循环每个字都调用，所以只在真的换槽时才动游标。没有 run 表时什么都不做，
+// 保持单字体调用方的行为完全不变。
+// Called once per glyph, so the cursor only moves on a real change. With no run table it
+// does nothing, leaving single-face callers exactly as they were.
+static inline void run_apply(size_t offset) {
+    if (s_draw_runs == NULL) return;
+    uint8_t slot = run_slot_at(offset);
+    // 没装载成功的槽一律不选：否则循环会拿一张空字体去取字形。
+    // Never select an unloaded slot, or the loop would look glyphs up in an empty face.
+    if (slot != (uint8_t)s_cur_index && ttf_font_slot_ready(slot)) ttf_font_select(slot);
+}
+
+static void warm_text_io(int pixel_height, const char* text, const char* end);
+
+// 按 run 分段预热分块 IO：不同字体的块缓存是分开的，混在一起 flush 会串槽。
+// Warm block IO per run: each face keeps its own block cache, and flushing them together
+// would mix slots.
+static void warm_runs(int pixel_height, const char* text) {
+    const char* end = text + strlen(text);
+    if (s_draw_runs == NULL) {
+        warm_text_io(pixel_height, text, end);
+        return;
+    }
+    for (size_t i = 0; i < s_draw_run_count; ++i) {
+        const char* from = text + s_draw_runs[i].offset;
+        const char* to = i + 1 < s_draw_run_count ? text + s_draw_runs[i + 1].offset : end;
+        if (from >= end || to <= from) continue;
+        if (to > end) to = end;
+        ttf_font_select(s_draw_runs[i].slot);
+        warm_text_io(pixel_height, from, to);
+    }
+}
+
+static void warm_text_io(int pixel_height, const char* text, const char* end) {
     if (text == NULL || glyf_ram != NULL) return;
     touch_n = 0;
     const char* cursor = text;
     uint32_t cps[TTF_GATHER_MAX];
     int seen = 0;
     pixel_height = clamp_px(pixel_height);
-    while (*cursor != '\0' && seen < TTF_GATHER_MAX) {
+    while (cursor < end && *cursor != '\0' && seen < TTF_GATHER_MAX) {
         uint32_t cp = decode_utf8(&cursor);
         if (cp == 0) break;
         bool dup = false;
@@ -1868,6 +1932,7 @@ static int measure_width(int pixel_height, const char* text) {
     float scale = stbtt_ScaleForPixelHeight(&font_info, (float)pixel_height);
     const char* cursor = text;
     while (*cursor != '\0') {
+        run_apply((size_t)(cursor - text));
         uint32_t cp = decode_utf8(&cursor);
         const glyph_entry_t* glyph = cache_lookup(cp, pixel_height);
         if (glyph != NULL) {
@@ -2301,9 +2366,10 @@ void ttf_measure_line_px(
     int max_below = 0;
     if (font_ready && text != NULL) {
         pixel_height = clamp_px(pixel_height);
-        warm_text_io(pixel_height, text);
+        warm_runs(pixel_height, text);
         const char* cursor = text;
         while (*cursor != '\0') {
+            run_apply((size_t)(cursor - text));
             uint32_t cp = decode_utf8(&cursor);
             const glyph_entry_t* glyph = get_glyph(cp, pixel_height);
             if (glyph == NULL) continue;
@@ -2369,7 +2435,7 @@ void ttf_draw_text_px(
     if (!font_ready || framebuffer == NULL || text == NULL) return;
     ttf_cover_lut_init();
     pixel_height = clamp_px(pixel_height);
-    warm_text_io(pixel_height, text);
+    warm_runs(pixel_height, text);
 
     int cursor_x = x;
     if (align & EPD_DRAW_ALIGN_CENTER) {
@@ -2380,6 +2446,7 @@ void ttf_draw_text_px(
 
     const char* cursor = text;
     while (*cursor != '\0') {
+        run_apply((size_t)(cursor - text));
         uint32_t cp = decode_utf8(&cursor);
         const glyph_entry_t* glyph = get_glyph(cp, pixel_height);
         if (glyph == NULL) continue;
@@ -2438,10 +2505,11 @@ void ttf_draw_text_px_spaced(
     if (!font_ready || framebuffer == NULL || text == NULL) return;
     ttf_cover_lut_init();
     pixel_height = clamp_px(pixel_height);
-    warm_text_io(pixel_height, text);
+    warm_runs(pixel_height, text);
     int cursor_x = x;
     const char* cursor = text;
     while (*cursor != '\0') {
+        run_apply((size_t)(cursor - text));
         uint32_t cp = decode_utf8(&cursor);
         const glyph_entry_t* glyph = get_glyph(cp, pixel_height);
         if (glyph == NULL) continue;
@@ -2472,7 +2540,7 @@ void ttf_draw_text_px_fitted(
     if (!font_ready || !framebuffer || !text || !*text) return;
     ttf_cover_lut_init();
     pixel_height = clamp_px(pixel_height);
-    warm_text_io(pixel_height, text);
+    warm_runs(pixel_height, text);
     int glyph_count = 0, cjk_gaps = 0;
     const char* cursor = text;
     uint32_t previous = 0;
@@ -2497,6 +2565,7 @@ void ttf_draw_text_px_fitted(
     int adjusted = 0, cursor_x = x;
     cursor = text;
     while (*cursor) {
+        run_apply((size_t)(cursor - text));
         uint32_t cp = decode_utf8(&cursor);
         const glyph_entry_t* glyph = get_glyph(cp, pixel_height);
         if (glyph && glyph->bitmap) {
@@ -2531,7 +2600,7 @@ void ttf_draw_text_px_bw(
 ) {
     if (!font_ready || framebuffer == NULL || text == NULL) return;
     pixel_height = clamp_px(pixel_height);
-    warm_text_io(pixel_height, text);
+    warm_runs(pixel_height, text);
 
     int cursor_x = x;
     if (align & EPD_DRAW_ALIGN_CENTER) {
@@ -2542,6 +2611,7 @@ void ttf_draw_text_px_bw(
 
     const char* cursor = text;
     while (*cursor != '\0') {
+        run_apply((size_t)(cursor - text));
         uint32_t cp = decode_utf8(&cursor);
         const glyph_entry_t* glyph = get_glyph(cp, pixel_height);
         if (glyph == NULL) continue;
