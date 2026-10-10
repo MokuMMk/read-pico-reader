@@ -53,7 +53,12 @@ typedef struct {
     uint8_t heading_level, block_heading_level;
     size_t depth, link_depth, auxiliary_depth;
     css_style_t current_style, block_style;
-    css_rule_t rules[CSS_RULE_MAX];
+    // 规则表是解析器里最大的一块（64 × 24B）。留在栈上的话，任何从解析回调里往下走的
+    // 长操作（解压、建表）都顶着它，主任务栈会不够用；放 PSRAM。
+    // The rule table is the parser's largest object (64 × 24B). Keeping it on the stack means
+    // any long call made from a parse callback -- inflate, table setup -- sits on top of it and
+    // overruns the main stack, so it lives in PSRAM.
+    css_rule_t* rules;
     size_t rule_count;
     css_node_t *ancestors;
     bool scoped_rules;
@@ -662,12 +667,14 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
     if (len > HTML_TEXT_MAX_BYTES) return ESP_ERR_INVALID_SIZE;
     writer_t w = {0};
     w.fonts = fonts;
+    w.rules = heap_caps_malloc(CSS_RULE_MAX * sizeof(*w.rules), PSRAM_CAPS);
+    if (w.rules == NULL) return ESP_ERR_NO_MEM;
     if (css_len) css_parse_rules(&w, css, css + css_len);
     if (len) css_parse_styles(&w, html, len);
     esp_err_t err = ESP_OK;
     if (w.scoped_rules) {
         w.ancestors = heap_caps_malloc(CSS_ANCESTOR_MAX * sizeof(*w.ancestors), PSRAM_CAPS);
-        if (!w.ancestors) return ESP_ERR_NO_MEM;
+        if (!w.ancestors) { free(w.rules); return ESP_ERR_NO_MEM; }
     }
     char skip[16] = "";
     bool resume_head = false;
@@ -809,9 +816,11 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
     w.text.utf8[w.text.len] = 0;
     *out = w.text;
     free(w.ancestors);
+    free(w.rules);
     return ESP_OK;
 fail:
     free(w.ancestors);
+    free(w.rules);
     html_text_free(&w.text);
     return err;
 }
