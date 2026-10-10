@@ -1843,10 +1843,13 @@ static size_t s_draw_run_count;
 void ttf_draw_set_runs(const ttf_run_t* runs, size_t count) {
     s_draw_runs = (runs != NULL && count > 0) ? runs : NULL;
     s_draw_run_count = s_draw_runs != NULL ? count : 0;
-    // 先站到首段的字体上：各绘制函数开头的 font_ready 判断看的就是当前槽。
+    // 先站到首段的字体上：各绘制函数开头的 font_ready 判断看的就是当前槽。首段没装载
+    // 就留在原地，绘制循环自己会按段跳过它。
     // Stand on the first run's face: the font_ready test at the top of each draw entry
-    // checks the current slot.
-    if (s_draw_runs != NULL) ttf_font_select(s_draw_runs[0].slot);
+    // checks the current slot. An unloaded first run is left alone and skipped by the loop.
+    if (s_draw_runs != NULL && ttf_font_slot_ready(s_draw_runs[0].slot)) {
+        ttf_font_select(s_draw_runs[0].slot);
+    }
 }
 
 // 一行里的 run 很少（通常只有一个），线性看过去比二分更快也更好读。

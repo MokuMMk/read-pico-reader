@@ -228,7 +228,12 @@ static void css_parse_rules(writer_t* w, const char* at, const char* end) {
         const char* shut = memchr(open + 1, '}', (size_t)(end - open - 1));
         if (!shut) break;
         css_style_t style = {0};
-        css_declarations(w, open + 1, shut, &style);
+        // at-rule 里的 font-family 是在给字体本身命名（@font-face），不是正文选字体；
+        // 采进来只会让每个块都白记一段 run，而且选择器本来就会被下面的规则过滤掉。
+        // A font-family inside an at-rule (@font-face) names the face itself rather than
+        // selecting one for body text; taking it would add a useless run to every block, and
+        // the selector is rejected by the rule filter anyway.
+        if (*at != '@') css_declarations(w, open + 1, shut, &style);
         const char* selector = at;
         while (selector < open) {
             const char* comma = memchr(selector, ',', (size_t)(open - selector));

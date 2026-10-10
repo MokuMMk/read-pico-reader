@@ -262,6 +262,15 @@ bool app_book_reader_body_visible(void) {
     return s_view == READING && s_text && s_reader_panel == READER_PANEL_NONE && !s_clear_confirm;
 }
 static blk_t* s_blocks;
+// 书内字体的 run 表与块表同生共死：都来自同一次 html_text 解析，排版直接借用。
+// The face run table lives and dies with the block table: both come from the same html_text
+// parse, and the layout borrows them.
+static html_run_t* s_runs;
+static size_t s_run_count;
+// 上一次排版用的书内字体开关：字体页改过之后，回阅读页要重排当前章才看得出来。
+// The embedded-face setting the current layout was built with: after the font page changes
+// it, the reader must re-typeset the chapter before the change is visible.
+static bool s_book_fonts_applied;
 static char** s_images;
 static size_t s_image_count;
 // PR #7 的当前页图片集合：只保留显示页的灰阶，不限制为八张。
@@ -2546,6 +2555,7 @@ static void free_book(void) {
     s_chapter_heading_title[0] = s_chapter_heading_label[0] = 0;
     free(s_text);
     free(s_blocks);
+    free(s_runs);
     for (size_t i = 0; i < s_image_count; ++i) free(s_images[i]);
     free(s_images);
     s_images = NULL; s_image_count = 0;
@@ -2553,6 +2563,9 @@ static void free_book(void) {
     s_reader_image_refresh_pending = false;
     s_blocks = NULL;
     s_block_count = 0;
+    s_runs = NULL;
+    s_run_count = 0;
+    book_layout_set_runs(NULL, 0);
     s_text = NULL;
     s_text_len = 0;
     s_selected_toc = SIZE_MAX;
@@ -2671,11 +2684,16 @@ static bool load_chapter_at(app_ctx_t* ctx, size_t chapter, size_t offset,
     book_layout_set_chapter_lead(lead_skip, lead_height);
     s_reader_dims_ctx = (reader_dims_ctx_t){chapter, loaded.images, loaded.image_count};
     book_layout_set_image_dims(reader_image_dims, &s_reader_dims_ctx);
+    book_layout_set_runs(loaded.runs, loaded.run_count);
     bool ok = book_layout_build_blocks(loaded.utf8, loaded.len, loaded.blocks, loaded.count, body_rect(), s_px);
     if (!ok) {
         // 回滚前恢复旧章上下文，避免尺寸回调引用已释放的新章图片。/ Restore the previous context before rollback to avoid a freed image list.
         s_reader_dims_ctx = old_dims_ctx;
         html_text_free(&loaded);
+        // run 表随 loaded 一起没了，先把排版还回旧章的那份，否则重排会读到已释放的内存。
+        // The run table dies with `loaded`, so put the previous chapter's back before the
+        // rollback layout reads freed memory.
+        book_layout_set_runs(s_runs, s_run_count);
         book_layout_set_chapter_lead(old_lead_skip, old_lead_height);
         bool restored = s_text && book_layout_build_blocks(s_text, s_text_len, s_blocks, s_block_count, body_rect(), s_px);
         unlock_draw();
@@ -2689,10 +2707,13 @@ static bool load_chapter_at(app_ctx_t* ctx, size_t chapter, size_t offset,
     }
     free(s_text);
     free(s_blocks);
+    free(s_runs);
     s_text = loaded.utf8;
     s_text_len = loaded.len;
     s_blocks = loaded.blocks;
     s_block_count = loaded.count;
+    s_runs = loaded.runs;
+    s_run_count = loaded.run_count;
     for (size_t i = 0; i < s_image_count; ++i) free(s_images[i]);
     free(s_images);
     s_images = loaded.images; s_image_count = loaded.image_count;
@@ -2786,6 +2807,13 @@ static bool open_book_impl(app_ctx_t* ctx, const char* path) {
         return false;
     }
     esp_err_t err = book_open(path);
+    // 书源打开后再把书内字体开关接上：EPUB 才有效，TXT 是空操作。
+    // Wire the embedded-face switch only after the source is open: it only applies to EPUB,
+    // and is a no-op for TXT.
+    if (err == ESP_OK) {
+        s_book_fonts_applied = app_settings_book_fonts();
+        book_set_embedded_fonts(s_book_fonts_applied);
+    }
     if (err != ESP_OK) {
         pending_progress_t* pending = pending_find(path);
         if (pending && !pending->dirty) pending_discard(path);
@@ -4421,6 +4449,16 @@ static void on_enter(app_ctx_t* ctx) {
     book_layout_set_first_line_indent_adjust(app_settings_book_indent_adjust());
     book_layout_set_reading_line(app_settings_book_reading_line());
     book_layout_set_reading_line_offset(app_settings_book_reading_line_offset());
+    // 字体页可能刚改过书内字体开关；回正文时重排当前章，别让用户对着旧排版猜。
+    // The font page may have just changed the embedded-face switch; re-typeset this chapter
+    // so the reader is not left guessing at stale type.
+    bool book_fonts = app_settings_book_fonts();
+    if (book_fonts != s_book_fonts_applied) {
+        s_book_fonts_applied = book_fonts;
+        book_set_embedded_fonts(book_fonts);
+        if (s_text && book_kind() == BOOK_KIND_EPUB)
+            (void)load_chapter(ctx, s_chapter, book_layout_page_start_offset(s_page), false);
+    }
     s_reader_fullscreen = false;
     s_bookmark_edit = s_bookmark_delete_confirm = s_bookmark_delete_error = false;
     s_bookmark_selected = 0;
