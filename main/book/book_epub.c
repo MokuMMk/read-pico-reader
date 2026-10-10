@@ -16,7 +16,9 @@
 #include "book_cover.h"
 #include "book_index_cache.h"
 #include "zip_reader.h"
+#include "ttf_font.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +38,23 @@
 #define EPUB_META_CACHE_VERSION 1u
 #define EPUB_CSS_MAX (256u * 1024u)
 #define EPUB_CSS_FILE_MAX (128u * 1024u)
+#define EPUB_FACE_MAX 8
+#define EPUB_FACE_NAME_CAP 96
+#define EPUB_FACE_SRC_CAP 256
+
+static const char* TAG = "book_epub";
+
+// 书内自带的字体。family 是样式表里写的名字，也可能是字体文件的文件名主干——
+// 很多书只把字体丢进包里而不写 @font-face，那时按主干匹配。
+// An embedded face. `family` is either the name a stylesheet declares or the font file's
+// stem: plenty of books ship the file without any @font-face, and the stem covers those.
+typedef struct {
+    char family[EPUB_FACE_NAME_CAP];
+    char path[EPUB_PATH_CAP]; ///< ZIP 内路径 / In-zip path
+    int zip_index;
+    uint8_t slot; ///< 装载后的字体槽，0 表示还没装 / Loaded slot, 0 while not loaded
+    bool failed; ///< 装过且失败，不再重试 / Tried and failed, never retried
+} epub_face_t;
 
 typedef struct {
     int zip_index; ///< ZIP 条目 / ZIP entry
@@ -68,6 +87,10 @@ struct book_epub {
     size_t authored_count;
     size_t navigation_capacity;
     bool body_scanned; ///< 正文编号标题已检查并缓存 / Numbered body headings already indexed
+    epub_face_t *faces; ///< 书内字体表 / Embedded faces
+    size_t face_count, face_capacity;
+    bool fonts_scanned; ///< 已按文件名扫过包里的字体 / Font files already scanned by name
+    bool fonts_enabled; ///< 用户开关，默认开 / User toggle, on by default
 };
 typedef struct {
     uint32_t count;
@@ -787,6 +810,9 @@ esp_err_t book_epub_open(const char *path, book_epub_t **out) {
     *out = NULL; if (!path || !*path) return ESP_ERR_INVALID_ARG;
     book_epub_t *book = psram(sizeof(*book)); if (!book) return ESP_ERR_NO_MEM;
     memset(book, 0, sizeof(*book));
+    // 内嵌字体默认开启；读设置是阅读页的事，这里只给默认值。
+    // Embedded faces are on by default; reading the setting is the reader page's job.
+    book->fonts_enabled = true;
     if (strlen(path) < sizeof(book->source_path)) strcpy(book->source_path, path);
     char (*paths)[EPUB_PATH_CAP] = psram(3 * EPUB_PATH_CAP);
     if (!paths) { free(book); return ESP_ERR_NO_MEM; }
@@ -838,7 +864,18 @@ esp_err_t book_epub_open(const char *path, book_epub_t **out) {
 void book_epub_close(book_epub_t *book) {
     if (!book) return;
     if (book->headings_dirty && book->source_path[0]) epub_cache_save(book->source_path, book);
-    zip_close(book->zip); free(book->visible_index); free(book->navigation); free(book->chapters); free(book);
+    // 书内字体装在全局槽里，关书必须还回去，否则下一本书会读到上一本的字形。
+    // Embedded faces live in global slots: closing the book must hand them back, or the next
+    // book would read the previous one's glyphs.
+    if (book->face_count) ttf_font_close_embedded();
+    zip_close(book->zip); free(book->visible_index); free(book->navigation);
+    free(book->chapters); free(book->faces); free(book);
+}
+// 书内字体装在全局字体槽里，换书由阅读页自己收尾；缺省的 close 也还回去。
+// Embedded faces live in global font slots; the reader page closes the old book first, and
+// the default close hands them back as well.
+void book_epub_set_fonts_enabled(book_epub_t *book, bool on) {
+    if (book) book->fonts_enabled = on;
 }
 size_t book_epub_chapter_count(const book_epub_t *book) { return book ? book->count : 0; }
 // 目录缺项时只解析当前可见章节的标题，不在开书时解压所有章节。
@@ -1340,11 +1377,204 @@ esp_err_t book_epub_chapter_title(book_epub_t *book, size_t i, char *buf, size_t
     if (n >= cap) return ESP_ERR_INVALID_SIZE;
     memcpy(buf, book->chapters[i].title, n + 1); return ESP_OK;
 }
-// 仅提取章节引用的本地样式，超过预算的 CSS 忽略但不阻断正文。
-// Load bounded in-book stylesheets; oversized CSS never blocks chapter text.
+/* ---- 书内字体 / Embedded faces ---- */
+
+// 单个字体的字节上限。正文汉字字体常见几百 KB，两 MB 已属超大；再大就只可能是
+// 打包错误，不值得占着 PSRAM。
+// Per-face byte cap. A CJK body face is normally a few hundred KB and two MB is already
+// huge; anything larger is a packaging mistake and not worth the PSRAM.
+#define EPUB_FACE_SIZE_MAX (4u * 1024u * 1024u)
+
+static bool font_entry_name(const char* name) {
+    static const char* const exts[] = {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"};
+    size_t n = strlen(name);
+    for (size_t i = 0; i < sizeof(exts) / sizeof(exts[0]); ++i) {
+        size_t e = strlen(exts[i]);
+        if (n > e && !strncasecmp(name + n - e, exts[i], e)) return true;
+    }
+    return false;
+}
+
+static void font_stem_of(const char* name, char out[EPUB_FACE_NAME_CAP]) {
+    const char* base = name;
+    for (const char* p = name; *p; ++p) {
+        if (*p == '/') base = p + 1;
+    }
+    size_t n = strlen(base);
+    for (size_t i = 0; i < n; ++i) {
+        if (base[i] == '.') { n = i; break; }
+    }
+    if (n >= EPUB_FACE_NAME_CAP) n = EPUB_FACE_NAME_CAP - 1;
+    memcpy(out, base, n);
+    out[n] = 0;
+}
+
+// 同名只留先到的那条：样式表声明的名字比文件名主干更权威，而扫描在前。
+// Keep the first entry per name: a declared name is more authoritative than a file stem, and
+// the scan runs first.
+static void face_add(book_epub_t* book, const char* family, const char* path, int zip_index) {
+    if (!family[0] || !path[0] || book->face_count >= EPUB_FACE_MAX) return;
+    for (size_t i = 0; i < book->face_count; ++i) {
+        if (!strcasecmp(book->faces[i].family, family)) return;
+    }
+    if (book->face_count == book->face_capacity) {
+        size_t cap = book->face_capacity ? book->face_capacity * 2 : 4;
+        if (cap > EPUB_FACE_MAX) cap = EPUB_FACE_MAX;
+        epub_face_t* faces = heap_caps_realloc(
+            book->faces, cap * sizeof(*faces), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+        );
+        if (!faces) return;
+        book->faces = faces;
+        book->face_capacity = cap;
+    }
+    epub_face_t* face = &book->faces[book->face_count++];
+    memset(face, 0, sizeof(*face));
+    snprintf(face->family, sizeof(face->family), "%s", family);
+    snprintf(face->path, sizeof(face->path), "%s", path);
+    face->zip_index = zip_index;
+}
+
+// 按文件名认一遍包里的字体。按魔数逐条嗅探要给每个条目解压一次，代价太高，
+// 所以文件名先筛；真正的字体校验交给装载时的 stb 初始化。
+// Name-scan the package for faces. Sniffing magic bytes would inflate every entry, so the
+// file name filters first and stb's initialisation rejects impostors at load time.
+static void epub_scan_faces(book_epub_t* book) {
+    book->fonts_scanned = true;
+    size_t n = zip_entry_count(book->zip);
+    for (size_t i = 0; i < n; ++i) {
+        const char* name = zip_entry_name(book->zip, i);
+        if (name == NULL || !font_entry_name(name)) continue;
+        char stem[EPUB_FACE_NAME_CAP];
+        font_stem_of(name, stem);
+        face_add(book, stem, name, (int)i);
+    }
+}
+
+// 真正把字体装进槽：解压到 PSRAM 后交给字体引擎，引擎接管这块内存。
+// Load a face into a slot: inflate into PSRAM and hand it to the font engine, which takes
+// ownership of the bytes.
+static uint8_t epub_load_face(book_epub_t* book, epub_face_t* face) {
+    size_t size = zip_entry_size(book->zip, face->zip_index);
+    if (size < 64 || size > EPUB_FACE_SIZE_MAX) return 0;
+    uint8_t* data = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (data == NULL) return 0;
+    if (zip_extract(book->zip, face->zip_index, data, size) != ESP_OK) {
+        heap_caps_free(data);
+        return 0;
+    }
+    int slot = ttf_font_open_mem(data, size, face->family);
+    if (slot <= 0) {
+        // 引擎在失败时已经释放了这块内存，这里不能再碰。
+        // The engine already freed the bytes on failure; they must not be touched again.
+        ESP_LOGW(TAG, "embedded face %s rejected (%u KB)", face->family, (unsigned)(size / 1024));
+        return 0;
+    }
+    ESP_LOGI(TAG, "embedded face %s -> slot %d (%u KB)", face->family, slot,
+             (unsigned)(size / 1024));
+    return (uint8_t)slot;
+}
+
+// CSS font-family 到字体槽。按需装载：只装这本书真正用到的字体，槽满或装不上就回退。
+// CSS font-family to a font slot. Loaded on demand, so only the faces this book really uses
+// are inflated; a full or unwilling slot falls back to the system face.
+static uint8_t epub_face_slot(void* ctx, const char* family, size_t len) {
+    book_epub_t* book = ctx;
+    if (!book->fonts_enabled || len == 0 || len >= EPUB_FACE_NAME_CAP) return 0;
+    for (size_t i = 0; i < book->face_count; ++i) {
+        epub_face_t* face = &book->faces[i];
+        if (face->failed || strlen(face->family) != len) continue;
+        if (strncasecmp(face->family, family, len)) continue;
+        if (face->slot == 0) face->slot = epub_load_face(book, face);
+        if (face->slot == 0) face->failed = true;
+        return face->slot;
+    }
+    return 0;
+}
+
+static const char* css_find_key(const char* at, const char* end, const char* key) {
+    size_t n = strlen(key);
+    for (const char* p = at; p + n < end; ++p) {
+        if (strncasecmp(p, key, n)) continue;
+        const char* q = p + n;
+        while (q < end && space(*q)) ++q;
+        if (q < end && *q == ':') return q + 1;
+    }
+    return NULL;
+}
+
+static void css_trim_copy(const char* at, const char* end, char* out, size_t cap) {
+    while (at < end && (space(*at) || *at == '"' || *at == '\'')) ++at;
+    while (end > at && (space(end[-1]) || end[-1] == '"' || end[-1] == '\'')) --end;
+    size_t n = (size_t)(end - at);
+    if (n >= cap) n = cap - 1;
+    memcpy(out, at, n);
+    out[n] = 0;
+}
+
+static bool css_declaration(const char* at, const char* end, const char* key,
+                            char* out, size_t cap) {
+    const char* value = css_find_key(at, end, key);
+    if (value == NULL) return false;
+    const char* stop = value;
+    while (stop < end && *stop != ';') ++stop;
+    css_trim_copy(value, stop, out, cap);
+    return out[0] != 0;
+}
+
+// src 可以是 local(...) 与 url(...) 的列表，取第一个 url。
+// A src is a list of local(...) and url(...) entries; take the first url.
+static bool css_first_url(const char* src, char* out, size_t cap) {
+    for (const char* at = src; *at; ++at) {
+        if (strncasecmp(at, "url(", 4)) continue;
+        const char* close = strchr(at + 4, ')');
+        if (close == NULL) return false;
+        css_trim_copy(at + 4, close, out, cap);
+        if (out[0] != 0) return true;
+        at = close;
+    }
+    return false;
+}
+
+// 从一份样式表里挑出 @font-face 的名字与来源。url 相对样式表自身解析，所以每份文件
+// 都要在拼接前单独处理，不能等合并成一大块再找。
+// Pick the family name and source out of each @font-face. A url resolves against its own
+// stylesheet, so every file is handled before the CSS is concatenated.
+static void css_add_faces(book_epub_t* book, const char* css_path, const char* css, size_t len) {
+    const char* end = css + len;
+    for (const char* at = css; at + 10 <= end;) {
+        const char* face = NULL;
+        for (const char* p = at; p + 10 <= end; ++p) {
+            if (!strncasecmp(p, "@font-face", 10)) { face = p; break; }
+        }
+        if (face == NULL) break;
+        const char* open = memchr(face + 10, '{', (size_t)(end - face - 10));
+        if (open == NULL) break;
+        const char* shut = memchr(open + 1, '}', (size_t)(end - open - 1));
+        if (shut == NULL) break;
+        at = shut + 1;
+
+        char family[EPUB_FACE_NAME_CAP] = "";
+        char src[EPUB_FACE_SRC_CAP] = "";
+        char url[EPUB_PATH_CAP] = "";
+        char path[EPUB_PATH_CAP];
+        if (!css_declaration(open + 1, shut, "font-family", family, sizeof(family))) continue;
+        if (!css_declaration(open + 1, shut, "src", src, sizeof(src))) continue;
+        if (!css_first_url(src, url, sizeof(url))) continue;   // 只有 local(...)，不是内嵌字体
+        if (!resolve_path(css_path, url, path)) continue;
+        int index = zip_find(book->zip, path);
+        if (index >= 0) face_add(book, family, path, index);
+    }
+}
+
+// 仅提取章节引用的本地样式，超过预算的 CSS 忽略但不阻断正文。顺便把 @font-face
+// 记进字体表：样式表已经解压到手上，再单独读一遍是浪费。
+// Load bounded in-book stylesheets; oversized CSS never blocks chapter text. The same pass
+// records @font-face entries: the stylesheet is already in hand, so reading it twice would
+// be waste.
 static char *chapter_css(book_epub_t *book, const char *chapter_path,
                          const char *html, size_t len, size_t *css_len) {
     char *css = NULL; *css_len = 0;
+    if (!book->fonts_scanned) epub_scan_faces(book);
     const char *at = html, *end = html + len;
     while (at < end) {
         const char *tag = at;
@@ -1370,6 +1600,7 @@ static char *chapter_css(book_epub_t *book, const char *chapter_path,
                     if (next) {
                         css = next;
                         if (zip_extract(book->zip, index, css + *css_len, n) == ESP_OK) {
+                            css_add_faces(book, path, css + *css_len, n);
                             *css_len += n; css[(*css_len)++] = '\n';
                         }
                     }
@@ -1389,7 +1620,13 @@ esp_err_t book_epub_load_target(book_epub_t *book, size_t i, const char *anchor,
     if (err != ESP_OK) return err;
     size_t css_len = 0;
     char *css = chapter_css(book, zip_entry_name(book->zip, book->chapters[i].zip_index), text, len, &css_len);
-    err = html_to_blocks_with_css_target(text, len, css, css_len, NULL,
+    html_font_map_t fonts = {0};
+    if (book->fonts_enabled && book->face_count) {
+        fonts.resolve = epub_face_slot;
+        fonts.ctx = book;
+    }
+    err = html_to_blocks_with_css_target(text, len, css, css_len,
+                                         fonts.resolve ? &fonts : NULL,
                                          anchor, source_offset, anchor_offset, out);
     if (err == ESP_OK) chapter_breaks_prepare(book, i, out);
     free(css); free(text); return err;
