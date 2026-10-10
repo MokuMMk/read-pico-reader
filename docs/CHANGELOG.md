@@ -3,6 +3,11 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
+## 官网说明书 / 2026-10-10
+
+- 上线 21 章、135 项操作、30 幅界面图解的详细说明书和 69 页 PDF；新增「问说明书」，支持关键词、口语问句与模糊检索，直接定位到操作步骤。保留旧说明书链接及 PDF 下载地址，固件仍为 rc90。
+  Publish the illustrated manual and searchable task finder; retain existing manual/PDF links and the rc90 firmware.
+
 ## 0.3.3-rc90 / 2026-10-09
 
 - 固件名称统一为 kiikoread；资料卡移除署名与电量，姓名和编辑垂直居中。水波纹主页使用与普通模式相同的灰阶画面。

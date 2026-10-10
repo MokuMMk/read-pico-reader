@@ -39,8 +39,9 @@ def stage(output: Path, ota_origin: str | None = None) -> None:
     # 官网仅发布展示资源与用户说明；内部构建及调试记录不进入网站。
     # Publish website assets and the user manual, excluding private build and debug files.
     shutil.copytree(FLASH / "assets", output / "assets", dirs_exist_ok=True)
-    (output / "manual").mkdir(exist_ok=True)
-    shutil.copy2(FLASH / "manual/kiikoread-manual.pdf", output / "manual/kiikoread-manual.pdf")
+    # 中文：只复制仓库中的公开说明书（正文、检索索引、图解、PDF）。
+    # English: Copy the curated public manual, never its local rendering/debug workspace.
+    shutil.copytree(FLASH / "manual", output / "manual", dirs_exist_ok=True)
     version = json.loads((FLASH / "manifest.json").read_text())["version"]
     versioned = FLASH / f"Pico-update-{version}.bin"
     if versioned.is_file(): shutil.copy2(versioned, output / versioned.name)
@@ -87,14 +88,15 @@ def stage(output: Path, ota_origin: str | None = None) -> None:
     shutil.copy2(ROOT / "LICENSE", output / "LICENSE")
     (output / ".nojekyll").touch()
 
-    for page in ("index.html", "notices.html", "manual.html"):
+    for page in ("index.html", "notices.html", "manual.html", "manual/index.html"):
         links = LocalLinks()
         links.feed((output / page).read_text(encoding="utf-8"))
         for link in links.links:
             parsed = urlparse(link)
             if parsed.scheme or parsed.netloc or not parsed.path:
                 continue
-            target = (output / parsed.path.removeprefix("./")).resolve()
+            target = (output / Path(page).parent / parsed.path).resolve()
+            if target.is_dir(): target = target / 'index.html'
             assert target.is_relative_to(output.resolve()) and target.is_file(), (
                 f"broken local link in {page}: {link}")
     if ota_origin:
