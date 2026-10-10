@@ -51,7 +51,12 @@ static void ttf_free(void* ptr, void* userdata) {
 
 /* ---- 调参 / Tunables ---- */
 // 光栅化位图 LRU 上限，PSRAM。/ Raster bitmap LRU cap, PSRAM.
-#define TTF_CACHE_LIMIT (1536 * 1024)
+// 字形缓存的每槽上限。多槽之后这里必须跟着降：四个槽各自 1.5 MB 就是 6 MB，
+// 而字体字节、loca 和字形表本身已经吃掉好几 MB，抽干 PSRAM 的表现就是缺字和章节加载失败。
+// Per-slot glyph cache cap. With several slots this had to come down: 1.5 MB each is 6 MB
+// across four slots, on top of the face bytes, loca and the outline tables, and draining
+// PSRAM shows up as missing glyphs and chapters that fail to load.
+#define TTF_CACHE_LIMIT (512 * 1024)
 // 哈希桶数。/ Hash buckets.
 #define TTF_CACHE_BUCKETS 256
 // 两档字号的像素高，对齐 ui_kit 正文/标题。/ Small/large px, matches ui_kit body/title.
@@ -185,6 +190,13 @@ typedef struct {
     uint32_t f_work_glyf_off;
     stbtt_fontinfo f_font_info;
     bool f_ready;
+    // CFF/OpenType（OTTO）没有 glyf/loca：字形由 stb 直接从 CFF 表取，"工作字体"那套
+    // 拼装和分块预读都用不上，字体字节也直接借用不复制。
+    // A CFF/OpenType (OTTO) face has no glyf/loca: stb reads outlines straight from the CFF
+    // table, so the working-font assembly and block prefetch do not apply, and the face bytes
+    // are borrowed rather than copied.
+    bool f_cff;
+    bool f_data_borrowed;
     ttf_size_metrics_t f_size_metrics[2];
     int f_raw_ascent_units;
     int f_weight;
@@ -247,6 +259,8 @@ static int s_cur_index = TTF_FONT_SLOT_SYSTEM;
 #define work_glyf_off (s_cur->f_work_glyf_off)
 #define font_info (s_cur->f_font_info)
 #define font_ready (s_cur->f_ready)
+#define cff_outline (s_cur->f_cff)
+#define font_data_borrowed (s_cur->f_data_borrowed)
 #define size_metrics (s_cur->f_size_metrics)
 #define raw_ascent_units (s_cur->f_raw_ascent_units)
 #define current_weight (s_cur->f_weight)
@@ -1496,6 +1510,9 @@ static bool load_variation(const uint8_t* header, size_t header_len) {
 
 // 把当前字形及其复合引用从 SD 填进工作字体的 glyf 窗口，并改写 loca。
 static bool pack_glyph_tree(int root_gid) {
+    // CFF 字形由 stb 直接从 CFF 表取，没有 glyf 可打包。
+    // CFF outlines come straight out of the CFF table, so there is no glyf run to pack.
+    if (cff_outline) return true;
     if (root_gid == packed_root && current_weight == packed_weight) {
         return true;
     }
@@ -1553,6 +1570,36 @@ static bool copy_table(
 }
 
 static uint8_t* build_working_font(const uint8_t* header, size_t header_len) {
+    // OTTO 是 CFF/OpenType：没有 glyf/loca，拼"工作字体"无从谈起。stb 自己会读 CFF 表，
+    // 所以整份原始字体就是字体数据；字节已在 PSRAM，借用不复制。文件型字体（SD 上的
+    // 系统字体）不支持这条路径，得先把整份读进内存才有意义。
+    // OTTO means CFF/OpenType: there is no glyf/loca, so there is nothing to assemble. stb
+    // reads the CFF table itself, so the original bytes are the font data; they are already in
+    // PSRAM and are borrowed rather than copied. A file-backed face (a system font on the card)
+    // is not supported here, since it would have to be read in full first.
+    if (header_len >= 4 && memcmp(header, "OTTO", 4) == 0) {
+        if (font_mem == NULL) {
+            ESP_LOGW(TAG, "CFF face is file-backed; only in-memory CFF is supported");
+            return NULL;
+        }
+        uint32_t maxp_off = 0, maxp_len = 0;
+        if (!find_sfnt_table(header, header_len, "maxp", &maxp_off, &maxp_len) ||
+            maxp_len < 6 || (size_t)maxp_off + 6 > font_mem_len) {
+            ESP_LOGW(TAG, "CFF face has no usable maxp table");
+            return NULL;
+        }
+        s_cur->f_cff = true;
+        s_cur->f_data_borrowed = true;
+        num_glyphs = be16(font_mem + maxp_off + 4);
+        file_glyf_off = 0;
+        file_glyf_len = 0;
+        file_loca = NULL;
+        file_loca_len = 0;
+        work_loca_off = 0;
+        work_glyf_off = 0;
+        return (uint8_t*)font_mem;
+    }
+
     const char* tags[] = { "cmap", "glyf", "head", "hhea", "hmtx", "loca", "maxp" };
     sfnt_table_t src[7];
     for (int i = 0; i < 7; i++) {
@@ -1560,6 +1607,12 @@ static uint8_t* build_working_font(const uint8_t* header, size_t header_len) {
         if (memcmp(tags[i], "glyf", 4) == 0) {
             uint32_t glyf_len = 0;
             if (!find_sfnt_table(header, header_len, "glyf", &file_glyf_off, &glyf_len)) {
+                // OTTO（CFF/OpenType）没有 glyf/loca，这套引擎只做 TrueType 轮廓；这里以前
+                // 静默返回，装载失败时看不出是字体格式不对还是文件坏了。
+                // An OTTO (CFF/OpenType) face has no glyf/loca and this engine only handles
+                // TrueType outlines. This used to return silently, leaving a failed load
+                // indistinguishable from a corrupt file.
+                ESP_LOGW(TAG, "no glyf table: CFF/OpenType face unsupported");
                 return NULL;
             }
             file_glyf_len = glyf_len;
@@ -1897,7 +1950,10 @@ static void warm_runs(int pixel_height, const char* text) {
 }
 
 static void warm_text_io(int pixel_height, const char* text, const char* end) {
-    if (text == NULL || glyf_ram != NULL) return;
+    // CFF 没有 glyf 分块可预读：`file_loca` 是空的，照旧走下去会取到空表。
+    // There are no glyf blocks to prefetch for CFF: `file_loca` is empty and the walk below
+    // would index a null table.
+    if (text == NULL || glyf_ram != NULL || cff_outline) return;
     touch_n = 0;
     const char* cursor = text;
     uint32_t cps[TTF_GATHER_MAX];
@@ -2050,8 +2106,13 @@ static void unload_here(void) {
     font_file_pos = UINT32_MAX;
     heap_caps_free(file_loca);
     file_loca = NULL;
-    heap_caps_free(font_data);
+    // 借来的字体字节属于槽的内存镜像，由 abandon_font_source 归还。
+    // Borrowed face bytes belong to the slot's memory image and go back through
+    // abandon_font_source.
+    if (!font_data_borrowed) heap_caps_free(font_data);
     font_data = NULL;
+    font_data_borrowed = false;
+    cff_outline = false;
     reset_variation();
     packed_root = -1;
     packed_weight = -1;
@@ -2086,9 +2147,13 @@ static esp_err_t load_opened_font(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    try_map_table(
-        file_glyf_off, file_glyf_len, &glyf_ram, &glyf_ram_off, &glyf_ram_len, "glyf"
-    );
+    // CFF 没有 glyf 表，长度为零，不必去映射。
+    // A CFF face has no glyf table; its length is zero and there is nothing to map.
+    if (file_glyf_len) {
+        try_map_table(
+            file_glyf_off, file_glyf_len, &glyf_ram, &glyf_ram_off, &glyf_ram_len, "glyf"
+        );
+    }
 
     load_variation(header, sizeof(header));
     if (gvar_ready && file_gvar_len > 0) {
@@ -2214,6 +2279,32 @@ void ttf_font_unload(void) {
     unload_here();
     s_cur_index = keep;
     s_cur = &s_slots[keep];
+}
+
+// 把**所有**槽的字形位图和分块缓冲还给堆，字体本身保持装载。阅读页开书前调用：
+// 系统字体的缓存是 PSRAM 里最容易腾的一块，而书内字体要的正是这块地方；字体不动，
+// 用到时按需重新缓存。
+// Hand every slot's glyph bitmaps and block buffers back to the heap while keeping the faces
+// loaded. The reader calls this before opening a book: the system face's cache is the easiest
+// PSRAM to reclaim, and embedded faces need exactly that room. Faces stay put and re-cache on
+// demand.
+size_t ttf_font_cache_clear_all(void) {
+    ttf_font_slots_init();
+    int keep = s_cur_index;
+    size_t freed = 0;
+    for (int i = 0; i < TTF_FONT_SLOTS; i++) {
+        if (!s_slots[i].f_ready) continue;
+        s_cur_index = i;
+        s_cur = &s_slots[i];
+        freed += cache_bytes;
+        cache_reset();
+        packed_root = -1;
+        packed_weight = -1;
+        io_reset();
+    }
+    s_cur_index = keep;
+    s_cur = &s_slots[keep];
+    return freed;
 }
 
 void ttf_font_close_embedded(void) {

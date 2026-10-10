@@ -146,5 +146,11 @@ void ttf_set_weight(int wght);
 int ttf_get_weight(void);
 
 void ttf_font_cache_clear(void);
+/// 清空所有槽的字形位图与分块缓冲并把占用还回去，字体本身保持装载；返回回收的字节数。
+/// 开书前调用：系统字体的缓存是 PSRAM 里最容易腾的一块，书内字体要的正是这块地方。
+/// Drop every slot's glyph bitmaps and block buffers and hand the memory back, keeping the
+/// faces loaded; returns the bytes reclaimed. Call it before opening a book: the system face's
+/// cache is the easiest PSRAM to reclaim and embedded faces need exactly that room.
+size_t ttf_font_cache_clear_all(void);
 void ttf_bench_begin(void);
 void ttf_bench_end(ttf_bench_stats_t* out);
