@@ -729,11 +729,19 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
                            !name_equal(name, "head") && !name_equal(name, "script") && !name_equal(name, "style")) {
                     ++w.depth;
                     // 内联标签也会换字体（<span class="num">），所以每层都算一次；本层没声明
-                    // 就继承父层。书里没有 font-family 规则时整段跳过，正文一分钱不花。
+                    // 就继承父层。没有 font-family 规则、标签也不带 style 时整段跳过，
+                    // 正文一分钱不花；带 style 的标签只看属性、不跑整套选择器匹配。
                     // Inline tags switch faces too, so every level resolves; a level without a
-                    // declaration inherits its parent's. With no font-family rule anywhere the
-                    // step is skipped and body text pays nothing.
-                    if (w.family_rules && w.depth <= CSS_ANCESTOR_MAX) {
+                    // declaration inherits its parent's. With no font-family rule and no style
+                    // attribute the step is skipped and body text pays nothing; a styled tag is
+                    // only probed for the attribute instead of running the selector match.
+                    bool want_family = w.family_rules;
+                    if (!want_family && w.fonts != NULL && w.fonts->resolve != NULL) {
+                        const char* probe = NULL;
+                        size_t probe_len = 0;
+                        want_family = attr_value(html + at, html + end, "style", &probe, &probe_len);
+                    }
+                    if (want_family && w.depth <= CSS_ANCESTOR_MAX) {
                         uint8_t parent = w.depth >= 2 ? w.family_at[w.depth - 2] : 0;
                         css_style_t level = style_for(&w, name, html + at, html + end);
                         w.family_at[w.depth - 1] =
